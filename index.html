@@ -323,6 +323,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <!-- pdf.js para leer PDFs de guías (Módulo autoría con guía aportada) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- Google Identity Services para conectar Google Drive (repositorio documental) -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
 
@@ -343,6 +345,7 @@
 <nav class="section-nav" id="sectionNav">
   <button class="section-btn on" data-section="fenotipado">🧬 Fenotipado</button>
   <button class="section-btn" data-section="biblioteca">📚 Biblioteca de fichas</button>
+  <button class="section-btn" data-section="documentos">📁 Documentos</button>
 </nav>
 
 <div class="layout" id="fenotipadoView">
@@ -367,6 +370,7 @@
 </div>
 
 <div id="bibliotecaView" class="section-view" style="display:none"></div>
+<div id="documentosView" class="section-view" style="display:none"></div>
 
 <div id="toast"></div>
 
@@ -630,7 +634,8 @@ function patientAgeYears(){
 
 /* ---- Config en localStorage ---- */
 const CFG_KEY='fh_cfg';
-const CFG_DEFAULTS={ anthropicKey:'', openaiKey:'', preferProvider:'anthropic', models:{}, gh_owner:'', gh_repo:'', gh_branch:'main', gh_pat:'' };
+const CFG_DEFAULTS={ anthropicKey:'', openaiKey:'', preferProvider:'anthropic', models:{}, gh_owner:'', gh_repo:'', gh_branch:'main', gh_pat:'',
+  driveClientId:'672017094614-goqdjb7159poff6jieh7rgjtop06askb.apps.googleusercontent.com', driveFolder:'' };
 function loadCfg(){
   let c; try{ c=Object.assign({}, CFG_DEFAULTS, JSON.parse(localStorage.getItem(CFG_KEY))||{}); }catch(e){ c=Object.assign({}, CFG_DEFAULTS); }
   // Migración desde el esquema antiguo {provider, llmKey}
@@ -1021,6 +1026,12 @@ function openSettings(){
 
     <div class="sec-note">PAT fine-grained limitado a un solo repo, permiso <b>Contents: Read and write</b>. Revócalo en GitHub → Developer settings si se compromete.</div>
 
+    <h3>Repositorio documental (Google Drive)</h3>
+    <div class="field"><label>Client ID de Google <span class="hint">(público; atado a tu origen)</span></label>
+      <input id="cfgDriveCid" type="text" value="${(c.driveClientId||'').replace(/"/g,'&quot;')}" placeholder="…apps.googleusercontent.com" autocomplete="off"></div>
+    <div class="field"><label>Carpeta de Drive (opcional) <span class="hint">(ID de carpeta; vacío = todos tus PDFs)</span></label>
+      <input id="cfgDriveFolder" type="text" value="${(c.driveFolder||'').replace(/"/g,'&quot;')}" placeholder="ID de carpeta" autocomplete="off"></div>
+
     <div class="modal-actions">
       <button class="btn ghost" id="cfgCancel">Cancelar</button>
       <button class="btn primary" id="cfgSave">Guardar</button>
@@ -1104,7 +1115,9 @@ function openSettings(){
       gh_owner: ov.querySelector('#cfgOwner').value.trim(),
       gh_repo: ov.querySelector('#cfgRepo').value.trim(),
       gh_branch: ov.querySelector('#cfgBranch').value.trim()||'main',
-      gh_pat: ov.querySelector('#cfgPat').value.trim()
+      gh_pat: ov.querySelector('#cfgPat').value.trim(),
+      driveClientId: ov.querySelector('#cfgDriveCid').value.trim(),
+      driveFolder: ov.querySelector('#cfgDriveFolder').value.trim()
     });
     renderStatus();
     showToast('Ajustes guardados');
@@ -1772,18 +1785,109 @@ function downloadJson(f){
 }
 
 /* Lee el texto de un PDF en el navegador (pdf.js). Devuelve '' si no carga. */
-async function extractPdfText(file){
+async function extractPdfTextFromBuffer(buf){
   const lib = window.pdfjsLib;
   if(!lib){ showToast('pdf.js no se cargó (¿sin red?)'); return ''; }
   try{
     lib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-    const buf = await file.arrayBuffer();
     const pdf = await lib.getDocument({data:buf}).promise;
     let text='';
     const n=Math.min(pdf.numPages, 40);
     for(let i=1;i<=n;i++){ const page=await pdf.getPage(i); const c=await page.getTextContent(); text += c.items.map(it=>it.str).join(' ')+'\n'; }
     return text.slice(0, 30000);
   }catch(e){ showToast('No se pudo leer el PDF'); return ''; }
+}
+async function extractPdfText(file){ return extractPdfTextFromBuffer(await file.arrayBuffer()); }
+
+/* ===========================================================================
+   Repositorio documental — Google Drive (listar PDFs, registrar, RAG)
+   =========================================================================== */
+let _driveToken=null;
+let ragDocs={};   // fileId -> {name, ...} marcados para usar en la creación de fichas
+function driveClientId(){ return loadCfg().driveClientId || ''; }
+function driveConnect(){
+  return new Promise((resolve,reject)=>{
+    if(!(window.google && google.accounts && google.accounts.oauth2)) return reject(new Error('Google Identity no cargó (¿red o proxy del SERGAS?).'));
+    const cid=driveClientId(); if(!cid) return reject(new Error('Falta el Client ID de Google Drive en ⚙ Ajustes.'));
+    try{
+      const tc=google.accounts.oauth2.initTokenClient({
+        client_id:cid,
+        scope:'https://www.googleapis.com/auth/drive.readonly',
+        callback:(resp)=>{ if(resp && resp.access_token){ _driveToken=resp.access_token; resolve(_driveToken); } else reject(new Error('No se obtuvo token de Drive.')); }
+      });
+      tc.requestAccessToken();
+    }catch(e){ reject(e); }
+  });
+}
+async function driveListPdfs(folderId){
+  if(!_driveToken) await driveConnect();
+  let q="mimeType='application/pdf' and trashed=false";
+  if(folderId) q="'"+folderId.replace(/'/g,"")+"' in parents and "+q;
+  const url='https://www.googleapis.com/drive/v3/files?pageSize=200&orderBy=modifiedTime desc&fields='+encodeURIComponent('files(id,name,webViewLink,modifiedTime,size)')+'&q='+encodeURIComponent(q);
+  const r=await fetch(url, {headers:{Authorization:'Bearer '+_driveToken}});
+  if(!r.ok) throw new Error('Drive list '+r.status+' '+await r.text());
+  const d=await r.json(); return d.files||[];
+}
+async function driveDownloadText(fileId){
+  if(!_driveToken) await driveConnect();
+  const r=await fetch('https://www.googleapis.com/drive/v3/files/'+fileId+'?alt=media', {headers:{Authorization:'Bearer '+_driveToken}});
+  if(!r.ok) throw new Error('Drive download '+r.status);
+  return extractPdfTextFromBuffer(await r.arrayBuffer());
+}
+/* Texto de los documentos marcados para RAG (para inyectar en la creación de fichas). */
+async function ragContext(maxDocs){
+  const ids=Object.keys(ragDocs); if(!ids.length) return '';
+  let out=''; let n=0;
+  for(const id of ids){ if(n>=(maxDocs||3)) break; try{ const t=await driveDownloadText(id); if(t){ out += '\n--- '+(ragDocs[id].name||id)+' ---\n'+t.slice(0,6000); n++; } }catch(e){} }
+  return out;
+}
+
+function renderDocumentos(){
+  const box=document.getElementById('documentosView'); if(!box) return;
+  if(!driveClientId()){ box.innerHTML='<div class="placeholder">Configura el <b>Client ID de Google Drive</b> en ⚙ Ajustes para conectar tu repositorio documental.</div>'; return; }
+  box.innerHTML=`
+    <div class="lib-head">
+      <h2>📁 Repositorio documental <span style="font-size:12px;color:var(--ink3)">(Google Drive)</span></h2>
+      <input class="lib-search" id="docFolder" placeholder="ID de carpeta de Drive (opcional; vacío = todos tus PDFs)" value="${(loadCfg().driveFolder||'').replace(/"/g,'&quot;')}">
+      <button class="btn primary" id="docConnect">Conectar y listar PDFs</button>
+    </div>
+    <div class="sec-note">Marca ☑ <b>RAG</b> en los documentos que quieras que la IA tenga en cuenta al crear fichas. "Registrar" los añade a tu biblioteca de documentos (docs/index.json) para marcar referencias en las fichas.</div>
+    <div id="docList"></div>`;
+  document.getElementById('docConnect').addEventListener('click', cargarDriveDocs);
+}
+async function cargarDriveDocs(){
+  const list=document.getElementById('docList'); if(!list) return;
+  list.innerHTML='<div class="loading">Conectando con Google Drive… (autoriza en la ventana de Google)</div>';
+  try{
+    const folder=(document.getElementById('docFolder').value||'').trim();
+    const cfg=loadCfg(); cfg.driveFolder=folder; saveCfg(cfg);
+    const files=await driveListPdfs(folder);
+    renderDriveList(files);
+  }catch(e){ list.innerHTML='<div class="err">'+e.message+'</div>'; }
+}
+function renderDriveList(files){
+  const list=document.getElementById('docList'); if(!list) return;
+  if(!files.length){ list.innerHTML='<div class="placeholder">No se encontraron PDFs en Drive (o en esa carpeta).</div>'; return; }
+  list.innerHTML='<div class="lib-grid">'+files.map((f,i)=>`
+    <div class="lib-card">
+      <div class="nm">${f.name}</div>
+      <div class="meta">${(f.modifiedTime||'').slice(0,10)}</div>
+      <div class="acts">
+        ${f.webViewLink?`<a class="btn" href="${f.webViewLink}" target="_blank" rel="noopener">Abrir</a>`:''}
+        <button class="btn" data-reg="${i}">+ Registrar</button>
+        <label class="q-opt" style="font-size:11px"><input type="checkbox" data-rag="${i}" ${ragDocs[f.id]?'checked':''}> RAG</label>
+      </div>
+    </div>`).join('')+'</div>';
+  list.querySelectorAll('[data-reg]').forEach(b=>b.addEventListener('click', async ()=>{
+    const f=files[+b.dataset.reg];
+    try{ await registrarDoc({titulo:f.name, url:f.webViewLink||('drive:'+f.id), enlace:f.webViewLink||('https://drive.google.com/file/d/'+f.id), anio:(f.modifiedTime||'').slice(0,4)}); b.textContent='✓ registrado'; b.disabled=true; }
+    catch(e){ showToast('Error al registrar: '+e.message); }
+  }));
+  list.querySelectorAll('[data-rag]').forEach(cb=>cb.addEventListener('change', ()=>{
+    const f=files[+cb.dataset.rag];
+    if(cb.checked) ragDocs[f.id]={name:f.name}; else delete ragDocs[f.id];
+    showToast(Object.keys(ragDocs).length+' documento(s) para RAG');
+  }));
 }
 
 /* Modal opcional: aportar una guía (URL o PDF) como fuente principal antes de generar. */
@@ -1795,6 +1899,7 @@ async function generarFichaIA(motivo, guiaContext){
   try{
     let user='Motivo de consulta: "'+(motivo||'')+'". Genera la ficha JSON más completa y vigente para esta entidad o grupo nosológico, con sus criterios diagnósticos actuales.';
     if(guiaContext){ user += '\n\nGUÍA APORTADA POR EL CLÍNICO (úsala como FUENTE PRINCIPAL y cítala en "fuentes"):\n'+guiaContext; }
+    if(Object.keys(ragDocs).length){ if(box) box.innerHTML='<div class="loading">Leyendo tus documentos del repositorio para la ficha…</div>'; const rag=await ragContext(); if(rag) user += '\n\nDOCUMENTOS DE TU REPOSITORIO INTERNO (úsalos como FUENTE PRIORITARIA y cítalos):\n'+rag; }
     const resp=await callLLM({system:FICHA_SYSTEM_PROMPT, user, webSearch:true, maxTokens:8000, task:'author'});
     const f=extractJSON(resp);
     if(!f){ if(box) box.innerHTML='<div class="err">La IA no devolvió un JSON válido. Reintenta.</div>'; return; }
@@ -2180,8 +2285,11 @@ function showSection(s){
   document.querySelectorAll('#sectionNav .section-btn').forEach(b=>b.classList.toggle('on', b.dataset.section===s));
   const fen=document.getElementById('fenotipadoView');
   const bib=document.getElementById('bibliotecaView');
-  if(s==='biblioteca'){ if(fen) fen.style.display='none'; if(bib){ bib.style.display='block'; renderBiblioteca(); } }
-  else { if(bib) bib.style.display='none'; if(fen) fen.style.display=''; }
+  const doc=document.getElementById('documentosView');
+  [fen,bib,doc].forEach(v=>{ if(v) v.style.display='none'; });
+  if(s==='biblioteca'){ if(bib){ bib.style.display='block'; renderBiblioteca(); } }
+  else if(s==='documentos'){ if(doc){ doc.style.display='block'; renderDocumentos(); } }
+  else if(fen) fen.style.display='';
 }
 
 let _libCache=[];
