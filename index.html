@@ -805,12 +805,13 @@ async function verifyAndRelabel(id, fallbackLabel){
 
 /* ---- Fenotipo: añadir/quitar selección ---- */
 function addSelection(id, es, en, origen, toggle){
-  if(toggle && selections[id]){ delete selections[id]; renderCart(); return false; }
+  if(toggle && selections[id]){ delete selections[id]; renderCart(); refreshAnamnesisIfShown(); return false; }
   selections[id] = {hpo:id, es, en, region:origen||'manual', origen:origen||'manual', verified:(selections[id]?selections[id].verified:undefined)};
   renderCart();
+  refreshAnamnesisIfShown();
   return true;
 }
-function removeSelection(id){ delete selections[id]; renderCart(); }
+function removeSelection(id){ delete selections[id]; renderCart(); refreshAnamnesisIfShown(); }
 
 function renderPatientLine(){
   const el=document.getElementById('patientLine'); if(!el) return;
@@ -1562,13 +1563,23 @@ function questionHtml(q, dom){
   const type = q.multiple ? 'checkbox' : 'radio';
   const opts = (q.opciones||[]).map((o,i)=>{
     const hint = (o.hpo&&o.hpo.length) ? `<span class="q-hpo">${o.hpo.map(h=>h.id).join(', ')}</span>` : '';
-    return `<label class="q-opt"><input type="${type}" name="q_${q.id}" data-oi="${i}"><span>${o.etiqueta}</span>${hint}</label>`;
+    // Pre-marcar si los HPO de la opción YA están en el fenotipo (p. ej. extraídos de un informe lab/rayos/electro)
+    const checked = (o.hpo && o.hpo.length && o.hpo.every(h=>!!selections[h.id])) ? ' checked' : '';
+    return `<label class="q-opt"><input type="${type}" name="q_${q.id}" data-oi="${i}"${checked}><span>${o.etiqueta}</span>${hint}</label>`;
   }).join('');
   return `<div class="q" data-qid="${q.id}"><div class="q-text">${q.texto}</div><div class="q-opts">${opts}</div></div>`;
 }
 function wireQuestion(q, dom){
   const el = document.querySelector(`.q[data-qid="${q.id}"]`); if(!el) return;
+  // Estado inicial de reversibilidad: registra los HPO ya marcados (presentes en el fenotipo)
+  const ids=[]; el.querySelectorAll('input:checked').forEach(inp=>{ const o=q.opciones[+inp.dataset.oi]; if(o) (o.hpo||[]).forEach(h=>{ if(!ids.includes(h.id)) ids.push(h.id); }); });
+  if(ids.length) qOwned[q.id]=ids;
   el.querySelectorAll('input').forEach(inp=> inp.addEventListener('change', ()=> recomputeQuestion(q, dom, el)));
+}
+/* Si estamos en la anamnesis de la ficha activa, re-renderiza para que los HPO
+   recién añadidos (informes/búsqueda) que estén en la ficha aparezcan marcados. */
+function refreshAnamnesisIfShown(){
+  if(activeFicha && document.querySelector('#main .domain .q')) renderAnamnesis();
 }
 async function recomputeQuestion(q, dom, el){
   // 1) Retira los HPO que esta pregunta tenía puestos (reversibilidad)
@@ -1997,7 +2008,7 @@ async function extraerInforme(tipo){
     if(!verified.length){ out.innerHTML='<div class="empty">Sin hallazgos HPO verificables en el informe.</div>'; return; }
     out.innerHTML = `<button class="btn" id="addAll_${tipo}" style="margin-bottom:8px">+ Añadir todos (${verified.length})</button>`
       + verified.map((h,i)=>informeRowHtml(h,i)).join('');
-    const addOne=(h)=>{ selections[h.id]={hpo:h.id, es:h.es, en:h.en, region:map.label, origen:map.label, verified:true}; renderCart(); };
+    const addOne=(h)=>{ selections[h.id]={hpo:h.id, es:h.es, en:h.en, region:map.label, origen:map.label, verified:true}; renderCart(); refreshAnamnesisIfShown(); };
     out.querySelector('#addAll_'+tipo).addEventListener('click', ()=>{ verified.forEach(addOne); showToast('Añadidos '+verified.length+' HPO de '+map.label); });
     out.querySelectorAll('[data-addone]').forEach(b=> b.addEventListener('click', ()=>{ addOne(verified[+b.dataset.addone]); b.textContent='✓'; b.disabled=true; }));
   }catch(e){ out.innerHTML='<div class="err">Error al extraer: '+e.message+'</div>'; }
