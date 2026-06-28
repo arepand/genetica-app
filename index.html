@@ -1803,24 +1803,28 @@ async function extractPdfText(file){ return extractPdfTextFromBuffer(await file.
    Repositorio documental — Google Drive (listar PDFs, registrar, RAG)
    =========================================================================== */
 let _driveToken=null;
+let _driveTokenClient=null;
+let _onDriveToken=null;
 let ragDocs={};   // fileId -> {name, ...} marcados para usar en la creación de fichas
 function driveClientId(){ return loadCfg().driveClientId || ''; }
-function driveConnect(){
-  return new Promise((resolve,reject)=>{
-    if(!(window.google && google.accounts && google.accounts.oauth2)) return reject(new Error('Google Identity no cargó (¿red o proxy del SERGAS?).'));
-    const cid=driveClientId(); if(!cid) return reject(new Error('Falta el Client ID de Google Drive en ⚙ Ajustes.'));
-    try{
-      const tc=google.accounts.oauth2.initTokenClient({
-        client_id:cid,
-        scope:'https://www.googleapis.com/auth/drive.readonly',
-        callback:(resp)=>{ if(resp && resp.access_token){ _driveToken=resp.access_token; resolve(_driveToken); } else reject(new Error('No se obtuvo token de Drive.')); }
-      });
-      tc.requestAccessToken();
-    }catch(e){ reject(e); }
+/* Crea (una vez) el token client. El callback ejecuta lo que haya en _onDriveToken. */
+function ensureDriveTokenClient(){
+  if(_driveTokenClient) return _driveTokenClient;
+  if(!(window.google && google.accounts && google.accounts.oauth2)) return null;
+  const cid=driveClientId(); if(!cid) return null;
+  _driveTokenClient = google.accounts.oauth2.initTokenClient({
+    client_id:cid,
+    scope:'https://www.googleapis.com/auth/drive.readonly',
+    callback:(resp)=>{
+      const list=document.getElementById('docList');
+      if(resp && resp.access_token){ _driveToken=resp.access_token; if(_onDriveToken) _onDriveToken(); }
+      else if(list){ list.innerHTML='<div class="err">Autorización cancelada o sin token'+(resp&&resp.error?(' ('+resp.error+')'):'')+'.</div>'; }
+    }
   });
+  return _driveTokenClient;
 }
 async function driveListPdfs(folderId){
-  if(!_driveToken) await driveConnect();
+  if(!_driveToken) throw new Error('Conecta con Google Drive primero.');
   let q="mimeType='application/pdf' and trashed=false";
   if(folderId) q="'"+folderId.replace(/'/g,"")+"' in parents and "+q;
   const url='https://www.googleapis.com/drive/v3/files?pageSize=200&orderBy=modifiedTime desc&fields='+encodeURIComponent('files(id,name,webViewLink,modifiedTime,size)')+'&q='+encodeURIComponent(q);
@@ -1829,14 +1833,14 @@ async function driveListPdfs(folderId){
   const d=await r.json(); return d.files||[];
 }
 async function driveDownloadText(fileId){
-  if(!_driveToken) await driveConnect();
+  if(!_driveToken) throw new Error('Conecta con Google Drive primero.');
   const r=await fetch('https://www.googleapis.com/drive/v3/files/'+fileId+'?alt=media', {headers:{Authorization:'Bearer '+_driveToken}});
   if(!r.ok) throw new Error('Drive download '+r.status);
   return extractPdfTextFromBuffer(await r.arrayBuffer());
 }
 /* Texto de los documentos marcados para RAG (para inyectar en la creación de fichas). */
 async function ragContext(maxDocs){
-  const ids=Object.keys(ragDocs); if(!ids.length) return '';
+  const ids=Object.keys(ragDocs); if(!ids.length || !_driveToken) return '';
   let out=''; let n=0;
   for(const id of ids){ if(n>=(maxDocs||3)) break; try{ const t=await driveDownloadText(id); if(t){ out += '\n--- '+(ragDocs[id].name||id)+' ---\n'+t.slice(0,6000); n++; } }catch(e){} }
   return out;
@@ -1855,15 +1859,16 @@ function renderDocumentos(){
     <div id="docList"></div>`;
   document.getElementById('docConnect').addEventListener('click', cargarDriveDocs);
 }
-async function cargarDriveDocs(){
+function cargarDriveDocs(){
   const list=document.getElementById('docList'); if(!list) return;
-  list.innerHTML='<div class="loading">Conectando con Google Drive… (autoriza en la ventana de Google)</div>';
-  try{
-    const folder=(document.getElementById('docFolder').value||'').trim();
-    const cfg=loadCfg(); cfg.driveFolder=folder; saveCfg(cfg);
-    const files=await driveListPdfs(folder);
-    renderDriveList(files);
-  }catch(e){ list.innerHTML='<div class="err">'+e.message+'</div>'; }
+  if(!(window.google && google.accounts && google.accounts.oauth2)){ list.innerHTML='<div class="err">Google Identity no cargó (¿red o proxy del SERGAS bloqueando accounts.google.com?).</div>'; return; }
+  const tc=ensureDriveTokenClient(); if(!tc){ list.innerHTML='<div class="err">Falta el Client ID de Google Drive en ⚙ Ajustes.</div>'; return; }
+  const folder=(document.getElementById('docFolder').value||'').trim();
+  const cfg=loadCfg(); cfg.driveFolder=folder; saveCfg(cfg);
+  list.innerHTML='<div class="loading">Conectando con Google Drive… (autoriza en la ventana emergente de Google)</div>';
+  _onDriveToken=async()=>{ try{ const files=await driveListPdfs(folder); renderDriveList(files); }catch(e){ list.innerHTML='<div class="err">'+e.message+'</div>'; } };
+  // IMPORTANTE: abrir el popup SÍNCRONAMENTE dentro del clic (Safari bloquea popups tras await)
+  if(_driveToken) _onDriveToken(); else tc.requestAccessToken();
 }
 function renderDriveList(files){
   const list=document.getElementById('docList'); if(!list) return;
