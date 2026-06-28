@@ -1,0 +1,2140 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>fenotipHAC · Fenotipado dirigido por criterios</title>
+<!--
+  ============================================================================
+  fenotipHAC · motor genérico dirigido por fichas (familia fenotipHAC)
+  ----------------------------------------------------------------------------
+  - App estática single-file. Se sirve en localhost (no funciona por file://).
+  - Coste 0 en runtime: la consulta diaria solo usa fuentes GRATIS
+    (ontology.jax.org, raw.githubusercontent.com, GitHub API). El LLM (de pago)
+    solo se usa bajo demanda: crear/actualizar fichas, estado del arte,
+    profundizar anamnesis y extraer HPO de informes.
+  - El PAT de GitHub y la API key del LLM viven SOLO en localStorage de este
+    navegador. Uso personal local.
+
+  ESTADO DE CONSTRUCCIÓN (iterativo, por módulos):
+    [x] Módulo 1 — Ajustes + capa GitHub + capa LLM + verificación HPO
+        + subsistema de búsqueda trilingüe (injertado verbatim) + panel fenotipo
+    [x] Módulo 2 — Inicio (motivo + edad + sexo)
+    [x] Módulo 3 — Asignación de ficha (match local + LLM sin web search)
+    [x] Módulo 4 — Autoría de ficha con IA (web search + revisión + commit)
+    [x] Módulo 5 — Estado del arte (freshness > 30 días + regenerar)
+    [x] Módulo 6 — Anamnesis dirigida (Beighton + antropometría WHO_LMS injertados)
+    [x] Módulo 7 — Fenotipo HPO (panel + búsqueda trilingüe)
+    [x] Módulo 8 — Diferencial por umbrales + panel génico + estudio genético
+    [x] Módulo 9 — Informes (radiología/laboratorio) → HPO
+    [x] Módulo 10 — Exportar (PDF + copiar códigos)
+    [x] Extras — Variantes de ficha por edad (poblacion/grupo, enrutado por edad)
+    [x] Extras — Indicación de estudio genético según guías (web, por paciente)
+    [x] Extras — Dos API keys (Claude+OpenAI), enrutado de modelo por operación
+                 con respaldo al proveedor disponible; selector de modelos
+                 auto-actualizable (GET /v1/models). Autoría con PDF/URL de guía.
+    [x] Extras — Nivel "autoría" usa el modelo MÁS potente (Opus 4.8) + más
+                 tokens; lo trivial usa modelo barato. Informes incluye
+                 electrofisiología. Caché del babelon + importar ficha .json
+                 (resiliencia ante proxy/sin red). Apto para GitHub Pages.
+  ============================================================================
+-->
+<style>
+  /* Tokens de diseño reutilizados del motor de referencia */
+  :root{
+    --bg:#0f1419; --panel:#161c24; --panel2:#1d2530; --line:#2a3340;
+    --ink:#e8edf2; --ink2:#9fb0c0; --ink3:#6f8295;
+    --accent:#3fb6a8; --accent2:#2d8c80; --accentw:#142420;
+    --major:#e0a64a; --minor:#7aa7d6; --danger:#e0604a; --ok:#5fc98a;
+    --chip:#222c38; --chipsel:#143a37; --chipsel-bd:#3fb6a8;
+    --shadow:0 6px 24px rgba(0,0,0,.35);
+    --r:12px; --r2:9px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:linear-gradient(180deg,#0d1116,#0f1419 260px);
+    color:var(--ink);
+    font-family:"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+    font-size:15px; line-height:1.5; -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--accent);}
+  @media (prefers-reduced-motion: reduce){ *{transition:none !important; animation:none !important;} }
+
+  header.top{
+    position:sticky; top:0; z-index:40;
+    background:rgba(13,17,22,.92); backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line);
+    padding:12px 28px; display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+  }
+  .brand{display:flex; align-items:center; gap:11px; min-width:0;}
+  .logo{width:38px; height:38px; border-radius:10px;
+    background:radial-gradient(circle at 30% 30%,#4ad0c0,#2d8c80);
+    display:grid; place-items:center; font-weight:800; color:#06201c; flex:none; box-shadow:var(--shadow); font-size:14px;}
+  .brand h1{font-size:17px; margin:0; line-height:1.15; font-weight:700; letter-spacing:.2px;}
+  .brand .sub{font-size:11.5px; color:var(--ink3); margin-top:2px;}
+  .top .spacer{flex:1;}
+  .btn{border:1px solid var(--line); background:var(--panel2); color:var(--ink);
+    padding:8px 13px; border-radius:9px; cursor:pointer; font-size:13px; font-weight:600;
+    display:inline-flex; align-items:center; gap:7px; transition:.15s;}
+  .btn:hover{border-color:var(--accent); color:#fff;}
+  .btn:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+  .btn.ghost{background:transparent;}
+  .btn.primary{background:linear-gradient(180deg,#3fb6a8,#2d8c80); border-color:#2d8c80; color:#06201c;}
+
+  /* Indicadores de estado */
+  .status-row{display:flex; gap:8px; flex-wrap:wrap;}
+  .status-chip{display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:600;
+    background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:5px 11px; color:var(--ink2);}
+  .status-chip .dot{width:8px; height:8px; border-radius:50%; background:var(--ink3); flex:none;}
+  .status-chip.on .dot{background:var(--ok);}
+  .status-chip.off .dot{background:var(--danger);}
+
+  .layout{display:grid; grid-template-columns:1fr 380px; gap:0; min-height:calc(100vh - 64px);}
+  @media(max-width:980px){.layout{grid-template-columns:1fr;}}
+  main{padding:26px 30px 90px; max-width:860px;}
+
+  .step-title{font-size:22px; font-weight:700; margin:0 0 3px;}
+  .step-sub{font-size:13px; color:var(--ink2); margin:0 0 20px;}
+  .placeholder{font-size:13px; color:var(--ink3); border:1px dashed var(--line); border-radius:var(--r);
+    padding:22px; background:var(--panel2);}
+  .placeholder b{color:var(--ink2);}
+
+  .field{display:flex; flex-direction:column; gap:6px; margin-bottom:12px;}
+  .field label{font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--ink3); font-weight:600;}
+  .field input, .field select, .field textarea{
+    padding:10px 12px; border:1px solid var(--line); border-radius:9px; background:var(--panel2);
+    color:var(--ink); font-family:inherit; font-size:14px;}
+  .field input:focus, .field select:focus, .field textarea:focus{outline:none; border-color:var(--accent);}
+  .field .hint{font-size:11px; color:var(--ink3); font-weight:400; text-transform:none; letter-spacing:0;}
+
+  /* Búsqueda global + filas */
+  .global-search input{width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink); font-size:13px;}
+  .global-search input:focus{outline:none; border-color:var(--accent);}
+  #globalSearchResults{margin-top:8px; max-height:300px; overflow:auto;}
+  .search-row{display:flex; align-items:flex-start; gap:10px; padding:9px 11px; background:var(--panel2);
+    border:1px solid var(--line); border-radius:9px; margin-bottom:6px;}
+  .check-wrap{cursor:pointer; flex:0 0 auto; margin-top:1px;}
+  .checkbox{width:21px; height:21px; border:1.6px solid var(--ink3); border-radius:50%;
+    display:flex; align-items:center; justify-content:center; background:var(--panel2); transition:.15s;}
+  .checkbox svg{display:none; width:11px; height:11px;}
+  .check-wrap:hover .checkbox{border-color:var(--accent); transform:scale(1.06);}
+  .check-wrap.active .checkbox{background:var(--accent); border-color:var(--accent);}
+  .check-wrap.active .checkbox svg{display:block;}
+  .node-text{flex:1; min-width:0;}
+  .node-es{font-size:13.5px; font-weight:500; line-height:1.3;}
+  .node-en{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:10px; color:var(--ink3); margin-top:2px;}
+  .info-dot{display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px;
+    margin-left:7px; vertical-align:middle; border-radius:50%; border:1px solid var(--line); color:var(--ink3);
+    font-size:9.5px; cursor:help; position:relative; font-weight:700;}
+  .info-dot:hover{border-color:var(--accent); color:var(--accent);}
+  .info-dot .tooltip{display:none; position:absolute; top:calc(100% + 8px); left:0; width:270px;
+    background:#0a0f14; color:var(--ink); border:1px solid var(--accent2); font-weight:400;
+    font-size:11.5px; line-height:1.5; padding:11px 13px; border-radius:9px; text-align:left; z-index:60; box-shadow:var(--shadow);}
+  .info-dot:hover .tooltip, .info-dot.open .tooltip{display:block;}
+  .loading{font-size:12.5px; color:var(--ink3); padding:14px 0;}
+  .err{font-size:13px; color:#f2b3a6; padding:13px; background:#2c1714; border:1px solid var(--danger); border-radius:9px; margin-top:10px;}
+
+  aside.cart{border-left:1px solid var(--line); padding:22px 22px 40px; position:sticky; top:64px;
+    max-height:calc(100vh - 64px); overflow-y:auto;}
+  @media(max-width:980px){aside.cart{position:static; max-height:none; border-left:none; border-top:1px solid var(--line);}}
+  aside.cart h2{font-size:16px; margin:0 0 3px; display:flex; align-items:center; gap:8px;}
+  .patient-line{font-size:11.5px; color:var(--ink3); margin-bottom:14px; line-height:1.5;}
+  .cart-group-title{font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--accent); margin:14px 0 9px; font-weight:700;}
+  .cart-item{display:flex; justify-content:space-between; gap:8px; font-size:12.5px; padding:7px 0; border-bottom:1px dotted var(--line);}
+  .cart-item .region-tag{display:block; font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:9.5px; color:var(--ink3); margin-top:1px;}
+  .cart-item .warn{color:var(--major); font-weight:700;}
+  .cart-item span.x{cursor:pointer; color:var(--ink3); font-weight:800;}
+  .cart-item span.x:hover{color:var(--danger);}
+  .empty{font-size:12px; color:var(--ink3); font-style:italic;}
+  .counter{display:inline-flex; align-items:center; gap:6px; background:var(--panel2);
+    border:1px solid var(--line); border-radius:999px; padding:3px 11px; font-size:12px; font-weight:600;}
+  .counter b{color:var(--accent);}
+
+  .export-row{display:flex; gap:8px; margin-top:20px; flex-wrap:wrap;}
+  .export-btn{flex:1; min-width:130px; font-size:11.5px; font-weight:700; padding:11px 8px; border-radius:9px; cursor:pointer; text-align:center; border:none;}
+  .export-btn.primary{background:linear-gradient(180deg,#3fb6a8,#2d8c80); color:#06201c;}
+  .export-btn.secondary{background:var(--panel2); color:var(--ink); border:1px solid var(--line);}
+  .export-btn:hover{filter:brightness(1.08);}
+
+  /* Modal Ajustes */
+  .overlay{position:fixed; inset:0; background:rgba(8,11,15,.72); z-index:200; display:flex; align-items:flex-start; justify-content:center; padding:34px 20px; overflow:auto;}
+  .modal{background:var(--panel); border:1px solid var(--line); border-radius:14px; max-width:600px; width:100%; padding:24px 26px; box-shadow:var(--shadow);}
+  .modal h2{margin:0 0 4px; font-size:18px;}
+  .modal .msub{font-size:12px; color:var(--ink3); margin-bottom:18px; line-height:1.5;}
+  .modal h3{font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--accent); margin:20px 0 10px; font-weight:700;}
+  .modal-actions{display:flex; gap:8px; justify-content:flex-end; margin-top:22px; flex-wrap:wrap;}
+  .seg{display:flex; gap:6px;}
+  .seg button{flex:1; padding:9px; border:1px solid var(--line); background:var(--panel2); color:var(--ink2); border-radius:8px; cursor:pointer; font-weight:600; font-size:13px;}
+  .seg button.on{border-color:var(--accent); color:#fff; background:var(--chipsel);}
+  .sec-note{font-size:11px; color:var(--ink3); line-height:1.55; background:var(--panel2); border:1px solid var(--line); border-radius:9px; padding:11px 12px; margin-top:8px;}
+  .test-out{font-size:11.5px; margin-top:8px; min-height:16px;}
+  .test-out.ok{color:var(--ok);} .test-out.bad{color:#f2a08c;}
+
+  #toast{position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(20px);
+    background:var(--accent); color:#06201c; padding:11px 18px; border-radius:9px; font-size:13px; font-weight:700;
+    opacity:0; transition:.25s; pointer-events:none; z-index:300;}
+  #toast.show{opacity:1; transform:translateX(-50%) translateY(0);}
+
+  /* Anamnesis dirigida (Módulo 6) */
+  .domain{border:1px solid var(--line); background:var(--panel2); border-radius:var(--r); padding:14px 16px; margin-bottom:14px;}
+  .domain-h{font-size:13px; font-weight:700; color:var(--accent); margin-bottom:10px; text-transform:uppercase; letter-spacing:.04em;}
+  .q{padding:10px 0; border-bottom:1px dotted var(--line);}
+  .q:last-child{border-bottom:none;}
+  .q-text{font-size:14px; font-weight:500; margin-bottom:7px;}
+  .q-opts{display:flex; flex-wrap:wrap; gap:8px;}
+  .q-opt{display:inline-flex; align-items:center; gap:7px; font-size:13px; padding:7px 11px; border:1px solid var(--line);
+    border-radius:8px; background:var(--panel); cursor:pointer;}
+  .q-opt:hover{border-color:var(--accent);}
+  .q-opt input{accent-color:var(--accent); width:15px; height:15px;}
+  .q-hpo{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:9.5px; color:var(--ink3);}
+  .deepen{margin-top:14px; border:1px solid var(--line); border-radius:var(--r); background:var(--panel2); padding:0 14px;}
+  .deepen summary{cursor:pointer; padding:12px 0; font-size:13px; font-weight:600; color:var(--ink2);}
+  .deepen summary:hover{color:var(--accent);}
+  .deepen-body{padding:0 0 14px;}
+
+  /* Beighton (injertado) */
+  .beighton{background:var(--panel2); border:1px solid var(--line); border-radius:var(--r); padding:16px 18px; margin-bottom:14px;}
+  .beighton h3{font-size:13px; margin:0 0 4px; color:var(--accent); display:flex; align-items:center; gap:8px;}
+  .beighton .bsub{font-size:12px; color:var(--ink3); margin-bottom:12px;}
+  .bgrid{display:grid; grid-template-columns:1fr 1fr; gap:8px;}
+  @media(max-width:560px){.bgrid{grid-template-columns:1fr;}}
+  .bitem{display:flex; align-items:center; gap:9px; padding:8px 10px; background:var(--panel); border:1px solid var(--line);
+    border-radius:8px; cursor:pointer; font-size:13px;}
+  .bitem input{accent-color:var(--accent); width:16px; height:16px; flex:none;}
+  .bscore{margin-top:13px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;}
+  .bscore .num{font-size:24px; font-weight:800; color:var(--ink);}
+  .bscore .verdict{font-size:13px; font-weight:700; padding:5px 12px; border-radius:999px;}
+  .verdict.pos{background:#173d2a; color:#7fe0a6; border:1px solid #2f6b48;}
+  .verdict.neg{background:var(--chip); color:var(--ink2); border:1px solid var(--line);}
+  .bscore .bthr{font-size:11.5px; color:var(--ink3);}
+
+  /* Diferencial + panel génico + estudio (Módulo 8) */
+  #differentialBox, #genePanelBox{margin-top:16px; padding-top:14px; border-top:1px solid var(--line);}
+  .dx{border:1px solid var(--line); background:var(--panel2); border-radius:10px; padding:11px 13px; margin-bottom:9px;}
+  .dx.top{border-color:var(--accent); background:linear-gradient(180deg,#173430,#15201d);}
+  .dx-hd{display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;}
+  .dx-nm{font-weight:700; font-size:13.5px;}
+  .pill{margin-left:auto; font-size:10.5px; font-weight:700; border-radius:999px; padding:2px 9px;}
+  .pill.sug{background:#173d2a; color:#7fe0a6; border:1px solid #2f6b48;}
+  .dx-meta{font-size:11px; color:var(--ink3); margin-top:6px;}
+  .dx-rule{font-size:11px; color:var(--ink2); margin-top:6px; padding:7px 9px; background:var(--panel); border:1px dashed var(--line); border-radius:7px;}
+  .gp-genes{display:flex; flex-wrap:wrap; gap:5px;}
+  .gene{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11px; font-weight:600; background:var(--chip); border:1px solid var(--line); border-radius:5px; padding:2px 7px; color:var(--accent); text-decoration:none;}
+  a.gene:hover{border-color:var(--accent);}
+  .study{background:var(--panel2); border:1px solid var(--accent2); border-radius:9px; padding:11px 12px; margin-bottom:12px; font-size:12px; line-height:1.5;}
+  .study-h{font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--accent); font-weight:700; margin-bottom:6px;}
+  .study-flag{display:inline-block; font-size:11px; font-weight:700; color:var(--major); margin-bottom:4px;}
+  .study-src{font-size:10.5px; color:var(--ink3); margin-top:6px;}
+  .study a, .gene-row a{color:var(--accent);}
+  .eval{margin-top:8px; padding:9px 11px; border-radius:8px; font-size:12px; line-height:1.5;}
+  .eval.on{background:#173d2a; border:1px solid #2f6b48; color:#cdeedd;}
+  .eval.off{background:#3a2a14; border:1px solid #6b5320; color:#eed8b0;}
+  .pop-badge{font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; padding:2px 8px; border-radius:999px; background:#1e3a4a; color:#9fd0e6; border:1px solid #2f5a70;}
+  .fresh{display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:11.5px; color:var(--ink2); background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px 11px;}
+  .fresh.stale{border-color:var(--major); color:#eed8b0;}
+  .fresh .btn{margin-left:auto; padding:5px 10px; font-size:11.5px;}
+  .fresh-res{font-size:12px; line-height:1.5; margin-top:8px; padding:9px 11px; border-radius:8px; background:var(--panel2); border:1px solid var(--line);}
+  .fresh-res.new{border-color:var(--accent);}
+  .gene-links{margin-top:8px;}
+  .gene-links summary{cursor:pointer; font-size:11px; color:var(--ink3);}
+  .gene-links summary:hover{color:var(--accent);}
+  .gene-row{font-size:11px; padding:5px 0; border-bottom:1px dotted var(--line);}
+  .gene-row b{font-family:"IBM Plex Mono",ui-monospace,monospace; color:var(--ink); margin-right:6px;}
+
+  /* Informes → HPO (Módulo 9) */
+  .inf-row{display:flex; align-items:flex-start; gap:10px; padding:9px 11px; background:var(--panel2); border:1px solid var(--line); border-radius:9px; margin-bottom:6px;}
+  .inf-main{flex:1; min-width:0; font-size:13px;}
+  .inf-row .hp{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:10px; color:var(--ink3);}
+  .inf-src{font-size:11.5px; color:var(--ink3); font-style:italic; margin-top:3px;}
+  .inf-row .warn{color:var(--major); font-weight:700;}
+  .inf-row .btn{flex:none;}
+
+  /* Antropometría (Módulo 6b) */
+  .anthro-box{border:1px solid var(--line); background:var(--panel2); border-radius:var(--r); padding:14px 16px; margin-bottom:14px;}
+  .am-grid{background:var(--panel); border:1px solid var(--line); border-radius:var(--r2); padding:10px 14px; margin-bottom:10px;}
+  .am-row{display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px dotted var(--line); font-size:13.5px;}
+  .am-row:last-child{border-bottom:none;}
+  .am-t{color:var(--ink2); min-width:120px; font-weight:600;}
+  .am-v{font-weight:700; font-family:"IBM Plex Mono",ui-monospace,monospace;}
+  .pct{margin-left:auto; font-size:11.5px; font-weight:700; border-radius:999px; padding:3px 10px; border:1px solid var(--line);}
+  .pct.mid{background:#173d2a; color:#7fe0a6; border-color:#2f6b48;}
+  .pct.low{background:#3a2a14; color:#e0a64a; border-color:#6b5320;}
+  .pct.high{background:#2c1714; color:#f2a08c; border-color:#7a3326;}
+  .pct.na{background:var(--chip); color:var(--ink3);}
+  .am-empty,.am-sub,.am-note{font-size:12px; color:var(--ink3);}
+  .am-sub{margin:10px 0 6px; color:var(--ink2); font-weight:600;}
+  .am-note{margin-top:12px; line-height:1.5; border-top:1px dotted var(--line); padding-top:8px;}
+  .am-note b{color:var(--ink2);}
+  .pheno-chips{display:flex; flex-wrap:wrap; gap:7px;}
+  .pheno-chip{font-size:12px; padding:6px 11px; border-radius:999px; cursor:pointer; background:var(--chip); border:1px solid var(--line); color:var(--ink); transition:.13s; display:inline-flex; align-items:center; gap:5px;}
+  .pheno-chip:hover{border-color:var(--accent);}
+  .pheno-chip.on{background:var(--chipsel); border-color:var(--chipsel-bd); color:#fff; font-weight:600;}
+  .pheno-chip .hp{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:9.5px; color:var(--ink3);}
+  .pheno-chip.on .hp{color:#bfe9e2;}
+</style>
+<!-- jsPDF para export (Módulo 10). CDN ya usado en el motor de referencia. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<!-- pdf.js para leer PDFs de guías (Módulo autoría con guía aportada) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <div class="logo">fH</div>
+    <div>
+      <h1>fenotipHAC · Fenotipado dirigido por criterios</h1>
+      <div class="sub">Anamnesis dirigida por fichas · HPO trilingüe en vivo · diferencial por umbrales · panel génico</div>
+    </div>
+  </div>
+  <div class="spacer"></div>
+  <div class="status-row" id="statusRow"></div>
+  <button class="btn ghost" id="openInformes">📄 Informes</button>
+  <button class="btn ghost" id="openSettings">⚙ Ajustes</button>
+</header>
+
+<div class="layout">
+  <main id="main"></main>
+  <aside class="cart">
+    <h2>Fenotipo del paciente <span class="counter" title="Fenotipos seleccionados">HPO <b id="statSel">0</b></span></h2>
+    <div class="patient-line" id="patientLine">Sin datos del paciente aún</div>
+    <div class="global-search">
+      <input id="globalSearch" type="text" placeholder='➕ Buscar HPO — español, inglés o HP:… (ej. "dedos largos")' autocomplete="off">
+      <div id="globalSearchResults"></div>
+    </div>
+    <div class="cart-group-title">Rasgos presentes</div>
+    <div id="cartList"><div class="empty">Aún no hay rasgos marcados</div></div>
+    <div id="differentialBox" style="display:none"></div>
+    <div id="genePanelBox" style="display:none"></div>
+    <div class="export-row">
+      <button class="export-btn primary" id="generatePdfBtn">⬇ Informe (PDF)</button>
+      <button class="export-btn secondary" id="copyCodesBtn">⧉ Copiar códigos HPO</button>
+    </div>
+    <div class="sec-note" style="margin-top:18px;">Términos y traducciones en vivo desde la API oficial de HPO (ontology.jax.org) y el babelon <b>obophenotype/hpo-translations</b> (estado OFFICIAL). Coste 0 en runtime. Orientativo — no sustituye el juicio clínico ni la confirmación molecular.</div>
+  </aside>
+</div>
+
+<div id="toast"></div>
+
+<script>
+/* ===========================================================================
+   PARTE A — MOTOR INJERTADO VERBATIM
+   Procedente de fenotipHAC_conectivopatias_3.html. Adaptación mínima: estas
+   funciones se reutilizan tal cual para la búsqueda HPO trilingüe.
+   =========================================================================== */
+const HPO_API = 'https://ontology.jax.org/api/hp';
+
+/* Definiciones ES curadas (se completan en vivo + traducción etiquetada). */
+const STATIC_DEFINITIONS = {
+  "HP:0000098":"Talla por encima de +2 DE para la edad y el sexo.",
+  "HP:0004322":"Talla por debajo de -2 DE para la edad y el sexo.",
+  "HP:0001166":"Aracnodactilia: dedos largos y delgados.",
+  "HP:0001382":"Hiperlaxitud articular.",
+  "HP:0000974":"Piel hiperextensible.",
+};
+
+let esLabelsPromise = null;
+const rootIdCache = {};
+const childrenCache = {};
+const liveDefinitionCache = {};
+
+/* Normaliza: minúsculas + sin acentos. */
+function normTxt(s){ return (s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9ñ ]/g,' ').replace(/\s+/g,' ').trim(); }
+const NL_STOP = new Set(['el','la','los','las','un','una','de','del','al','a','y','o','en','con','su','sus','se','que','cuando','esta','este','esto','muy','mas','le','lo','por','para','es','son','tiene','tener','hacia','entre','sobre','the','of']);
+/* Léxico coloquial → HPO (un grupo casa si TODAS sus raíces aparecen). */
+const LAY_LEXICON = [
+  {id:'HP:0001159', es:'Sindactilia', kw:[['ded','pegad'],['ded','unid'],['ded','fusion'],['ded','junt'],['membran','ded'],['sindactil']]},
+  {id:'HP:0001166', es:'Aracnodactilia', kw:[['ded','larg'],['aracnodactil'],['ded','delgad','larg']]},
+  {id:'HP:0010442', es:'Polidactilia', kw:[['ded','extra'],['ded','sobra'],['ded','de','mas'],['polidactil'],['seis','ded'],['sext','ded']]},
+  {id:'HP:0001156', es:'Braquidactilia', kw:[['ded','cort'],['braquidactil']]},
+  {id:'HP:0001382', es:'Hiperlaxitud articular', kw:[['articulacion','flexibl'],['hiperlaxit'],['doble','articulacion'],['articulacion','suelt'],['hipermovil'],['flexibl','articula'],['articulacion','elast']]},
+  {id:'HP:0000974', es:'Hiperextensibilidad cutánea (piel elástica)', kw:[['piel','elast'],['piel','estir'],['piel','goma'],['hiperextensib','piel'],['piel','flexibl']]},
+  {id:'HP:0000978', es:'Tendencia a hematomas (cardenales fáciles)', kw:[['cardenal'],['moret','facil'],['hematom','facil'],['moret'],['equimosis'],['amorat']]},
+  {id:'HP:0001065', es:'Estrías de distensión', kw:[['estria']]},
+  {id:'HP:0000316', es:'Hipertelorismo (ojos muy separados)', kw:[['ojos','separad'],['hipertelor'],['ojos','distanci']]},
+  {id:'HP:0000347', es:'Micrognatia (mentón pequeño)', kw:[['menton','pequen'],['mandibula','pequen'],['micrognat'],['barbilla','pequen']]},
+  {id:'HP:0000545', es:'Miopía', kw:[['miop'],['vista','cort']]},
+  {id:'HP:0001083', es:'Ectopia lentis (cristalino desplazado)', kw:[['cristalin','desplaz'],['cristalin','luxa'],['ectopia','lentis'],['subluxacion','cristalin']]},
+  {id:'HP:0002616', es:'Dilatación de la raíz aórtica', kw:[['aorta','dilatad'],['raiz','aort'],['dilatacion','aort'],['aneurism','aort']]},
+  {id:'HP:0002650', es:'Escoliosis', kw:[['escolios'],['columna','desviad'],['espalda','torcid'],['columna','curv']]},
+  {id:'HP:0000768', es:'Pectus carinatum (pecho de paloma)', kw:[['pecho','salient'],['pecho','palom'],['pectus','carinat'],['esternon','salient']]},
+  {id:'HP:0000767', es:'Pectus excavatum (pecho hundido)', kw:[['pecho','hundid'],['pectus','excavat'],['esternon','hundid']]},
+  {id:'HP:0001763', es:'Pie plano', kw:[['pie','plan'],['pies','plan'],['pie','valg']]},
+  {id:'HP:0001252', es:'Hipotonía', kw:[['hipoton'],['flacid'],['tono','baj'],['musculo','blandit'],['bebe','blandit']]},
+  {id:'HP:0001249', es:'Discapacidad intelectual', kw:[['retraso','mental'],['discapacidad','intelect'],['retraso','aprendiz']]},
+  {id:'HP:0001250', es:'Crisis epilépticas', kw:[['convulsion'],['epileps'],['crisis','epilept'],['ataque','epilept']]},
+  {id:'HP:0001873', es:'Trombocitopenia', kw:[['plaqueta','baj'],['trombopen'],['trombocitopen'],['pocas','plaqueta']]},
+  {id:'HP:0002715', es:'Inmunodeficiencia', kw:[['inmunodeficien'],['infeccion','repet'],['defensas','baj']]},
+  {id:'HP:0001945', es:'Fiebre', kw:[['fiebre'],['febri']]},
+].filter(e=>e.es && e.kw.length);
+
+function matchLexicon(qNorm){
+  const out=[];
+  LAY_LEXICON.forEach(entry=>{
+    let best=0;
+    entry.kw.forEach(group=>{ if(group.every(stem=> qNorm.includes(stem))) best=Math.max(best, group.length); });
+    if(best>0) out.push({id:entry.id, es:entry.es, score:best});
+  });
+  out.sort((a,b)=> b.score-a.score);
+  return out;
+}
+
+/* Carga de etiquetas ES OFFICIAL desde el babelon raw TSV → window.__esLabels */
+/* Adaptado del motor: además cachea el babelon en localStorage y, si la red lo
+   bloquea (proxy SERGAS, sin conexión), trabaja con la última copia cacheada. */
+function loadEsLabels(){
+  if(esLabelsPromise) return esLabelsPromise;
+  esLabelsPromise = fetch('https://raw.githubusercontent.com/obophenotype/hpo-translations/main/babelon/hp-es.babelon.tsv')
+    .then(r=>r.text())
+    .then(text=>{
+      const map = {};
+      const lines = text.split('\n');
+      for(let i=1;i<lines.length;i++){
+        const cols = lines[i].split('\t');
+        if(cols.length >= 6 && cols[4] === 'rdfs:label'){ map[cols[2]] = cols[5]; }
+      }
+      try{ localStorage.setItem('fh_babelon', JSON.stringify(map)); }catch(e){}
+      return map;
+    })
+    .catch(()=>{ try{ return JSON.parse(localStorage.getItem('fh_babelon'))||{}; }catch(e){ return {}; } });
+  return esLabelsPromise;
+}
+
+async function fetchChildren(id){
+  if(childrenCache[id]) return childrenCache[id];
+  const url = HPO_API + '/terms/' + id + '/children';
+  const resp = await fetch(url);
+  const data = await resp.json();
+  const list = Array.isArray(data) ? data : (data.data || []);
+  childrenCache[id] = list;
+  return list;
+}
+
+function showToast(msg){
+  const t = document.getElementById('toast');
+  if(!t) return;
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 1900);
+}
+
+function panelAppLink(label){
+  return 'https://nhsgms-panelapp.genomicsengland.co.uk/panels/?search='+encodeURIComponent(label);
+}
+
+function infoDotHtml(id){
+  const staticDef = STATIC_DEFINITIONS[id];
+  if(staticDef) return `<span class="info-dot" data-id="${id}">i<span class="tooltip">${staticDef}</span></span>`;
+  return `<span class="info-dot pending" data-id="${id}" style="display:none;">i<span class="tooltip"></span></span>`;
+}
+function wireInfoDot(dot){
+  if(dot.dataset.bound) return;
+  dot.dataset.bound = '1';
+  dot.addEventListener('click', (e)=>{ e.stopPropagation(); dot.classList.toggle('open'); });
+}
+async function translateFree(text){
+  try{
+    const r = await fetch('https://api.mymemory.translated.net/get?q=' + encodeURIComponent(text) + '&langpair=en|es');
+    const d = await r.json();
+    const t = d && d.responseData && d.responseData.translatedText;
+    if(t && !/MYMEMORY WARNING/i.test(t)) return t;
+  }catch(e){}
+  return '';
+}
+async function fetchLiveDefinition(id){
+  if(STATIC_DEFINITIONS[id]) return STATIC_DEFINITIONS[id];
+  if(liveDefinitionCache[id] !== undefined) return liveDefinitionCache[id];
+  try{
+    const r = await fetch(HPO_API + '/terms/' + id);
+    const d = await r.json();
+    const enDef = (d && d.definition) ? d.definition : '';
+    if(!enDef){ liveDefinitionCache[id] = ''; return ''; }
+    const esDef = await translateFree(enDef);
+    liveDefinitionCache[id] = esDef ? `${esDef} (traducción automática)` : `${enDef} (EN, sin traducción)`;
+  }catch(e){ liveDefinitionCache[id] = ''; }
+  return liveDefinitionCache[id];
+}
+function prefetchDefinitions(box){
+  if(!box) return;
+  Array.from(box.querySelectorAll('.info-dot.pending')).forEach(async dot=>{
+    const id = dot.dataset.id;
+    const def = await fetchLiveDefinition(id);
+    if(def){
+      dot.querySelector('.tooltip').textContent = def;
+      dot.classList.remove('pending'); dot.style.display = '';
+      wireInfoDot(dot);
+    }
+  });
+}
+
+/* Búsqueda trilingüe simultánea (ES babelon · EN JAX · código HP:). Verbatim. */
+async function runInlineSearch(term, regionLabel, boxId){
+  const box = document.getElementById(boxId || 'regionSearchResults');
+  if(!box) return;
+  if(!term || term.length < 3){ box.innerHTML = ''; return; }
+  box.innerHTML = '<div class="loading" style="padding:8px 0;">Buscando…</div>';
+  try{
+    const esLabels = await loadEsLabels();
+    window.__esLabels = esLabels;
+    const q = term.trim().toLowerCase();
+    const qn = normTxt(term);
+    const qTokens = qn.split(' ').filter(t=>t.length>=4 && !NL_STOP.has(t));
+    const matches = [];
+    const seen = new Set();
+    function addMatch(id, esLabel, enLabel){
+      if(seen.has(id)) return;
+      seen.add(id);
+      matches.push({id, es: esLabel || enLabel || id, en: enLabel || ''});
+    }
+    // 0) Código HPO directo
+    const codeMatch = q.match(/^(hp:)?(\d{1,7})$/i);
+    if(codeMatch){
+      const id = 'HP:' + codeMatch[2].padStart(7, '0');
+      try{
+        const r = await fetch(HPO_API + '/terms/' + id);
+        if(r.ok){ const d = await r.json(); if(d && d.id) addMatch(d.id, esLabels[d.id], d.name); }
+      }catch(e){}
+    }
+    // 1) Lenguaje natural: léxico coloquial → HPO (prioritario)
+    matchLexicon(qn).forEach(m=>{ if(matches.length<16) addMatch(m.id, esLabels[m.id] || m.es); });
+    // 2) Etiqueta española: subcadena directa
+    for(const id in esLabels){
+      if(matches.length >= 14) break;
+      if(esLabels[id].toLowerCase().includes(q)) addMatch(id, esLabels[id]);
+    }
+    // 3) Etiqueta española: coincidencia por palabras clave
+    if(qTokens.length){
+      const scored=[];
+      for(const id in esLabels){
+        const ln = normTxt(esLabels[id]);
+        let hits=0; qTokens.forEach(t=>{ if(ln.includes(t)) hits++; });
+        if(hits===qTokens.length || (qTokens.length>=2 && hits>=qTokens.length-1)) scored.push({id, hits, len:ln.length});
+      }
+      scored.sort((a,b)=> b.hits-a.hits || a.len-b.len);
+      scored.slice(0,12).forEach(s=>{ if(matches.length<16) addMatch(s.id, esLabels[s.id]); });
+    }
+    // 4) Inglés (API HPO, incluye sinónimos)
+    try{
+      const r = await fetch(HPO_API + '/search?q=' + encodeURIComponent(term) + '&max=8');
+      const d = await r.json();
+      const enResults = d.terms || d.data || [];
+      enResults.forEach(t => { if(matches.length < 18) addMatch(t.id, esLabels[t.id], t.name); });
+    }catch(e){}
+    if(matches.length === 0){
+      box.innerHTML = '<div class="loading" style="padding:8px 0;">Sin resultados (probado en español, inglés y código HPO).</div>';
+      return;
+    }
+    box.innerHTML = matches.map(r=>searchRowHtml(r, regionLabel)).join('');
+    attachSearchRowHandlers(box, regionLabel);
+    prefetchDefinitions(box);
+  }catch(err){ box.innerHTML = '<div class="err">Error al buscar términos HPO.</div>'; }
+}
+function searchRowHtml(node, regionLabel){
+  const sel = selections[node.id];
+  const showEn = node.en && node.en.toLowerCase() !== (node.es||'').toLowerCase();
+  return `
+  <div class="search-row" data-id="${node.id}" data-name="${(node.es||'').replace(/"/g,'&quot;')}">
+    <span class="check-wrap ${sel?'active':''}" data-act="toggle">
+      <span class="checkbox"><svg viewBox="0 0 16 16" fill="none"><path d="M3 8.5L6.2 11.5L13 4.5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+    </span>
+    <div class="node-text">
+      <div class="node-es">${node.es}${infoDotHtml(node.id)}</div>
+      <div class="node-en">${node.id}${showEn ? ' · '+node.en : ''}</div>
+    </div>
+  </div>`;
+}
+function attachSearchRowHandlers(box, regionLabel){
+  box.querySelectorAll('.search-row').forEach(row=>{
+    const id = row.dataset.id;
+    const name = row.dataset.name;
+    const infoDot = row.querySelector('.info-dot');
+    if(infoDot) wireInfoDot(infoDot);
+    const check = row.querySelector('.check-wrap');
+    check.addEventListener('click', ()=>{
+      const esLabel = (window.__esLabels && window.__esLabels[id]) || name;
+      addSelection(id, esLabel, name, (regionLabel||'Búsqueda'), true);
+      check.classList.toggle('active', !!selections[id]);
+    });
+  });
+}
+
+/* ===========================================================================
+   PARTE B — CAPA NUEVA (Módulo 1)
+   Config (localStorage) · GitHub Contents API · proveedor LLM · verificación
+   HPO · estado del paciente/fenotipo · UI de Ajustes.
+   =========================================================================== */
+
+/* ---- Estado de la sesión (scope de módulo, NO en window) ---- */
+let selections = {};                 // id -> {hpo, es, en, region, origen, verified}
+let patient = {motivo:'', edadValor:'', edadUnidad:'años', sexo:'', tallaCm:'', pesoKg:'', envergaduraCm:''};
+let beighton = {};
+
+function patientAgeYears(){
+  const v=parseFloat(String(patient.edadValor).replace(',','.'));
+  if(isNaN(v)) return null;
+  return patient.edadUnidad==='meses' ? v/12 : v;
+}
+
+/* ---- Config en localStorage ---- */
+const CFG_KEY='fh_cfg';
+const CFG_DEFAULTS={ anthropicKey:'', openaiKey:'', preferProvider:'anthropic', models:{}, gh_owner:'', gh_repo:'', gh_branch:'main', gh_pat:'' };
+function loadCfg(){
+  let c; try{ c=Object.assign({}, CFG_DEFAULTS, JSON.parse(localStorage.getItem(CFG_KEY))||{}); }catch(e){ c=Object.assign({}, CFG_DEFAULTS); }
+  // Migración desde el esquema antiguo {provider, llmKey}
+  if(c.llmKey && !c.anthropicKey && !c.openaiKey){ if(c.provider==='openai') c.openaiKey=c.llmKey; else c.anthropicKey=c.llmKey; }
+  return c;
+}
+function saveCfg(c){ localStorage.setItem(CFG_KEY, JSON.stringify(c)); }
+
+/* ---- Enrutado automático de modelo por operación ----
+   Pones las dos API keys; cada operación usa el modelo más adecuado del
+   proveedor preferido, y si ese proveedor no tiene key, cae al otro disponible. */
+/* Niveles: cheap (tareas triviales, ahorrar) · mid (extracción/anamnesis) ·
+   search (chequeos con web: guías/freshness) · author (LA CIENCIA: autoría de
+   ficha rigurosa por el estado del arte → modelo MÁS potente, sin escatimar). */
+const TASK_TIER = { assign:'cheap', extract:'mid', deepen:'mid', author:'author', freshness:'search', eval:'search' };
+const DEFAULT_MODELS = {
+  anthropic: { cheap:'claude-haiku-4-5', mid:'claude-sonnet-4-6', search:'claude-sonnet-4-6', author:'claude-opus-4-8' },
+  openai:    { cheap:'gpt-4o-mini',      mid:'gpt-4o-mini',       search:'gpt-4o-search-preview', author:'gpt-4o-search-preview' }
+};
+function providerKey(p){ const c=loadCfg(); return p==='anthropic' ? c.anthropicKey : c.openaiKey; }
+function anyProvider(){ return !!(providerKey('anthropic') || providerKey('openai')); }
+function modelForTier(p, tier){ const c=loadCfg(); return (c.models && c.models[p] && c.models[p][tier]) || DEFAULT_MODELS[p][tier]; }
+function pickModel(task){
+  const tier = TASK_TIER[task] || 'mid';
+  const order = loadCfg().preferProvider==='openai' ? ['openai','anthropic'] : ['anthropic','openai'];
+  for(const p of order){ if(providerKey(p)) return { provider:p, model: modelForTier(p, tier), tier }; }
+  return null;
+}
+/* Descubrimiento de modelos disponibles (para el selector auto-actualizable) */
+function cachedModels(p){ try{ return JSON.parse(localStorage.getItem('fh_models_'+p))||[]; }catch(e){ return []; } }
+async function fetchModels(p){
+  const c=loadCfg();
+  if(p==='anthropic'){
+    if(!c.anthropicKey) return [];
+    const r=await fetch('https://api.anthropic.com/v1/models?limit=100', {headers:{'x-api-key':c.anthropicKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'}});
+    if(!r.ok) throw new Error('Anthropic /models '+r.status);
+    const d=await r.json(); const ids=(d.data||[]).map(m=>m.id);
+    localStorage.setItem('fh_models_anthropic', JSON.stringify(ids)); return ids;
+  } else {
+    if(!c.openaiKey) return [];
+    const r=await fetch('https://api.openai.com/v1/models', {headers:{Authorization:'Bearer '+c.openaiKey}});
+    if(!r.ok) throw new Error('OpenAI /models '+r.status);
+    const d=await r.json(); const ids=(d.data||[]).map(m=>m.id).filter(id=>/^(gpt|o[0-9]|chatgpt)/i.test(id)).sort();
+    localStorage.setItem('fh_models_openai', JSON.stringify(ids)); return ids;
+  }
+}
+
+/* ---- base64 con soporte UTF-8 (GitHub Contents API usa base64) ---- */
+function b64EncodeUnicode(str){ return btoa(unescape(encodeURIComponent(str))); }
+function b64DecodeUnicode(str){ return decodeURIComponent(escape(atob((str||'').replace(/\n/g,'')))); }
+
+/* ---- GitHub Contents API ---- */
+function ghBase(){ const c=loadCfg(); return `https://api.github.com/repos/${c.gh_owner}/${c.gh_repo}/contents/`; }
+function ghHeaders(){ const c=loadCfg(); return {Authorization:'Bearer '+c.gh_pat, Accept:'application/vnd.github+json'}; }
+function ghConfigured(){ const c=loadCfg(); return !!(c.gh_owner && c.gh_repo && c.gh_pat); }
+
+async function ghGetFile(path){
+  const c=loadCfg();
+  const url = ghBase()+path+'?ref='+encodeURIComponent(c.gh_branch||'main');
+  const r = await fetch(url, {headers:ghHeaders()});
+  if(r.status===404) return {json:null, sha:null, missing:true};
+  if(!r.ok) throw new Error('GitHub GET '+r.status);
+  const d = await r.json();
+  const text = b64DecodeUnicode(d.content||'');
+  let json=null; try{ json=JSON.parse(text); }catch(e){}
+  return {json, sha:d.sha, raw:text};
+}
+async function ghPutFile(path, obj, message, sha){
+  const c=loadCfg();
+  const body = { message: message||('update '+path), content: b64EncodeUnicode(JSON.stringify(obj,null,2)), branch: c.gh_branch||'main' };
+  if(sha) body.sha = sha;
+  const r = await fetch(ghBase()+path, {
+    method:'PUT',
+    headers: Object.assign({}, ghHeaders(), {'Content-Type':'application/json'}),
+    body: JSON.stringify(body)
+  });
+  if(!r.ok){ const t=await r.text(); throw new Error('GitHub PUT '+r.status+' '+t); }
+  return r.json();
+}
+
+/* ---- Librería de fichas (índice + fichas) con caché localStorage ---- */
+function cacheIndex(idx){ localStorage.setItem('fh_idx', JSON.stringify(idx)); }
+function cachedIndex(){ try{ return JSON.parse(localStorage.getItem('fh_idx')); }catch(e){ return null; } }
+async function getIndex(){
+  if(ghConfigured()){
+    try{ const {json}=await ghGetFile('fichas/index.json'); if(json){ cacheIndex(json); return json; } }
+    catch(e){ console.warn('getIndex → caché', e.message); }
+  }
+  return cachedIndex() || {fichas:[]};
+}
+async function getFicha(id){
+  if(ghConfigured()){
+    try{ const {json}=await ghGetFile('fichas/'+id+'.json'); if(json){ localStorage.setItem('fh_ficha_'+id, JSON.stringify(json)); return json; } }
+    catch(e){ console.warn('getFicha → caché', e.message); }
+  }
+  try{ return JSON.parse(localStorage.getItem('fh_ficha_'+id)); }catch(e){ return null; }
+}
+async function saveFicha(ficha){
+  // 1) sha actual de la ficha (si existe) y PUT de la ficha
+  let sha=null;
+  try{ const cur=await ghGetFile('fichas/'+ficha.id+'.json'); sha=cur.sha; }catch(e){}
+  await ghPutFile('fichas/'+ficha.id+'.json', ficha, 'ficha: '+ficha.id, sha);
+  // 2) actualizar index.json (añadir/editar {id, nombre, sinonimos})
+  let idx, idxSha=null;
+  try{ const ci=await ghGetFile('fichas/index.json'); idx=ci.json||{fichas:[]}; idxSha=ci.sha; }
+  catch(e){ idx=cachedIndex()||{fichas:[]}; }
+  if(!idx.fichas) idx.fichas=[];
+  const entry={id:ficha.id, nombre:ficha.nombre_es, sinonimos:ficha.sinonimos||[], poblacion:ficha.poblacion||'unica', grupo:ficha.grupo||null};
+  const i=idx.fichas.findIndex(f=>f.id===ficha.id);
+  if(i>=0) idx.fichas[i]=entry; else idx.fichas.push(entry);
+  await ghPutFile('fichas/index.json', idx, 'index: '+ficha.id, idxSha);
+  cacheIndex(idx);
+  localStorage.setItem('fh_ficha_'+ficha.id, JSON.stringify(ficha));
+  return idx;
+}
+
+/* ---- Capa proveedor LLM (Claude / OpenAI) ---- */
+function extractJSON(text){
+  if(!text) return null;
+  let s=String(text).trim();
+  s=s.replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim();
+  const a=s.indexOf('{'), b=s.lastIndexOf('}');
+  if(a>=0 && b>a) s=s.slice(a,b+1);
+  try{ return JSON.parse(s); }catch(e){ return null; }
+}
+async function callLLM({system, user, webSearch, maxTokens, task}){
+  const c=loadCfg();
+  maxTokens = maxTokens || 1500;
+  const pick = pickModel(task||'deepen');
+  if(!pick) throw new Error('No hay proveedor LLM configurado: añade una API key (Claude u OpenAI) en ⚙ Ajustes.');
+  if(pick.provider==='openai'){
+    let model=pick.model, body;
+    if(webSearch){ if(!/search/.test(model)) model=DEFAULT_MODELS.openai.search; body={model, messages:[{role:'system',content:system},{role:'user',content:user}], web_search_options:{}}; }
+    else { body={model, messages:[{role:'system',content:system},{role:'user',content:user}], temperature:0.2, max_tokens:maxTokens}; }
+    const r=await fetch('https://api.openai.com/v1/chat/completions', {
+      method:'POST', headers:{Authorization:'Bearer '+c.openaiKey,'Content-Type':'application/json'}, body:JSON.stringify(body)
+    });
+    if(!r.ok) throw new Error('OpenAI '+r.status+' '+await r.text());
+    const d=await r.json();
+    return d.choices[0].message.content;
+  } else { // anthropic
+    const body={model:pick.model, max_tokens:maxTokens, system, messages:[{role:'user',content:user}]};
+    if(webSearch) body.tools=[{type:'web_search_20250305', name:'web_search', max_uses:5}];
+    const r=await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{'x-api-key':c.anthropicKey,'anthropic-version':'2023-06-01','content-type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify(body)
+    });
+    if(!r.ok) throw new Error('Anthropic '+r.status+' '+await r.text());
+    const d=await r.json();
+    return (d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
+  }
+}
+
+/* ---- Verificación HPO contra JAX (descarta códigos inventados por el LLM) ---- */
+async function verifyHpo(id){
+  if(!/^HP:\d{7}$/.test(id||'')) return null;
+  try{
+    const r=await fetch(HPO_API+'/terms/'+id);
+    if(!r.ok) return null;
+    const d=await r.json();
+    if(d && d.id) return {id:d.id, name:d.name, def:d.definition||''};
+  }catch(e){}
+  return null;
+}
+/* Verifica + reetiqueta con babelon. Devuelve {id, es, en, verified}. */
+async function verifyAndRelabel(id, fallbackLabel){
+  const esLabels = await loadEsLabels();
+  const t = await verifyHpo(id);
+  if(!t) return {id, es:fallbackLabel||id, en:fallbackLabel||'', verified:false};
+  return {id:t.id, es: esLabels[t.id] || fallbackLabel || t.name, en:t.name, verified:true};
+}
+
+/* ---- Fenotipo: añadir/quitar selección ---- */
+function addSelection(id, es, en, origen, toggle){
+  if(toggle && selections[id]){ delete selections[id]; renderCart(); return false; }
+  selections[id] = {hpo:id, es, en, region:origen||'manual', origen:origen||'manual', verified:(selections[id]?selections[id].verified:undefined)};
+  renderCart();
+  return true;
+}
+function removeSelection(id){ delete selections[id]; renderCart(); }
+
+function renderPatientLine(){
+  const el=document.getElementById('patientLine'); if(!el) return;
+  if(!patient.motivo && !patient.sexo && !patient.edadValor){ el.textContent='Sin datos del paciente aún'; return; }
+  const parts=[];
+  if(patient.motivo) parts.push(patient.motivo);
+  if(patient.edadValor) parts.push(patient.edadValor+' '+patient.edadUnidad);
+  if(patient.sexo) parts.push(patient.sexo);
+  el.textContent = parts.join(' · ');
+}
+
+function renderCart(){
+  const el=document.getElementById('cartList'); if(!el) return;
+  const ids=Object.keys(selections);
+  const stat=document.getElementById('statSel'); if(stat) stat.textContent=ids.length;
+  if(!ids.length){ el.innerHTML='<div class="empty">Aún no hay rasgos marcados</div>'; renderDifferential(); return; }
+  el.innerHTML = ids.map(id=>{
+    const s=selections[id];
+    const warn = s.verified===false ? '<span class="warn" title="No verificado contra JAX"> ⚠</span>' : '';
+    return `<div class="cart-item"><div>${s.es}<span class="region-tag">${id} · ${s.origen||''}${warn}</span></div><span class="x" data-x="${id}" role="button" tabindex="0" aria-label="Quitar ${id}">✕</span></div>`;
+  }).join('');
+  el.querySelectorAll('.x').forEach(x=>x.addEventListener('click', ()=> removeSelection(x.dataset.x)));
+  renderDifferential();
+}
+
+/* ---- Indicadores de estado (proveedor / babelon / GitHub) ---- */
+let babelonReady=false;
+function renderStatus(){
+  const c=loadCfg();
+  const row=document.getElementById('statusRow'); if(!row) return;
+  const ghOk = ghConfigured();
+  const chips=[
+    {on:!!c.anthropicKey, label: c.anthropicKey ? 'Claude listo' : 'Claude —'},
+    {on:!!c.openaiKey, label: c.openaiKey ? 'OpenAI listo' : 'OpenAI —'},
+    {on:babelonReady, label: babelonReady ? 'babelon cargado' : 'babelon…'},
+    {on:ghOk, label: ghOk ? 'GitHub conectado' : 'GitHub sin configurar'},
+  ];
+  if(!anyProvider()) chips[0]={on:false, label:'LLM sin configurar'}, chips.splice(1,1);
+  row.innerHTML = chips.map(ch=>`<span class="status-chip ${ch.on?'on':'off'}"><span class="dot"></span>${ch.label}</span>`).join('');
+}
+
+/* ---- Autodiagnóstico de la conexión a api.github.com ----
+   Aísla en qué capa se rompe la llamada a GitHub probando 3 peticiones:
+     P1 GET simple (sin cabeceras → sin preflight CORS)
+     P2 GET con preflight (cabecera X-Requested-With, permitida por GitHub)
+     P3 GET con preflight + Authorization (token de mentira → debe dar 401)
+   Si una "resuelve" (cualquier status HTTP) la red llega; si "lanza"
+   (Failed to fetch) está bloqueada antes de salir. */
+async function probe(label, url, headers){
+  try{
+    const r = await fetch(url, headers ? {headers} : undefined);
+    return {label, ok:true, status:r.status};
+  }catch(e){ return {label, ok:false, err:e.message}; }
+}
+async function diagnoseGithub(){
+  const ZEN='https://api.github.com/zen';
+  const p1 = await probe('P1 simple',  ZEN, null);
+  const p2 = await probe('P2 preflight', ZEN, {'X-Requested-With':'XMLHttpRequest'});
+  const p3 = await probe('P3 auth',    ZEN, {'Authorization':'Bearer diag-dummy'});
+  const fmt = p => p.ok ? `<b style="color:var(--ok)">OK ${p.status}</b>` : `<b style="color:#f2a08c">FALLA (${p.err})</b>`;
+  let lines = `Diagnóstico → ${p1.label}: ${fmt(p1)} · ${p2.label}: ${fmt(p2)} · ${p3.label}: ${fmt(p3)}`;
+  let verdict;
+  if(!p1.ok){
+    verdict='→ El navegador NO llega a <b>api.github.com</b> ni en una petición simple. Es un <b>bloqueador de contenido/extensión o filtro de red del navegador</b> sobre ese host.';
+  } else if(!p2.ok){
+    verdict='→ La petición simple llega, pero el <b>preflight CORS (OPTIONS)</b> se bloquea. Un bloqueador está cortando los OPTIONS a GitHub.';
+  } else if(!p3.ok){
+    verdict='→ Preflight OK, pero falla al añadir <b>Authorization</b>. Una extensión está eliminando esa cabecera.';
+  } else {
+    // La API es accesible. El fallo está en TUS datos. Afinamos:
+    const c = loadCfg();
+    const owner=c.gh_owner||'', repo=c.gh_repo||'', branch=c.gh_branch||'main', pat=c.gh_pat||'';
+    const url = `https://api.github.com/repos/${owner}/${repo}/contents/fichas/index.json?ref=${branch}`;
+    // Forma del PAT (sin revelarlo)
+    const patFlags=[];
+    if(!pat) patFlags.push('VACÍO');
+    if(/\s/.test(pat)) patFlags.push('contiene ESPACIO/SALTO DE LÍNEA');
+    if(pat && !/^[\x21-\x7e]+$/.test(pat)) patFlags.push('contiene carácter no-ASCII');
+    if(pat && !/^(github_pat_|ghp_|gho_)/.test(pat)) patFlags.push('no empieza por github_pat_/ghp_');
+    const patShape = pat ? `PAT: ${pat.length} car., empieza "${pat.slice(0,11)}…"${patFlags.length?' ⚠ '+patFlags.join(', '):' (formato OK)'}` : 'PAT: VACÍO';
+    // Forma de owner/repo
+    const ovFlags=[];
+    if(/[\/\s]/.test(owner)) ovFlags.push('owner tiene "/" o espacio (¿pegaste owner/repo o la URL?)');
+    if(/[\/\s]/.test(repo)) ovFlags.push('repo tiene "/" o espacio');
+    if(/^https?:|github\.com/i.test(owner+repo)) ovFlags.push('parece una URL completa, no solo el nombre');
+    if(/\.git$/i.test(repo)) ovFlags.push('repo termina en .git (quítalo)');
+    // P4: token REAL contra /user (depende de auth) → aísla token vs owner/repo
+    let p4;
+    try{ const r=await fetch('https://api.github.com/user',{headers:{Authorization:'Bearer '+pat, Accept:'application/vnd.github+json'}}); p4={ok:true,status:r.status}; }
+    catch(e){ p4={ok:false,err:e.message}; }
+    lines += ` · P4 token real: ${fmt(p4)}`;
+    if(!p4.ok){
+      verdict='→ <b>El PAT está malformado</b> (un carácter inválido impide enviar la cabecera). Bórralo del campo y pégalo de nuevo, recién copiado de GitHub, sin espacios ni saltos.';
+    } else if(p4.status===200){
+      verdict=`→ <b>El token es válido</b>. El problema está en <b>owner/repo</b>. URL que se intenta:<br><code style="font-size:10px;word-break:break-all">${url}</code>${ovFlags.length?'<br>⚠ '+ovFlags.join(' · '):'<br>Revisa que owner y repo sean EXACTOS (mayúsculas/guiones).'}`;
+    } else if(p4.status===401){
+      verdict='→ <b>El token no autentica (401)</b>: caducado, revocado o mal copiado. Genera/copialo de nuevo en GitHub → Developer settings → Fine-grained tokens.';
+    } else if(p4.status===403){
+      verdict='→ <b>403</b>: el token llega pero le falta permiso (¿Contents Read/write y el repo seleccionado?) o hay límite de peticiones.';
+    } else {
+      verdict='→ Respuesta inesperada del token (HTTP '+p4.status+').';
+    }
+    return `<span style="font-size:11px;line-height:1.7">${lines}<br>${verdict}<br>${patShape}</span>`;
+  }
+  return `<span style="font-size:11px;line-height:1.7">${lines}<br>${verdict}</span>`;
+}
+
+/* ---- Modal de Ajustes ---- */
+function modelSelectHtml(p, tier){
+  const def=DEFAULT_MODELS[p][tier];
+  const cur=modelForTier(p,tier);
+  const opts=[...new Set([def, cur, ...cachedModels(p)])];
+  return `<select data-mp="${p}" data-mt="${tier}" style="width:100%; padding:7px 9px; border:1px solid var(--line); border-radius:8px; background:var(--panel2); color:var(--ink); font-size:11.5px">
+    ${opts.map(id=>`<option value="${id}" ${id===cur?'selected':''}>${id}${id===def?' · def.':''}</option>`).join('')}
+  </select>`;
+}
+function modelGridHtml(){
+  const row=(label,tier)=>`<tr><td style="color:var(--ink3); padding:4px 8px 4px 0; white-space:nowrap">${label}</td>
+    <td style="padding:3px 6px 3px 0">${modelSelectHtml('anthropic',tier)}</td>
+    <td style="padding:3px 0">${modelSelectHtml('openai',tier)}</td></tr>`;
+  return `<table style="width:100%; border-collapse:collapse; font-size:11.5px; margin-top:8px">
+    <tr><td></td><td style="color:var(--accent); font-weight:700; padding:0 6px 4px 0">Claude</td><td style="color:var(--accent); font-weight:700; padding:0 0 4px">OpenAI</td></tr>
+    ${row('Asignación (barato)','cheap')}
+    ${row('Extracción/anamnesis','mid')}
+    ${row('Guías/freshness (web)','search')}
+    ${row('Autoría ficha (máx., web)','author')}
+  </table>`;
+}
+function openSettings(){
+  const c=loadCfg();
+  const ov=document.createElement('div');
+  ov.className='overlay'; ov.id='settingsOverlay';
+  ov.innerHTML = `
+  <div class="modal" role="dialog" aria-label="Ajustes">
+    <h2>⚙ Ajustes</h2>
+    <div class="msub">Las API keys y el PAT de GitHub se guardan <b>solo en el localStorage de este navegador</b>. Uso personal local. Pon <b>las dos keys</b>: la app elige por operación el modelo más adecuado y, si un proveedor no tiene key, usa el otro.</div>
+
+    <h3>Proveedores LLM</h3>
+    <div class="field"><label>Anthropic (Claude) — API key</label>
+      <input id="cfgAnthropicKey" type="password" value="${c.anthropicKey||''}" placeholder="sk-ant-…" autocomplete="off"></div>
+    <div class="field"><label>OpenAI — API key</label>
+      <input id="cfgOpenaiKey" type="password" value="${c.openaiKey||''}" placeholder="sk-…" autocomplete="off"></div>
+    <div class="field"><label>Preferencia cuando ambos están disponibles</label>
+      <div class="seg" id="prefSeg">
+        <button data-pref="anthropic" class="${c.preferProvider!=='openai'?'on':''}">Claude primero</button>
+        <button data-pref="openai" class="${c.preferProvider==='openai'?'on':''}">OpenAI primero</button>
+      </div>
+    </div>
+    <details style="margin-top:6px">
+      <summary style="cursor:pointer; font-size:12px; color:var(--ink2)">Modelos por tarea (avanzado) — auto-actualizable</summary>
+      <div style="padding:8px 0">
+        <button class="btn" id="cfgRefreshModels">↻ Refrescar modelos disponibles</button>
+        <span class="test-out" id="cfgModelsOut" style="margin-left:8px"></span>
+        <div id="cfgModelGrid">${modelGridHtml()}</div>
+        <div class="sec-note">Vacío/“def.” = modelo por defecto. Pulsa <b>Refrescar</b> para traer la lista vigente de cada proveedor (si mañana sale uno nuevo, aparece aquí). Niveles: <b>barato</b> (asignación), <b>medio</b> (extracción/anamnesis), <b>búsqueda</b> (autoría/guías/freshness, requiere modelo con web search).</div>
+      </div>
+    </details>
+
+    <h3>Almacén GitHub (librería de fichas)</h3>
+    <div class="field"><label>Owner (usuario u organización)</label>
+      <input id="cfgOwner" type="text" value="${c.gh_owner||''}" placeholder="tu-usuario" autocomplete="off"></div>
+    <div class="field"><label>Repositorio</label>
+      <input id="cfgRepo" type="text" value="${c.gh_repo||''}" placeholder="fenotiphac-fichas" autocomplete="off"></div>
+    <div class="field"><label>Rama</label>
+      <input id="cfgBranch" type="text" value="${c.gh_branch||'main'}" placeholder="main" autocomplete="off"></div>
+    <div class="field"><label>Personal Access Token (fine-grained · Contents R/W)</label>
+      <input id="cfgPat" type="password" value="${c.gh_pat||''}" placeholder="github_pat_…" autocomplete="off"></div>
+    <button class="btn" id="cfgTestGh">Probar conexión GitHub</button>
+    <div class="test-out" id="cfgTestOut"></div>
+
+    <div class="sec-note">PAT fine-grained limitado a un solo repo, permiso <b>Contents: Read and write</b>. Revócalo en GitHub → Developer settings si se compromete.</div>
+
+    <div class="modal-actions">
+      <button class="btn ghost" id="cfgCancel">Cancelar</button>
+      <button class="btn primary" id="cfgSave">Guardar</button>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+
+  let pref = c.preferProvider||'anthropic';
+  ov.querySelectorAll('#prefSeg button').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      pref=b.dataset.pref;
+      ov.querySelectorAll('#prefSeg button').forEach(x=>x.classList.toggle('on', x.dataset.pref===pref));
+    });
+  });
+
+  ov.querySelector('#cfgRefreshModels').addEventListener('click', async ()=>{
+    const out=ov.querySelector('#cfgModelsOut');
+    out.className='test-out'; out.textContent='Consultando…';
+    // Guarda temporalmente las keys escritas para que fetchModels las use
+    const prev=loadCfg();
+    saveCfg(Object.assign({}, prev, { anthropicKey:ov.querySelector('#cfgAnthropicKey').value.trim(), openaiKey:ov.querySelector('#cfgOpenaiKey').value.trim() }));
+    const msgs=[];
+    for(const p of ['anthropic','openai']){
+      if(!providerKey(p)){ continue; }
+      try{ const ids=await fetchModels(p); msgs.push(p+': '+ids.length); }
+      catch(e){ msgs.push(p+': ✗ '+e.message); }
+    }
+    saveCfg(prev); // restaura hasta Guardar
+    out.className='test-out ok'; out.textContent = msgs.length? ('Modelos: '+msgs.join(' · ')) : 'Escribe alguna API key primero.';
+    ov.querySelector('#cfgModelGrid').innerHTML = modelGridHtml(); // re-render con la lista nueva
+  });
+
+  ov.querySelector('#cfgTestGh').addEventListener('click', async ()=>{
+    const out=ov.querySelector('#cfgTestOut');
+    out.className='test-out'; out.textContent='Probando…';
+    const tOwner=ov.querySelector('#cfgOwner').value.trim();
+    const tRepo=ov.querySelector('#cfgRepo').value.trim();
+    const tBranch=ov.querySelector('#cfgBranch').value.trim()||'main';
+    const tPat=ov.querySelector('#cfgPat').value.trim();
+    // Validación previa: campos vacíos → mensaje claro (evita "Load failed" por URL malformada)
+    const missing=[]; if(!tOwner) missing.push('Owner'); if(!tRepo) missing.push('Repositorio'); if(!tPat) missing.push('PAT');
+    if(missing.length){ out.className='test-out bad'; out.textContent='Faltan campos: '+missing.join(', ')+'.'; return; }
+    // Guarda temporalmente para que ghGetFile use estos valores
+    const prev=loadCfg();
+    saveCfg(Object.assign({}, prev, { gh_owner:tOwner, gh_repo:tRepo, gh_branch:tBranch, gh_pat:tPat }));
+    try{
+      const res=await ghGetFile('fichas/index.json');
+      if(res.missing){ out.className='test-out bad'; out.textContent='Conecta, pero falta fichas/index.json en el repo. Crea ese archivo con {"fichas":[]}.'; }
+      else { const n=(res.json&&res.json.fichas&&res.json.fichas.length)||0; out.className='test-out ok'; out.textContent='✓ Conexión correcta · '+n+' ficha(s) en el índice.'; }
+    }catch(e){
+      out.className='test-out bad';
+      out.textContent='✗ '+e.message+' — autodiagnóstico en curso…';
+      const diag = await diagnoseGithub();
+      out.innerHTML = '✗ '+e.message+'<br>'+diag;
+    }
+    saveCfg(prev); // restaura hasta que el usuario pulse Guardar
+  });
+
+  const close=()=>{ ov.remove(); };
+  ov.querySelector('#cfgCancel').addEventListener('click', close);
+  ov.addEventListener('click', (e)=>{ if(e.target===ov) close(); });
+  ov.querySelector('#cfgSave').addEventListener('click', ()=>{
+    // Modelos por tarea (solo guarda override si difiere del default)
+    const models={anthropic:{}, openai:{}};
+    ov.querySelectorAll('select[data-mp]').forEach(sel=>{
+      const p=sel.dataset.mp, t=sel.dataset.mt;
+      if(sel.value && sel.value!==DEFAULT_MODELS[p][t]) models[p][t]=sel.value;
+    });
+    saveCfg({
+      anthropicKey: ov.querySelector('#cfgAnthropicKey').value.trim(),
+      openaiKey: ov.querySelector('#cfgOpenaiKey').value.trim(),
+      preferProvider: pref,
+      models,
+      gh_owner: ov.querySelector('#cfgOwner').value.trim(),
+      gh_repo: ov.querySelector('#cfgRepo').value.trim(),
+      gh_branch: ov.querySelector('#cfgBranch').value.trim()||'main',
+      gh_pat: ov.querySelector('#cfgPat').value.trim()
+    });
+    renderStatus();
+    showToast('Ajustes guardados');
+    close();
+  });
+}
+
+/* ===========================================================================
+   PARTE C — Módulo 2 (Inicio) + Módulo 3 (asignación de ficha)
+   =========================================================================== */
+let activeFicha = null;   // ficha JSON activa que dirige la anamnesis
+let studyEval = null;     // resultado de "evaluar indicación según guías" (web)
+const PED_MAX_AGE = 18;   // <18 → paciente pediátrico (enrutado de fichas por edad)
+
+/* Match local sobre el índice: id / nombre / sinónimos (substring o exacto). */
+function localMatch(motivo, fichas){
+  const q = normTxt(motivo);
+  if(!q) return null;
+  let best=null, bestScore=0;
+  fichas.forEach(f=>{
+    const hay = [f.id, f.nombre, ...(f.sinonimos||[])].filter(Boolean).map(normTxt);
+    let score=0;
+    hay.forEach(h=>{ if(!h) return; if(h===q) score=Math.max(score,4); else if(h.includes(q)||q.includes(h)) score=Math.max(score,3); });
+    if(score>bestScore){ bestScore=score; best=f; }
+  });
+  // Solo aceptamos como match local los fuertes (substring/exacto). El resto → LLM.
+  return bestScore>=3 ? {ficha:best, score:bestScore} : null;
+}
+
+/* Enrutado por edad: si la ficha pertenece a un "grupo" con variantes
+   pediátrica/adulta, elige la que corresponde a la edad del paciente. */
+function routeByAge(id, fichas){
+  const m = (fichas||[]).find(f=>f.id===id); if(!m || !m.grupo) return id;
+  const sibs = fichas.filter(f=>f.grupo===m.grupo);
+  if(sibs.length<2) return id;
+  const y = patientAgeYears();
+  if(y==null) return id; // sin edad → no enrutar
+  const want = y < PED_MAX_AGE ? 'pediatrica' : 'adulta';
+  const pick = sibs.find(f=>f.poblacion===want) || sibs.find(f=>!f.poblacion || f.poblacion==='unica');
+  return pick ? pick.id : id;
+}
+
+/* Asignación: 1) local; 2) si ambiguo/nulo y hay LLM → llamada barata SIN web search. */
+async function assignFicha(motivo){
+  const idx = await getIndex();
+  const fichas = idx.fichas || [];
+  const lm = localMatch(motivo, fichas);
+  if(lm){ const id=routeByAge(lm.ficha.id, fichas); return {id, via:'local', confianza:1, crear:false, routed:id!==lm.ficha.id}; }
+  if(anyProvider() && fichas.length){
+    try{
+      const system = 'Eres un asistente de fenotipado clínico. Recibes un motivo de consulta y una lista de fichas (id, nombre, sinonimos). Devuelve SOLO un JSON {"match": id_o_null, "confianza": 0-1, "crear": booleano} eligiendo la ficha cuyo dominio clínico mejor encaje aunque el nombre no sea exacto. Si ninguna encaja razonablemente, match=null y crear=true.';
+      const user = JSON.stringify({ motivo, fichas: fichas.map(f=>({id:f.id, nombre:f.nombre, sinonimos:f.sinonimos||[]})) });
+      const resp = await callLLM({ system, user, webSearch:false, maxTokens:200, task:'assign' });
+      const j = extractJSON(resp);
+      if(j){
+        const valid = j.match && fichas.some(f=>f.id===j.match);
+        return { id: valid ? routeByAge(j.match, fichas) : null, via:'llm', confianza: j.confianza ?? null, crear: !valid && (j.crear!==false) };
+      }
+    }catch(e){ console.warn('assignFicha LLM:', e.message); }
+  }
+  return { id:null, via: fichas.length?'sin-match':'vacio', confianza:null, crear:true };
+}
+
+/* ---- Módulo 2: Inicio ---- */
+function renderInicio(){
+  const main=document.getElementById('main'); if(!main) return;
+  main.innerHTML = `
+    <div class="step-title">Inicio</div>
+    <div class="step-sub">Motivo de consulta + edad + sexo. La ficha asignada dirigirá la anamnesis.</div>
+    <div style="max-width:560px">
+      <div class="field"><label>Motivo de consulta</label>
+        <input id="inMotivo" type="text" value="${(patient.motivo||'').replace(/"/g,'&quot;')}" placeholder='p. ej. "conectivopatía", "síndrome autoinflamatorio", "trombopenia crónica"'>
+      </div>
+      <div style="display:flex; gap:14px; flex-wrap:wrap">
+        <div class="field" style="flex:1; min-width:150px"><label>Edad</label>
+          <div style="display:flex; gap:6px">
+            <input id="inEdad" type="text" inputmode="decimal" value="${patient.edadValor||''}" placeholder="0" style="flex:1">
+            <select id="inEdadU" style="flex:0 0 100px">
+              <option value="años" ${patient.edadUnidad!=='meses'?'selected':''}>años</option>
+              <option value="meses" ${patient.edadUnidad==='meses'?'selected':''}>meses</option>
+            </select>
+          </div>
+        </div>
+        <div class="field" style="flex:1; min-width:150px"><label>Sexo</label>
+          <select id="inSexo">
+            <option value="" ${!patient.sexo?'selected':''}>Seleccionar…</option>
+            <option value="Femenino" ${patient.sexo==='Femenino'?'selected':''}>Femenino</option>
+            <option value="Masculino" ${patient.sexo==='Masculino'?'selected':''}>Masculino</option>
+            <option value="Indeterminado" ${patient.sexo==='Indeterminado'?'selected':''}>Indeterminado</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn primary" id="btnAbrirFicha" style="margin-top:8px">Abrir ficha ›</button>
+    </div>
+    <div id="fichaFlow" style="margin-top:22px"></div>`;
+
+  const commit=()=>{
+    patient.motivo = document.getElementById('inMotivo').value.trim();
+    patient.edadValor = document.getElementById('inEdad').value.trim();
+    patient.edadUnidad = document.getElementById('inEdadU').value;
+    patient.sexo = document.getElementById('inSexo').value;
+    patient.edad = patient.edadValor ? `${patient.edadValor} ${patient.edadUnidad}` : '';
+    renderPatientLine();
+  };
+  document.getElementById('inMotivo').addEventListener('input', commit);
+  ['inEdad','inEdadU','inSexo'].forEach(id=>document.getElementById(id).addEventListener('change', commit));
+  document.getElementById('btnAbrirFicha').addEventListener('click', ()=>{ commit(); openFichaFlow(); });
+}
+
+/* ---- Módulo 3: flujo de asignación ---- */
+async function openFichaFlow(){
+  const box=document.getElementById('fichaFlow'); if(!box) return;
+  if(!patient.motivo){ box.innerHTML='<div class="err">Introduce un motivo de consulta.</div>'; return; }
+  box.innerHTML='<div class="loading">Buscando la ficha más parecida…</div>';
+  const res = await assignFicha(patient.motivo);
+  const idx = await getIndex();
+  const fichas = idx.fichas||[];
+  if(res.id){
+    const ficha = await getFicha(res.id);
+    if(ficha){ setActiveFicha(ficha, res, fichas); return; }
+    box.innerHTML='<div class="err">La ficha "'+res.id+'" está en el índice pero no se pudo cargar (red/caché).</div>';
+    return;
+  }
+  // Sin match → ofrecer crear o elegir manualmente
+  const viaTxt = res.via==='vacio' ? 'Tu librería está vacía.' :
+                 res.via==='llm' ? 'La IA no encontró una ficha que encaje con confianza.' :
+                 'No hay coincidencia clara en tu librería.';
+  box.innerHTML = `
+    <div class="placeholder">
+      <b>Sin ficha asignada.</b> ${viaTxt}<br><br>
+      <button class="btn primary" id="btnCrearFicha">✨ Generar ficha con IA</button>
+      <label class="btn" for="btnImportFicha" style="margin-left:8px">⬆ Importar ficha .json</label>
+      <input id="btnImportFicha" type="file" accept="application/json,.json" style="display:none">
+      ${fichas.length?`<div style="margin-top:14px">${fichaSelectorHtml(fichas,'')}</div>`:''}
+    </div>`;
+  const cf=document.getElementById('btnCrearFicha');
+  if(cf) cf.addEventListener('click', ()=>generarFichaIA(patient.motivo));
+  const imp=document.getElementById('btnImportFicha');
+  if(imp) imp.addEventListener('change', ()=>{ if(imp.files&&imp.files[0]) importFicha(imp.files[0]); });
+  wireFichaSelector(box, fichas);
+}
+
+/* Importa una ficha desde un archivo .json (respaldo offline / sin red). */
+async function importFicha(file){
+  try{
+    const f = JSON.parse(await file.text());
+    const errs = validateFicha(f);
+    if(errs.length){ showToast('Ficha inválida: '+errs.join(' · ')); return; }
+    const mode = await persistFicha(f);
+    renderInicio();
+    const idx = await getIndex();
+    setActiveFicha(f, {via:'manual', confianza:1}, idx.fichas||[]);
+    showToast('Ficha importada'+(mode==='commit'?' y commiteada':' (caché local)'));
+  }catch(e){ showToast('No se pudo importar: '+e.message); }
+}
+
+function fichaSelectorHtml(fichas, current){
+  return `<label style="font-size:12px; color:var(--ink3)">…o elige manualmente:</label>
+    <select id="fichaPick" style="margin-top:6px; width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink)">
+      <option value="">— seleccionar ficha —</option>
+      ${fichas.map(f=>`<option value="${f.id}" ${f.id===current?'selected':''}>${f.nombre||f.id}</option>`).join('')}
+    </select>`;
+}
+function wireFichaSelector(scope, fichas){
+  const sel=scope.querySelector('#fichaPick'); if(!sel) return;
+  sel.addEventListener('change', async ()=>{
+    if(!sel.value) return;
+    const ficha=await getFicha(sel.value);
+    if(ficha) setActiveFicha(ficha, {via:'manual', confianza:1}, fichas);
+    else showToast('No se pudo cargar la ficha');
+  });
+}
+
+/* Fija la ficha activa y muestra su cabecera + acceso a la anamnesis. */
+function setActiveFicha(ficha, res, fichas){
+  activeFicha = ficha;
+  studyEval = null;
+  const box=document.getElementById('fichaFlow'); if(!box) return;
+  const viaBadge = res.via==='local' ? 'coincidencia local'
+    : res.via==='llm' ? `asignada por IA${res.confianza!=null?` · confianza ${Math.round(res.confianza*100)}%`:''}`
+    : res.via==='manual' ? 'selección manual' : res.via;
+  const nDom = (ficha.dominios||[]).length;
+  const nPreg = (ficha.dominios||[]).reduce((a,d)=>a+((d.preguntas||[]).length),0);
+  const entidades = (ficha.entidades||[]).map(e=>`<span class="gene" title="${(e.genes||[]).join(', ')}">${e.nombre}</span>`).join(' ');
+  const panel = (ficha.panel_genes||[]).map(g=>`<a class="gene" href="${panelAppLink(g)}" target="_blank" rel="noopener" style="text-decoration:none">${g}</a>`).join(' ');
+  const fuentes = (ficha.fuentes||[]).map(s=>`<a href="${s.url}" target="_blank" rel="noopener">${s.titulo}${s.anio?' ('+s.anio+')':''}</a>`).join(' · ');
+  box.innerHTML = `
+    <div style="border:1px solid var(--accent2); background:linear-gradient(180deg,#173430,#15201d); border-radius:12px; padding:16px 18px">
+      <div style="display:flex; align-items:baseline; gap:10px; flex-wrap:wrap">
+        <div style="font-size:16px; font-weight:700">${ficha.nombre_es||ficha.id}</div>
+        <span class="status-chip on" style="background:transparent"><span class="dot"></span>${viaBadge}</span>
+        ${ficha.poblacion && ficha.poblacion!=='unica' ? `<span class="pop-badge">${ficha.poblacion==='pediatrica'?'pediátrica':'adulta'}</span>`:''}
+        ${ficha.version?`<span style="font-size:11px; color:var(--ink3)">v${ficha.version}</span>`:''}
+      </div>
+      <div style="font-size:12px; color:var(--ink2); margin-top:8px">${nDom} dominio(s) · ${nPreg} pregunta(s) · ${(ficha.entidades||[]).length} entidad(es) diferencial</div>
+      ${entidades?`<div style="margin-top:10px"><div class="cart-group-title" style="margin:0 0 6px">Entidades</div><div class="gp-genes">${entidades}</div></div>`:''}
+      ${panel?`<div style="margin-top:10px"><div class="cart-group-title" style="margin:0 0 6px">Panel génico (→ PanelApp)</div><div class="gp-genes">${panel}</div></div>`:''}
+      ${fuentes?`<div style="margin-top:10px; font-size:11px; color:var(--ink3)">Fuentes: ${fuentes}</div>`:''}
+      <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap">
+        <button class="btn primary" id="btnAnamnesis">Comenzar anamnesis ›</button>
+        <button class="btn ghost" id="btnCambiarFicha">Cambiar ficha</button>
+        <button class="btn ghost" id="btnNuevaIA">+ Nueva ficha (IA)</button>
+      </div>
+      <div id="fichaFreshness" style="margin-top:12px"></div>
+    </div>`;
+  document.getElementById('btnAnamnesis').addEventListener('click', renderAnamnesis);
+  document.getElementById('btnCambiarFicha').addEventListener('click', ()=>{ activeFicha=null; openFichaFlow(); });
+  document.getElementById('btnNuevaIA').addEventListener('click', ()=>generarFichaIA(patient.motivo));
+  const fr=document.getElementById('fichaFreshness');
+  if(fr){ fr.innerHTML=freshnessBannerHtml(ficha.id); const fc=fr.querySelector('#btnFreshCheck'); if(fc) fc.addEventListener('click', comprobarFreshness); }
+  renderPatientLine();
+  renderCart(); // refresca diferencial + panel génico + indicación de estudio
+}
+
+/* ===========================================================================
+   PARTE D — Módulo 6: Anamnesis dirigida por la ficha
+   =========================================================================== */
+
+/* Categoría de edad (para el umbral de Beighton). */
+function patientAgeCategory(){
+  const y=patientAgeYears();
+  if(y==null) return 'desconocida';
+  if(y<1/12) return 'neonatal';
+  if(y<2) return 'lactante';
+  if(y<6) return 'infantil';
+  if(y<12) return 'escolar';
+  if(y<18) return 'adolescente';
+  return 'adulto';
+}
+
+/* ---- Beighton (INJERTADO VERBATIM del motor de referencia) ---- */
+const BEIGHTON_ITEMS = [
+  {k:'p5d', es:'Dorsiflexión pasiva del 5.º dedo >90° (derecha)'},
+  {k:'p5i', es:'Dorsiflexión pasiva del 5.º dedo >90° (izquierda)'},
+  {k:'ptd', es:'Aposición del pulgar al antebrazo (derecha)'},
+  {k:'pti', es:'Aposición del pulgar al antebrazo (izquierda)'},
+  {k:'cod', es:'Hiperextensión del codo >10° (derecha)'},
+  {k:'coi', es:'Hiperextensión del codo >10° (izquierda)'},
+  {k:'rod', es:'Hiperextensión de la rodilla >10° (derecha)'},
+  {k:'roi', es:'Hiperextensión de la rodilla >10° (izquierda)'},
+  {k:'tronco', es:'Palmas en el suelo con rodillas extendidas'},
+];
+function beightonThreshold(){
+  const cat = patientAgeCategory();
+  const y = patientAgeYears();
+  if(['prenatal','neonatal','lactante','infantil'].includes(cat)) return 6;
+  if(y!=null && y > 50) return 4;
+  return 5;
+}
+function beightonScore(){ return BEIGHTON_ITEMS.reduce((a,it)=>a + (beighton[it.k]?1:0), 0); }
+function beightonHtml(){
+  const score = beightonScore();
+  const thr = beightonThreshold();
+  const pos = score >= thr;
+  return `
+  <div class="beighton">
+    <h3>📐 Índice de Beighton (hiperlaxitud articular)</h3>
+    <div class="bsub">Umbral ajustado por edad/sexo del paciente. Marca cada maniobra positiva.</div>
+    <div class="bgrid">
+      ${BEIGHTON_ITEMS.map(it=>`
+        <label class="bitem"><input type="checkbox" data-bk="${it.k}" ${beighton[it.k]?'checked':''}><span>${it.es}</span></label>
+      `).join('')}
+    </div>
+    <div class="bscore">
+      <span class="num">${score}/9</span>
+      <span class="verdict ${pos?'pos':'neg'}">${pos?'HAG presente':'No alcanza umbral'}</span>
+      <span class="bthr">Umbral aplicado: ≥${thr} (${patient.edad||'edad no indicada'})</span>
+      <button class="btn" id="bAddGjh" style="margin-left:auto;" ${pos?'':'disabled'}>+ Añadir HAG (HP:0002761)</button>
+    </div>
+  </div>`;
+}
+function attachBeighton(region){
+  const main = document.getElementById('main');
+  main.querySelectorAll('input[data-bk]').forEach(cb=>{
+    cb.addEventListener('change', ()=>{
+      beighton[cb.dataset.bk] = cb.checked;
+      const wrap = main.querySelector('.beighton');
+      if(wrap){ wrap.outerHTML = beightonHtml(); attachBeighton(region); }
+    });
+  });
+  const add = document.getElementById('bAddGjh');
+  if(add){
+    add.addEventListener('click', ()=>{
+      const id = 'HP:0002761';
+      const esLabel = (window.__esLabels && window.__esLabels[id]) || 'Hiperlaxitud articular generalizada';
+      selections[id] = {hpo:id, es:esLabel, en:'Generalized joint laxity', region:region.label, origen:'beighton', verified:true};
+      renderCart();
+      showToast('HAG añadida al fenotipo (Beighton ' + beightonScore() + '/9)');
+    });
+  }
+}
+
+/* ---- Antropometría (módulo opcional; motor WHO_LMS injertado verbatim abajo) ---- */
+function antropometriaHtml(){
+  return `<div class="anthro-box">
+    <div class="domain-h" style="color:var(--accent)">Antropometría</div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:6px">
+      <div class="field" style="margin:0"><label>Talla (cm)</label><input id="inTalla" type="text" inputmode="decimal" value="${patient.tallaCm||''}" style="width:110px"></div>
+      <div class="field" style="margin:0"><label>Peso (kg)</label><input id="inPeso" type="text" inputmode="decimal" value="${patient.pesoKg||''}" style="width:110px"></div>
+      <div class="field" style="margin:0"><label>Envergadura (cm)</label><input id="inEnverg" type="text" inputmode="decimal" value="${patient.envergaduraCm||''}" style="width:130px"></div>
+    </div>
+    <div id="anthroResult"></div>
+  </div>`;
+}
+function attachAntropometria(){
+  const commit=()=>{
+    patient.tallaCm=(document.getElementById('inTalla')||{}).value||'';
+    patient.pesoKg=(document.getElementById('inPeso')||{}).value||'';
+    patient.envergaduraCm=(document.getElementById('inEnverg')||{}).value||'';
+    renderAnthro();
+  };
+  ['inTalla','inPeso','inEnverg'].forEach(id=>{ const el=document.getElementById(id); if(el) el.addEventListener('input', commit); });
+  renderAnthro();
+}
+/* === MOTOR ANTROPOMETRÍA INJERTADO VERBATIM (fenotipHAC_conectivopatias_3.html) === */
+const WHO_LMS = {"height":{"male":[[0.0,1.0,49.8842,0.03795],[0.083,1.0,54.6645,0.03559],[0.167,1.0,58.4384,0.03423],[0.25,1.0,61.4013,0.03329],[0.333,1.0,63.9041,0.03257],[0.417,1.0,65.8912,0.03204],[0.5,1.0,67.6435,0.03165],[0.583,1.0,69.1615,0.03139],[0.667,1.0,70.6224,0.03124],[0.75,1.0,71.9714,0.03117],[0.833,1.0,73.2653,0.03118],[0.917,1.0,74.5464,0.03125],[1.0,1.0,75.7391,0.03137],[1.083,1.0,76.9304,0.03154],[1.167,1.0,78.0451,0.03174],[1.25,1.0,79.1613,0.03197],[1.333,1.0,80.2113,0.03222],[1.417,1.0,81.234,0.03249],[1.5,1.0,82.2628,0.03279],[1.583,1.0,83.2318,0.0331],[1.667,1.0,84.2074,0.03342],[1.75,1.0,85.1291,0.03375],[1.833,1.0,86.0589,0.0341],[1.917,1.0,86.9392,0.03445],[2.0,1.0,87.8018,0.03479],[2.25,1.0,89.6247,0.0361],[2.5,1.0,91.9297,0.03704],[2.75,1.0,94.0612,0.03787],[3.0,1.0,96.0889,0.03858],[3.25,1.0,98.006,0.03919],[3.5,1.0,99.8441,0.0397],[3.75,1.0,101.6246,0.04017],[4.0,1.0,103.3273,0.04059],[4.25,1.0,104.9984,0.041],[4.5,1.0,106.6736,0.04139],[4.75,1.0,108.3209,0.04177],[5.0,1.0,109.9593,0.04214],[5.5,1.0,112.911,0.04203],[6.0,1.0,115.9509,0.04249],[6.5,1.0,118.87,0.04295],[7.0,1.0,121.7338,0.04342],[7.5,1.0,124.5361,0.0439],[8.0,1.0,127.2651,0.04438],[8.5,1.0,129.93,0.04487],[9.0,1.0,132.5652,0.04535],[9.5,1.0,135.1829,0.04582],[10.0,1.0,137.7795,0.04626],[10.5,1.0,140.3948,0.04667],[11.0,1.0,143.1126,0.04703],[11.5,1.0,145.9891,0.04732],[12.0,1.0,149.0807,0.04753],[12.5,1.0,152.4425,0.04763],[13.0,1.0,156.0426,0.0476],[13.5,1.0,159.6962,0.04744],[14.0,1.0,163.1816,0.04714],[14.5,1.0,166.305,0.04671],[15.0,1.0,168.958,0.04619],[15.5,1.0,171.1468,0.04559],[16.0,1.0,172.8967,0.04495],[16.5,1.0,174.2251,0.04429],[17.0,1.0,175.1609,0.04364],[17.5,1.0,175.7672,0.04301],[18.0,1.0,176.1449,0.04241],[18.5,1.0,176.3851,0.04185],[19.0,1.0,176.5432,0.04134]],"female":[[0.0,1.0,49.1477,0.0379],[0.083,1.0,53.6326,0.03641],[0.167,1.0,57.0796,0.03568],[0.25,1.0,59.7773,0.0352],[0.333,1.0,62.1071,0.03486],[0.417,1.0,64.019,0.03463],[0.5,1.0,65.751,0.03448],[0.583,1.0,67.2842,0.03441],[0.667,1.0,68.7732,0.0344],[0.75,1.0,70.1463,0.03444],[0.833,1.0,71.4656,0.03452],[0.917,1.0,72.7788,0.03464],[1.0,1.0,74.0049,0.03479],[1.083,1.0,75.2297,0.03496],[1.167,1.0,76.377,0.03514],[1.25,1.0,77.5258,0.03534],[1.333,1.0,78.6055,0.03555],[1.417,1.0,79.6559,0.03576],[1.5,1.0,80.7121,0.03598],[1.583,1.0,81.708,0.0362],[1.667,1.0,82.7116,0.03643],[1.75,1.0,83.6595,0.03665],[1.833,1.0,84.6154,0.03689],[1.917,1.0,85.5184,0.03711],[2.0,1.0,86.4008,0.03733],[2.25,1.0,88.2881,0.0383],[2.5,1.0,90.6765,0.03893],[2.75,1.0,92.9135,0.03952],[3.0,1.0,95.0572,0.04007],[3.25,1.0,97.0871,0.04057],[3.5,1.0,99.0369,0.04105],[3.75,1.0,100.9301,0.0415],[4.0,1.0,102.7312,0.04193],[4.25,1.0,104.4727,0.04233],[4.5,1.0,106.1817,0.04272],[4.75,1.0,107.8238,0.0431],[5.0,1.0,109.4189,0.04346],[5.5,1.0,112.1753,0.04399],[6.0,1.0,115.1244,0.04447],[6.5,1.0,117.9769,0.04489],[7.0,1.0,120.8105,0.04525],[7.5,1.0,123.6646,0.04556],[8.0,1.0,126.5558,0.04581],[8.5,1.0,129.4975,0.046],[9.0,1.0,132.4944,0.04612],[9.5,1.0,135.541,0.04617],[10.0,1.0,138.6363,0.04614],[10.5,1.0,141.7892,0.04603],[11.0,1.0,144.9929,0.04584],[11.5,1.0,148.1804,0.04557],[12.0,1.0,151.2327,0.04523],[12.5,1.0,154.0041,0.04483],[13.0,1.0,156.3748,0.04439],[13.5,1.0,158.2997,0.04392],[14.0,1.0,159.789,0.04345],[14.5,1.0,160.8927,0.04299],[15.0,1.0,161.6692,0.04255],[15.5,1.0,162.188,0.04214],[16.0,1.0,162.5156,0.04176],[16.5,1.0,162.7165,0.04141],[17.0,1.0,162.8545,0.04109],[17.5,1.0,162.9649,0.0408],[18.0,1.0,163.0595,0.04053],[18.5,1.0,163.1279,0.0403],[19.0,1.0,163.1548,0.04009]]},"weight":{"male":[[0.0,0.3487,3.3464,0.14602],[0.083,0.2303,4.4525,0.13413],[0.167,0.1969,5.5714,0.12382],[0.25,0.174,6.369,0.11732],[0.333,0.1551,7.0069,0.11313],[0.417,0.1396,7.5077,0.11081],[0.5,0.1256,7.9389,0.10957],[0.583,0.1134,8.2963,0.10902],[0.667,0.1019,8.62,0.10882],[0.75,0.0917,8.9019,0.10881],[0.833,0.0821,9.1618,0.1089],[0.917,0.0729,9.4136,0.10906],[1.0,0.0645,9.646,0.10925],[1.083,0.0563,9.8772,0.10949],[1.167,0.0487,10.0944,0.10976],[1.25,0.0412,10.3139,0.11008],[1.333,0.0343,10.5228,0.11041],[1.417,0.0276,10.7289,0.11078],[1.5,0.021,10.9393,0.1112],[1.583,0.0149,11.1409,0.11163],[1.667,0.0087,11.3478,0.11212],[1.75,0.0029,11.5474,0.11261],[1.833,-0.0029,11.7528,0.11315],[1.917,-0.0083,11.951,0.11369],[2.0,-0.0136,12.1482,0.11425],[2.25,-0.0289,12.7413,0.11604],[2.5,-0.0431,13.2993,0.11781],[2.75,-0.0563,13.8285,0.11952],[3.0,-0.0689,14.3443,0.12116],[3.25,-0.0808,14.8462,0.12271],[3.5,-0.092,15.3465,0.12424],[3.75,-0.1028,15.8514,0.12587],[4.0,-0.1131,16.3489,0.12759],[4.25,-0.123,16.8454,0.12942],[4.5,-0.1326,17.3473,0.13133],[4.75,-0.1417,17.8425,0.13325],[5.0,-0.1506,18.3352,0.13517],[5.5,-0.2548,19.394,0.13178],[6.0,-0.318,20.5137,0.13372],[6.5,-0.3804,21.681,0.13554],[7.0,-0.4402,22.8915,0.13759],[7.5,-0.4964,24.1371,0.14016],[8.0,-0.5482,25.4163,0.14344],[8.5,-0.5946,26.7358,0.14752],[9.0,-0.6337,28.1092,0.15233],[9.5,-0.6624,29.5736,0.1576],[10.0,-0.6764,31.1586,0.16305]],"female":[[0.0,0.3809,3.2322,0.14171],[0.083,0.1727,4.1716,0.13738],[0.167,0.0959,5.1315,0.12998],[0.25,0.0407,5.8393,0.12622],[0.333,-0.0053,6.428,0.12401],[0.417,-0.0428,6.8959,0.12274],[0.5,-0.0759,7.3016,0.12204],[0.583,-0.1039,7.6416,0.12178],[0.667,-0.1292,7.9534,0.12181],[0.75,-0.1507,8.2259,0.12199],[0.833,-0.1698,8.4769,0.12222],[0.917,-0.1873,8.7207,0.12247],[1.0,-0.2022,8.9462,0.12267],[1.083,-0.216,9.1722,0.12283],[1.167,-0.2277,9.3861,0.12294],[1.25,-0.2385,9.6038,0.12299],[1.333,-0.2478,9.8124,0.12303],[1.417,-0.2561,10.0196,0.12305],[1.5,-0.2637,10.2324,0.12309],[1.583,-0.2702,10.4372,0.12315],[1.667,-0.2763,10.6481,0.12324],[1.75,-0.2814,10.8521,0.12335],[1.833,-0.2862,11.0633,0.12351],[1.917,-0.2903,11.2684,0.12369],[2.0,-0.294,11.4741,0.12389],[2.25,-0.3033,12.1028,0.12472],[2.5,-0.3101,12.7047,0.12587],[2.75,-0.3155,13.2809,0.12736],[3.0,-0.3201,13.8518,0.1292],[3.25,-0.3243,14.4136,0.13134],[3.5,-0.3283,14.9704,0.13375],[3.75,-0.3322,15.5259,0.13631],[4.0,-0.3361,16.0697,0.13884],[4.25,-0.34,16.6114,0.14132],[4.5,-0.344,17.1573,0.14372],[4.75,-0.3479,17.692,0.146],[5.0,-0.3518,18.2179,0.14821],[5.5,-0.4834,19.1276,0.14569],[6.0,-0.5013,20.1639,0.149],[6.5,-0.5185,21.2274,0.1523],[7.0,-0.5347,22.374,0.15556],[7.5,-0.5495,23.6369,0.15876],[8.0,-0.5627,25.0262,0.16186],[8.5,-0.574,26.5519,0.16483],[9.0,-0.5833,28.204,0.16764],[9.5,-0.5905,29.9663,0.17025],[10.0,-0.5958,31.8578,0.17262]]},"bmi":{"male":[[0.0,-0.3053,13.4069,0.0956],[0.083,0.2738,14.914,0.09035],[0.167,0.1113,16.3231,0.08676],[0.25,0.0077,16.895,0.08496],[0.333,-0.0732,17.1594,0.08378],[0.417,-0.1366,17.2914,0.08297],[0.5,-0.1919,17.3424,0.08233],[0.583,-0.2384,17.3289,0.08183],[0.667,-0.2808,17.2633,0.08139],[0.75,-0.3177,17.1659,0.08102],[0.833,-0.3512,17.0503,0.08068],[0.917,-0.383,16.9231,0.08037],[1.0,-0.4113,16.7992,0.08009],[1.083,-0.4384,16.6731,0.07982],[1.167,-0.4629,16.5553,0.07958],[1.25,-0.4867,16.4393,0.07934],[1.333,-0.5082,16.3335,0.07913],[1.417,-0.5286,16.2343,0.07893],[1.5,-0.5485,16.1388,0.07873],[1.583,-0.5667,16.0536,0.07854],[1.667,-0.5847,15.9737,0.07836],[1.75,-0.6013,15.9043,0.07818],[1.833,-0.6176,15.8405,0.07802],[1.917,-0.6328,15.7853,0.07786],[2.0,-0.6473,15.7356,0.07771],[2.25,-0.5164,15.9034,0.07809],[2.5,-0.4275,15.7954,0.07841],[2.75,-0.3575,15.6939,0.07882],[3.0,-0.31,15.5986,0.07931],[3.25,-0.2884,15.5141,0.0799],[3.5,-0.2918,15.4423,0.08061],[3.75,-0.3175,15.3825,0.08144],[4.0,-0.3622,15.3326,0.08238],[4.25,-0.4243,15.2892,0.08343],[4.5,-0.5022,15.2513,0.08457],[4.75,-0.5906,15.2188,0.08577],[5.0,-0.6889,15.1917,0.08699],[5.5,-0.8554,15.2645,0.08516],[6.0,-0.9921,15.3062,0.08682],[6.5,-1.123,15.3825,0.08865],[7.0,-1.246,15.4832,0.09068],[7.5,-1.3596,15.6023,0.09289],[8.0,-1.4629,15.7368,0.09526],[8.5,-1.5542,15.8855,0.09778],[9.0,-1.6318,16.049,0.10038],[9.5,-1.6944,16.2333,0.10303],[10.0,-1.7407,16.4433,0.10566],[10.5,-1.771,16.6786,0.10823],[11.0,-1.7862,16.9392,0.1107],[11.5,-1.7873,17.2236,0.11304],[12.0,-1.7751,17.5334,0.11522],[12.5,-1.7511,17.8704,0.1172],[13.0,-1.7168,18.233,0.11898],[13.5,-1.6732,18.6148,0.12055],[14.0,-1.6211,19.005,0.12191],[14.5,-1.5615,19.3937,0.1231],[15.0,-1.4961,19.7744,0.12412],[15.5,-1.4263,20.1427,0.12501],[16.0,-1.3529,20.4951,0.12579],[16.5,-1.2762,20.8287,0.1265],[17.0,-1.1962,21.1423,0.12715],[17.5,-1.1129,21.4354,0.12777],[18.0,-1.026,21.7077,0.12836],[18.5,-0.9356,21.9585,0.12893],[19.0,-0.8419,22.1883,0.12948]],"female":[[0.0,-0.0631,13.3363,0.09272],[0.083,0.3481,14.5422,0.09559],[0.167,0.1743,15.7713,0.09371],[0.25,0.0652,16.3531,0.09255],[0.333,-0.0197,16.6722,0.09166],[0.417,-0.086,16.8379,0.09096],[0.5,-0.1436,16.9086,0.09035],[0.583,-0.1915,16.9021,0.08984],[0.667,-0.2351,16.839,0.08938],[0.75,-0.2726,16.7404,0.08898],[0.833,-0.3064,16.62,0.08862],[0.917,-0.3382,16.4867,0.08827],[1.0,-0.3665,16.3578,0.08797],[1.083,-0.3934,16.2298,0.08768],[1.167,-0.4176,16.1132,0.08741],[1.25,-0.441,16.0013,0.08716],[1.333,-0.4623,15.9017,0.08693],[1.417,-0.4823,15.8108,0.08671],[1.5,-0.5018,15.726,0.0865],[1.583,-0.5197,15.6524,0.08631],[1.667,-0.5374,15.585,0.08611],[1.75,-0.5536,15.5281,0.08594],[1.833,-0.5697,15.4782,0.08576],[1.917,-0.5846,15.4381,0.0856],[2.0,-0.5989,15.4052,0.08545],[2.25,-0.5684,15.6036,0.08446],[2.5,-0.5684,15.5277,0.08444],[2.75,-0.5684,15.4575,0.08467],[3.0,-0.5684,15.3966,0.08535],[3.25,-0.5684,15.3493,0.08654],[3.5,-0.5684,15.3117,0.08813],[3.75,-0.5684,15.2813,0.08992],[4.0,-0.5684,15.2602,0.09168],[4.25,-0.5684,15.2503,0.09345],[4.5,-0.5684,15.2519,0.09516],[4.75,-0.5684,15.2612,0.09665],[5.0,-0.5684,15.2747,0.09789],[5.5,-0.978,15.2464,0.0992],[6.0,-1.0794,15.2697,0.10195],[6.5,-1.1728,15.32,0.10471],[7.0,-1.2565,15.4036,0.10746],[7.5,-1.3287,15.524,0.1102],[8.0,-1.388,15.681,0.11291],[8.5,-1.4336,15.8738,0.11557],[9.0,-1.465,16.0964,0.11816],[9.5,-1.4823,16.3425,0.12067],[10.0,-1.4864,16.6133,0.12307],[10.5,-1.4787,16.9136,0.12534],[11.0,-1.4606,17.2459,0.12748],[11.5,-1.4339,17.6088,0.12946],[12.0,-1.4006,17.9966,0.13129],[12.5,-1.3621,18.3986,0.13295],[13.0,-1.3195,18.8012,0.13445],[13.5,-1.2739,19.1931,0.1358],[14.0,-1.2266,19.5647,0.137],[14.5,-1.1788,19.907,0.13808],[15.0,-1.1311,20.2125,0.13904],[15.5,-1.0838,20.4769,0.13991],[16.0,-1.0368,20.7008,0.1407],[16.5,-0.9898,20.8863,0.14142],[17.0,-0.9423,21.0367,0.14208],[17.5,-0.8944,21.1586,0.14271],[18.0,-0.8462,21.2603,0.1433],[18.5,-0.798,21.348,0.14386],[19.0,-0.7496,21.4269,0.14441]]}};
+/* ===== Antropometría: percentiles WHO/OMS (LMS) + IMC ===== */
+/* Datos LMS verificados del repositorio NHS RCPCH (estándar OMS 2006 0-5a y referencia OMS 2007 5-19a). */
+function erf(x){ // aproximación de Abramowitz-Stegun
+  const t=1/(1+0.3275911*Math.abs(x));
+  const y=1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-0.284496736)*t+0.254829592)*t*Math.exp(-x*x);
+  return x>=0?y:-y;
+}
+function pctFromZ(z){ return 0.5*(1+erf(z/Math.SQRT2))*100; }
+function interpLMS(arr, age){
+  if(!arr||!arr.length) return null;
+  if(age<=arr[0][0]) { const p=arr[0]; return {L:p[1],M:p[2],S:p[3]}; }
+  if(age>=arr[arr.length-1][0]) return null; // fuera de rango → sin percentil
+  for(let i=0;i<arr.length-1;i++){
+    if(arr[i][0]<=age && age<=arr[i+1][0]){
+      const a=arr[i],b=arr[i+1], f=(age-a[0])/(b[0]-a[0]);
+      return {L:a[1]+f*(b[1]-a[1]), M:a[2]+f*(b[2]-a[2]), S:a[3]+f*(b[3]-a[3])};
+    }
+  }
+  return null;
+}
+function lmsZ(measure, sexKey, ageYears, value){
+  if(!WHO_LMS[measure]||!WHO_LMS[measure][sexKey]) return null;
+  const p=interpLMS(WHO_LMS[measure][sexKey], ageYears);
+  if(!p||!(value>0)) return null;
+  const z = Math.abs(p.L)>1e-7 ? ((Math.pow(value/p.M,p.L)-1)/(p.L*p.S)) : (Math.log(value/p.M)/p.S);
+  return {z, M:p.M, pct:pctFromZ(z)};
+}
+function sexKeyOf(){ return patient.sexo==='Femenino' ? 'female' : (patient.sexo==='Masculino' ? 'male' : null); }
+
+/* Referencia ADULTO (≥18 a). Talla: población española verificada (varón μ177.7/σ5.9; mujer μ164.7/σ5.4).
+   Peso: aproximación normal con μ/σ poblacional (INE/encuestas de salud); el peso adulto se valora mejor por IMC. */
+const ADULT_REF = {
+  height:{ male:{mean:177.7, sd:5.9}, female:{mean:164.7, sd:5.4} },
+  weight:{ male:{mean:80.0, sd:13.0}, female:{mean:66.0, sd:12.0} }
+};
+function zNormal(value, mean, sd){ return (value-mean)/sd; }
+function adultPct(measure, sexKey, value){
+  const r = ADULT_REF[measure] && ADULT_REF[measure][sexKey];
+  if(!r || !(value>0)) return null;
+  const z = zNormal(value, r.mean, r.sd);
+  return {z, pct:pctFromZ(z)};
+}
+function bmiClass(bmi){
+  if(!(bmi>0)) return null;
+  if(bmi<18.5) return {t:'Bajo peso', c:'low'};
+  if(bmi<25)   return {t:'Normopeso', c:'mid'};
+  if(bmi<30)   return {t:'Sobrepeso', c:'low'};
+  if(bmi<35)   return {t:'Obesidad I', c:'high'};
+  if(bmi<40)   return {t:'Obesidad II', c:'high'};
+  return {t:'Obesidad III', c:'high'};
+}
+function fmtPct(o){
+  if(!o) return null;
+  const p=o.pct;
+  let band = p<3?'< P3':(p>97?'> P97':('P'+Math.round(p)));
+  return {band, z:o.z, pct:p};
+}
+function toggleQuickPheno(id, es, region){
+  if(selections[id]){ delete selections[id]; }
+  else { selections[id] = {hpo:id, es, en:es, region: region||'Antropometría'}; }
+  if(window.__esLabels && window.__esLabels[id]) selections[id] && (selections[id].es = window.__esLabels[id]);
+  renderCart();
+  renderAnthro();
+}
+
+function chipBtn(id, label, region){
+  const on = !!selections[id];
+  return `<button class="pheno-chip ${on?'on':''}" data-pid="${id}" data-pes="${label.replace(/"/g,'&quot;')}" data-preg="${(region||'Antropometría')}">${on?'✓ ':''}${label} <span class="hp">${id}</span></button>`;
+}
+
+function renderAnthro(){
+  const box=document.getElementById('anthroResult');
+  if(!box) return;
+  const talla=parseFloat(String(patient.tallaCm).replace(',','.'));
+  const peso=parseFloat(String(patient.pesoKg).replace(',','.'));
+  const env=parseFloat(String(patient.envergaduraCm).replace(',','.'));
+  const ageY=patientAgeYears();
+  const sx=sexKeyOf();
+  let rows='';
+
+  // IMC
+  let bmi=null;
+  if(talla>0 && peso>0){ bmi = peso/Math.pow(talla/100,2); }
+
+  // Cards de medidas con percentil (pediátrico LMS-OMS o adulto normal-poblacional)
+  const isAdult = (ageY!=null && ageY>19);
+  function measureCard(title, value, unit, measure){
+    let pctHtml='';
+    if(value>0 && sx && ageY!=null && ageY<=19){
+      const r=fmtPct(lmsZ(measure, sx, ageY, value));
+      if(r){
+        const cls = r.pct<3?'low':(r.pct>97?'high':'mid');
+        pctHtml=`<span class="pct ${cls}">${r.band} · z ${r.z>=0?'+':''}${r.z.toFixed(2)}</span>`;
+      } else { pctHtml=`<span class="pct na">fuera de rango/edad</span>`; }
+    } else if(value>0 && sx && isAdult){
+      const a=adultPct(measure, sx, value);
+      if(a){
+        const band = a.pct<3?'< P3':(a.pct>97?'> P97':('P'+Math.round(a.pct)));
+        const cls = a.pct<3?'low':(a.pct>97?'high':'mid');
+        const tag = measure==='weight' ? ' aprox.' : '';
+        pctHtml=`<span class="pct ${cls}">${band}${tag} · z ${a.z>=0?'+':''}${a.z.toFixed(2)}</span>`;
+      }
+    } else if(value>0 && (!sx || ageY==null)){
+      pctHtml=`<span class="pct na">indica edad y sexo para percentil</span>`;
+    }
+    return `<div class="am-row"><span class="am-t">${title}</span><span class="am-v">${value>0?value+' '+unit:'—'}</span>${pctHtml}</div>`;
+  }
+
+  rows+=measureCard('Talla', talla, 'cm', 'height');
+  rows+=measureCard('Peso', peso, 'kg', 'weight');
+  if(bmi){
+    let bmiPct='';
+    if(sx && ageY!=null && ageY<=19 && ageY>=0){
+      const r=fmtPct(lmsZ('bmi', sx, ageY, bmi));
+      if(r){ const cls=r.pct<3?'low':(r.pct>97?'high':'mid'); bmiPct=`<span class="pct ${cls}">${r.band} · z ${r.z>=0?'+':''}${r.z.toFixed(2)}</span>`; }
+    } else if(isAdult){
+      const bc=bmiClass(bmi);
+      if(bc) bmiPct=`<span class="pct ${bc.c}">${bc.t} (OMS)</span>`;
+    }
+    rows+=`<div class="am-row"><span class="am-t">IMC</span><span class="am-v">${bmi.toFixed(1)} kg/m²</span>${bmiPct}</div>`;
+  }
+  // Cociente envergadura/talla (marfanoide si ≥1.05 adulto)
+  if(env>0 && talla>0){
+    const ratio=env/talla;
+    const flag = ratio>=1.05;
+    rows+=`<div class="am-row"><span class="am-t">Envergadura/Talla</span><span class="am-v">${ratio.toFixed(3)}</span>${flag?'<span class="pct high">≥1.05 (hábito marfanoide)</span>':''}</div>`;
+  }
+
+  // Atajos de fenotipo según medidas
+  let chips='';
+  const isPed = (ageY!=null && ageY<=19);
+  // talla
+  if(talla>0 && sx && isPed){
+    const r=lmsZ('height',sx,ageY,talla);
+    if(r){ if(r.pct<3) chips+=chipBtn('HP:0004322','Talla baja','Crecimiento y hábito'); if(r.pct>97) chips+=chipBtn('HP:0000098','Talla alta','Crecimiento y hábito'); }
+  } else if(talla>0 && sx && isAdult){
+    const a=adultPct('height',sx,talla);
+    if(a){ if(a.pct<3) chips+=chipBtn('HP:0004322','Talla baja','Crecimiento y hábito'); if(a.pct>97) chips+=chipBtn('HP:0000098','Talla alta','Crecimiento y hábito'); }
+  }
+  // imc/peso
+  if(bmi && sx && isPed){
+    const r=lmsZ('bmi',sx,ageY,bmi);
+    if(r){ if(r.pct<3) chips+=chipBtn('HP:0004325','Bajo peso','Crecimiento y hábito'); if(r.pct>97) chips+=chipBtn('HP:0001513','Obesidad','Crecimiento y hábito'); }
+  } else if(bmi && isAdult){
+    if(bmi<18.5) chips+=chipBtn('HP:0004325','Bajo peso','Crecimiento y hábito');
+    if(bmi>=30) chips+=chipBtn('HP:0001513','Obesidad','Crecimiento y hábito');
+  }
+  if(env>0 && talla>0 && (env/talla)>=1.05){ chips+=chipBtn('HP:0001505','Hábito marfanoide','Crecimiento y hábito'); }
+  // Siempre disponibles para marcar manualmente (sin dato)
+  const manual = [
+    ['HP:0004322','Talla baja'],['HP:0000098','Talla alta'],
+    ['HP:0001548','Sobrecrecimiento'],['HP:0001519','Hábito desproporcionado'],
+    ['HP:0001382','Hiperlaxitud articular'],['HP:0000256','Macrocefalia'],['HP:0000252','Microcefalia']
+  ];
+  let manualChips = manual.map(m=>chipBtn(m[0],m[1],'Crecimiento y hábito')).join('');
+
+  const noteHtml = isAdult
+    ? 'Percentiles adulto: <b>talla</b> por modelo normal con referencia poblacional española (varón μ177.7/σ5.9 cm; mujer μ164.7/σ5.4 cm); <b>peso</b> es aproximado (la valoración estándar del adulto es la clasificación de <b>IMC</b> de la OMS). Orientativo.'
+    : 'Percentiles: estándares <b>OMS</b> (2006, 0-5 a; 2007, 5-19 a) por método LMS. En España la AEP recomienda como referencia poblacional los <b>Estudios Españoles de Crecimiento 2010</b> (Carrascosa et al.); interpreta los extremos en ese contexto.';
+
+  box.innerHTML = `
+    ${rows? `<div class="am-grid">${rows}</div>`:'<div class="am-empty">Introduce talla y peso para calcular IMC y percentiles.</div>'}
+    ${chips? `<div class="am-sub">Sugeridos por las medidas — toca para añadir al fenotipo:</div><div class="pheno-chips">${chips}</div>`:''}
+    <div class="am-sub">Marcar signo sin introducir dato:</div><div class="pheno-chips">${manualChips}</div>
+    <div class="am-note">${noteHtml}</div>
+  `;
+  box.querySelectorAll('.pheno-chip').forEach(b=>{
+    b.addEventListener('click', ()=> toggleQuickPheno(b.dataset.pid, b.dataset.pes, b.dataset.preg));
+  });
+}
+/* === fin motor antropometría === */
+
+/* ---- Render de la anamnesis dirigida ---- */
+const qOwned = {}; // qid -> [ids HPO aportados por esa pregunta (reversible)]
+
+function questionHtml(q, dom){
+  const type = q.multiple ? 'checkbox' : 'radio';
+  const opts = (q.opciones||[]).map((o,i)=>{
+    const hint = (o.hpo&&o.hpo.length) ? `<span class="q-hpo">${o.hpo.map(h=>h.id).join(', ')}</span>` : '';
+    return `<label class="q-opt"><input type="${type}" name="q_${q.id}" data-oi="${i}"><span>${o.etiqueta}</span>${hint}</label>`;
+  }).join('');
+  return `<div class="q" data-qid="${q.id}"><div class="q-text">${q.texto}</div><div class="q-opts">${opts}</div></div>`;
+}
+function wireQuestion(q, dom){
+  const el = document.querySelector(`.q[data-qid="${q.id}"]`); if(!el) return;
+  el.querySelectorAll('input').forEach(inp=> inp.addEventListener('change', ()=> recomputeQuestion(q, dom, el)));
+}
+async function recomputeQuestion(q, dom, el){
+  // 1) Retira los HPO que esta pregunta tenía puestos (reversibilidad)
+  (qOwned[q.id]||[]).forEach(id=>{ delete selections[id]; });
+  // 2) Reúne los HPO de las opciones marcadas (preserva orden de inserción)
+  const ids=[]; const meta={};
+  el.querySelectorAll('input:checked').forEach(inp=>{
+    const o = q.opciones[+inp.dataset.oi]; if(!o) return;
+    (o.hpo||[]).forEach(h=>{ if(!ids.includes(h.id)){ ids.push(h.id); meta[h.id]=h.nombre; } });
+  });
+  qOwned[q.id]=ids;
+  // 3) Añade optimista y verifica contra JAX + reetiqueta babelon
+  ids.forEach(id=>{ selections[id]={hpo:id, es:meta[id]||id, en:meta[id]||'', region:'anamnesis: '+dom, origen:'anamnesis', verified:undefined}; });
+  renderCart();
+  for(const id of ids){
+    const r = await verifyAndRelabel(id, meta[id]);
+    if(selections[id]){ selections[id].es=r.es; selections[id].en=r.en; selections[id].verified=r.verified; }
+  }
+  renderCart();
+}
+
+function renderAnamnesis(){
+  const main=document.getElementById('main'); if(!main || !activeFicha) return;
+  const f=activeFicha;
+  const domsHtml=(f.dominios||[]).map(d=>`
+    <div class="domain">
+      <div class="domain-h">${d.nombre}</div>
+      ${(d.preguntas||[]).map(q=>questionHtml(q, d.nombre)).join('')}
+    </div>`).join('');
+  main.innerHTML = `
+    <div class="step-title">${f.nombre_es||f.id}</div>
+    <div class="step-sub">Anamnesis dirigida · marca lo presente · cada respuesta añade HPO verificados (panel derecho). Orden HPO preservado.</div>
+    ${domsHtml||'<div class="placeholder">Esta ficha no tiene dominios/preguntas.</div>'}
+    ${(f.modulos&&f.modulos.beighton)?beightonHtml():''}
+    ${(f.modulos&&f.modulos.antropometria)?antropometriaHtml():''}
+    <details class="deepen">
+      <summary>✨ Profundizar con IA (bajo demanda)</summary>
+      <div class="deepen-body">
+        <button class="btn" id="btnProfundizar">Generar más preguntas según el fenotipo acumulado</button>
+        <div id="deepenOut" style="margin-top:10px"></div>
+      </div>
+    </details>
+    <div class="nav-buttons" style="display:flex; justify-content:flex-start; margin-top:24px">
+      <button class="btn ghost" id="btnVolver">‹ Volver a Inicio</button>
+    </div>`;
+  if(f.modulos&&f.modulos.beighton) attachBeighton({label:'Beighton'});
+  if(f.modulos&&f.modulos.antropometria) attachAntropometria();
+  (f.dominios||[]).forEach(d=>(d.preguntas||[]).forEach(q=>wireQuestion(q, d.nombre)));
+  document.getElementById('btnVolver').addEventListener('click', renderInicio);
+  document.getElementById('btnProfundizar').addEventListener('click', profundizarIA);
+  renderCart();
+}
+
+/* ---- Profundizar con IA: genera preguntas extra (verifica HPO antes de mostrar) ---- */
+async function profundizarIA(){
+  const out=document.getElementById('deepenOut'); if(!out) return;
+  if(!anyProvider()){ out.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
+  out.innerHTML='<div class="loading">Generando preguntas con IA…</div>';
+  try{
+    const system='Eres genetista clínico. Dado el motivo, la ficha activa y los códigos HPO ya presentes, propón 3-5 preguntas de anamnesis ADICIONALES en español para refinar el fenotipo (no repitas lo ya preguntado). Devuelve SOLO JSON: {"preguntas":[{"id":"p1","texto":"...","multiple":false,"opciones":[{"etiqueta":"Sí","hpo":[{"id":"HP:0000000","nombre":"etiqueta"}]},{"etiqueta":"No","hpo":[]}]}]}. Usa códigos HPO reales y vigentes; ordena por lógica clínica.';
+    const user=JSON.stringify({motivo:patient.motivo, ficha:activeFicha.nombre_es, hpo_presentes:Object.keys(selections)});
+    const resp=await callLLM({system, user, webSearch:false, maxTokens:900, task:'deepen'});
+    const j=extractJSON(resp);
+    let pregs=(j&&j.preguntas)||[];
+    // Regla dura: verificar cada HPO contra JAX antes de mostrarlo; descartar inventados
+    for(const q of pregs){
+      if(!q.id) q.id='ia_'+Math.random().toString(36).slice(2,7);
+      for(const o of (q.opciones||[])){
+        const keep=[];
+        for(const h of (o.hpo||[])){ const t=await verifyHpo(h.id); if(t) keep.push({id:t.id, nombre:h.nombre||t.name}); }
+        o.hpo=keep;
+      }
+    }
+    pregs=pregs.filter(q=>(q.opciones||[]).length);
+    if(!pregs.length){ out.innerHTML='<div class="loading">La IA no devolvió preguntas con HPO verificables.</div>'; return; }
+    out.innerHTML=`<div class="domain"><div class="domain-h">Profundización IA <span style="font-size:10px;color:var(--ink3)">(HPO verificados)</span></div>${pregs.map(q=>questionHtml(q,'Profundización IA')).join('')}</div>`;
+    pregs.forEach(q=>wireQuestion(q,'Profundización IA'));
+  }catch(e){ out.innerHTML='<div class="err">Error al generar: '+e.message+'</div>'; }
+}
+
+/* ===========================================================================
+   PARTE E — Módulo 4: Autoría de ficha con IA (web search) + revisión + commit
+   =========================================================================== */
+/* Orden de prioridad de fuentes científicas (repositorio interno → ES → EU → US). */
+const SOURCE_PRIORITY = 'Consulta y prioriza fuentes científicas en ESTE ORDEN: (1) la guía o documento aportado por el clínico (repositorio interno), si lo hay; (2) sociedades científicas ESPAÑOLAS (p. ej. AEGH, AEP y las sociedades de la especialidad correspondiente); (3) EUROPEAS (p. ej. ESHG, ERN, EMA); (4) AMERICANAS (p. ej. ACMG, AAP, NIH/GeneReviews/OMIM). Busca en la web siguiendo ese orden de preferencia y CITA siempre las fuentes con su título, URL y año en "fuentes".';
+
+const FICHA_SYSTEM_PROMPT = `Eres genetista clínico experto en fenotipado HPO. Genera una FICHA en JSON (y NADA más que el JSON) para la entidad o grupo nosológico del motivo dado, siguiendo EXACTAMENTE este esquema:
+{
+  "id": "slug-corto",
+  "nombre_es": "Nombre en español",
+  "sinonimos": ["términos alternativos para el matching"],
+  "poblacion": "pediatrica | adulta | unica",
+  "grupo": "slug-de-la-entidad-compartido-entre-variantes-por-edad (opcional)",
+  "version": "AAAA-MM",
+  "fuentes": [{"titulo":"...","url":"https://...","anio":"AAAA"}],
+  "modulos": { "beighton": false, "antropometria": false },
+  "dominios": [
+    { "nombre": "Dominio clínico (orden clínico, NO alfabético)",
+      "preguntas": [
+        { "id":"q1", "texto":"Pregunta en español dirigida al clínico", "multiple": false,
+          "opciones": [
+            {"etiqueta":"Sí","hpo":[{"id":"HP:0000000","nombre":"etiqueta HPO"}]},
+            {"etiqueta":"No","hpo":[]}
+          ] }
+      ] }
+  ],
+  "entidades": [
+    { "nombre":"Entidad/subtipo", "genes":["GEN1"], "mayores":["HP:0000000"], "menores":["HP:0000000"],
+      "umbral":"texto del criterio", "logica":"and|or", "min_mayores":1, "min_menores":2 }
+  ],
+  "panel_genes": ["GEN1","GEN2"],
+  "estudio_genetico": {
+    "indicado": true,
+    "tipo": "panel dirigido | exoma | genoma | gen único | array-CGH | otro",
+    "detalle": "qué estudio en primera línea y por qué; qué hacer si es negativo (escalado)",
+    "indicaciones": ["circunstancia clínica concreta en que se indica el estudio", "..."],
+    "fuentes": [{"titulo":"...","url":"https://...","anio":"AAAA"}]
+  }
+}
+Reglas: usa códigos HPO REALES y vigentes (formato HP:0000000, 7 dígitos); ordena dominios y preguntas por lógica clínica, NUNCA alfabético; sé exhaustivo según los criterios diagnósticos vigentes (busca en la web las guías/criterios actuales y cítalos en "fuentes"); en "poblacion" decide: si los criterios diagnósticos, los genes o el manejo difieren de forma RELEVANTE entre paciente pediátrico y adulto, genera la variante ("pediatrica" o "adulta") y comparte el mismo "grupo" entre ambas variantes (indica que conviene crear también la complementaria); si no difieren, usa "unica"; en "estudio_genetico" indica con apoyo de guías CUÁNDO está indicado el estudio, en qué circunstancias y QUÉ tipo de estudio (panel dirigido/exoma/genoma…) en primera línea y el escalado si es negativo; "logica" es "and" si exige mayores Y menores, "or" si basta uno de los dos umbrales; activa modulos.beighton o modulos.antropometria solo si son clínicamente pertinentes. ${SOURCE_PRIORITY} Devuelve SOLO el JSON.`;
+
+function slugify(s){ return (normTxt(s).replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'').slice(0,40).replace(/^-+|-+$/g,'')) || 'ficha'; }
+function collectHpoIds(f){
+  const ids=new Set();
+  (f.dominios||[]).forEach(d=>(d.preguntas||[]).forEach(q=>(q.opciones||[]).forEach(o=>(o.hpo||[]).forEach(h=>{ if(h&&h.id) ids.add(h.id); }))));
+  (f.entidades||[]).forEach(e=>{ (e.mayores||[]).forEach(x=>ids.add(x)); (e.menores||[]).forEach(x=>ids.add(x)); });
+  return [...ids].filter(x=>/^HP:\d{7}$/.test(x));
+}
+function validateFicha(f){
+  const errs=[];
+  if(!f || typeof f!=='object') return ['No es un objeto JSON.'];
+  if(!f.nombre_es) errs.push('falta "nombre_es"');
+  if(!Array.isArray(f.dominios) || !f.dominios.length) errs.push('falta "dominios" (array no vacío)');
+  if(!f.id) f.id = slugify(f.nombre_es || patient.motivo || 'ficha');
+  return errs;
+}
+/* Persiste: commit a GitHub si está configurado; si no, solo caché local. */
+async function persistFicha(f){
+  if(ghConfigured()){ await saveFicha(f); return 'commit'; }
+  const idx = cachedIndex() || {fichas:[]};
+  const entry={id:f.id, nombre:f.nombre_es, sinonimos:f.sinonimos||[], poblacion:f.poblacion||'unica', grupo:f.grupo||null};
+  const i=idx.fichas.findIndex(x=>x.id===f.id);
+  if(i>=0) idx.fichas[i]=entry; else idx.fichas.push(entry);
+  cacheIndex(idx); localStorage.setItem('fh_ficha_'+f.id, JSON.stringify(f));
+  return 'cache';
+}
+function downloadJson(f){
+  try{
+    const blob=new Blob([JSON.stringify(f,null,2)], {type:'application/json'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=(f.id||'ficha')+'.json';
+    document.body.appendChild(a); a.click(); a.remove();
+  }catch(e){ showToast('No se pudo descargar'); }
+}
+
+/* Lee el texto de un PDF en el navegador (pdf.js). Devuelve '' si no carga. */
+async function extractPdfText(file){
+  const lib = window.pdfjsLib;
+  if(!lib){ showToast('pdf.js no se cargó (¿sin red?)'); return ''; }
+  try{
+    lib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    const buf = await file.arrayBuffer();
+    const pdf = await lib.getDocument({data:buf}).promise;
+    let text='';
+    const n=Math.min(pdf.numPages, 40);
+    for(let i=1;i<=n;i++){ const page=await pdf.getPage(i); const c=await page.getTextContent(); text += c.items.map(it=>it.str).join(' ')+'\n'; }
+    return text.slice(0, 30000);
+  }catch(e){ showToast('No se pudo leer el PDF'); return ''; }
+}
+
+/* Modal opcional: aportar una guía (URL o PDF) como fuente principal antes de generar. */
+
+async function generarFichaIA(motivo, guiaContext){
+  const box=document.getElementById('fichaFlow');
+  if(!anyProvider()){ if(box) box.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
+  if(box) box.innerHTML='<div class="loading">Generando ficha con IA (buscando criterios vigentes en la web)… puede tardar.</div>';
+  try{
+    let user='Motivo de consulta: "'+(motivo||'')+'". Genera la ficha JSON más completa y vigente para esta entidad o grupo nosológico, con sus criterios diagnósticos actuales.';
+    if(guiaContext){ user += '\n\nGUÍA APORTADA POR EL CLÍNICO (úsala como FUENTE PRINCIPAL y cítala en "fuentes"):\n'+guiaContext; }
+    const resp=await callLLM({system:FICHA_SYSTEM_PROMPT, user, webSearch:true, maxTokens:8000, task:'author'});
+    const f=extractJSON(resp);
+    if(!f){ if(box) box.innerHTML='<div class="err">La IA no devolvió un JSON válido. Reintenta.</div>'; return; }
+    openFichaReview(f);
+  }catch(e){ if(box) box.innerHTML='<div class="err">Error generando la ficha: '+e.message+'</div>'; }
+}
+
+/* Conteo rápido de una ficha para mostrar el delta tras aplicar una guía. */
+function countFichaStats(f){
+  const dom=(f.dominios||[]).length;
+  const preg=(f.dominios||[]).reduce((a,d)=>a+((d.preguntas||[]).length),0);
+  const ent=(f.entidades||[]).length;
+  const genes=new Set([...(f.panel_genes||[]), ...((f.entidades||[]).flatMap(e=>e.genes||[]))]).size;
+  const hpo=collectHpoIds(f).length;
+  return {dom, preg, ent, genes, hpo};
+}
+
+function openFichaReview(f){
+  const ov=document.createElement('div'); ov.className='overlay'; ov.id='fichaReviewOverlay';
+  ov.innerHTML=`
+  <div class="modal" role="dialog" aria-label="Revisar ficha generada" style="max-width:760px">
+    <h2>Revisar ficha generada por IA</h2>
+    <div class="msub">Revisa y edita el JSON. Al guardar se valida, se verifica una muestra de HPO contra JAX y se commitea a tu GitHub (o a caché local si GitHub no está configurado).</div>
+    <textarea id="fichaJson" spellcheck="false" style="width:100%; min-height:340px; font-family:'IBM Plex Mono',ui-monospace,monospace; font-size:12px; line-height:1.5; padding:12px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink)">${JSON.stringify(f,null,2).replace(/</g,'&lt;')}</textarea>
+    <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap">
+      <button class="btn" id="btnFichaVerify">Verificar HPO (muestra)</button>
+      <button class="btn" id="btnFichaDownload">⬇ Descargar JSON</button>
+    </div>
+    <div class="test-out" id="fichaVerifyOut"></div>
+
+    <div style="border:1px solid var(--line); border-radius:9px; padding:10px 12px; margin-top:12px; background:var(--panel2)">
+      <div style="font-size:12px; font-weight:700; color:var(--accent); margin-bottom:6px">📎 Aplicar una guía a esta ficha (opcional) + re-buscar</div>
+      <div class="field" style="margin:0 0 8px"><label>URL de la guía</label><input id="revGuiaUrl" type="text" placeholder="https://…" autocomplete="off"></div>
+      <div class="field" style="margin:0 0 8px"><label>PDF de la guía</label><input id="revGuiaPdf" type="file" accept="application/pdf"></div>
+      <button class="btn" id="btnAplicarGuia">Aplicar guía y re-buscar ›</button>
+      <div id="revGuiaOut" style="font-size:12px; margin-top:8px"></div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn ghost" id="btnFichaCancel">Cancelar</button>
+      <button class="btn primary" id="btnFichaSave">Guardar y commitear</button>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  const ta=ov.querySelector('#fichaJson');
+  const out=ov.querySelector('#fichaVerifyOut');
+  const parse=()=>{ try{ return JSON.parse(ta.value); }catch(e){ out.className='test-out bad'; out.textContent='JSON inválido: '+e.message; return null; } };
+  const close=()=>ov.remove();
+
+  ov.querySelector('#btnFichaCancel').addEventListener('click', close);
+  ov.addEventListener('click', e=>{ if(e.target===ov) close(); });
+  ov.querySelector('#btnFichaDownload').addEventListener('click', ()=>{ const j=parse(); if(j){ validateFicha(j); downloadJson(j); } });
+  ov.querySelector('#btnFichaVerify').addEventListener('click', async ()=>{
+    const j=parse(); if(!j) return;
+    const ids=collectHpoIds(j); const sample=ids.slice(0,8);
+    out.className='test-out'; out.textContent='Verificando '+sample.length+' HPO contra JAX…';
+    let ok=0; const bad=[];
+    for(const id of sample){ const t=await verifyHpo(id); if(t) ok++; else bad.push(id); }
+    out.className='test-out '+(bad.length?'bad':'ok');
+    out.textContent=`HPO verificados ${ok}/${sample.length}`+(bad.length?(' · no válidos: '+bad.join(', ')):'')+(ids.length>sample.length?` (muestra de ${ids.length} en total)`:'');
+  });
+  ov.querySelector('#btnAplicarGuia').addEventListener('click', async ()=>{
+    const cur=parse(); if(!cur) return;
+    const gout=ov.querySelector('#revGuiaOut');
+    if(!anyProvider()){ gout.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
+    const url=ov.querySelector('#revGuiaUrl').value.trim();
+    const fileEl=ov.querySelector('#revGuiaPdf');
+    let ctx='';
+    if(url) ctx += 'URL de la guía: '+url+'\n';
+    gout.className=''; gout.textContent='Procesando…';
+    if(fileEl.files && fileEl.files[0]){ gout.textContent='Leyendo PDF…'; const txt=await extractPdfText(fileEl.files[0]); if(txt) ctx += 'TEXTO DE LA GUÍA (PDF):\n'+txt+'\n'; }
+    if(!ctx){ gout.innerHTML='<div class="err">Aporta una URL o un PDF de guía.</div>'; return; }
+    gout.textContent='Integrando la guía y re-buscando el estado del arte… puede tardar.';
+    try{
+      const system='Eres genetista clínico. Recibes (a) una FICHA JSON actual y (b) una GUÍA aportada por el clínico. Actualiza la ficha integrando la guía y, si hace falta, BUSCA EN LA WEB el estado del arte vigente para complementarla. Mantén EXACTAMENTE el mismo esquema JSON (mismos campos: id, nombre_es, sinonimos, poblacion, grupo, version, fuentes, modulos, dominios, entidades, panel_genes, estudio_genetico). No elimines contenido válido salvo que la guía lo contradiga; añade dominios/preguntas/criterios que falten. '+SOURCE_PRIORITY+' Devuelve SOLO JSON {"ficha": <ficha actualizada COMPLETA>, "cambios": "resumen en español de qué cambió y por qué"}.';
+      const user=JSON.stringify({ ficha_actual: cur, guia: ctx });
+      const resp=await callLLM({ system, user, webSearch:true, maxTokens:8000, task:'author' });
+      const j=extractJSON(resp);
+      if(!j){ gout.innerHTML='<div class="err">La IA no devolvió un JSON válido. Reintenta.</div>'; return; }
+      const nueva = j.ficha || j;
+      ta.value = JSON.stringify(nueva, null, 2);
+      const a=countFichaStats(cur), b=countFichaStats(nueva);
+      const delta = `dominios ${a.dom}→${b.dom} · preguntas ${a.preg}→${b.preg} · entidades ${a.ent}→${b.ent} · genes ${a.genes}→${b.genes} · HPO ${a.hpo}→${b.hpo}`;
+      gout.innerHTML = `<div class="fresh-res new"><b>Ficha actualizada con la guía.</b>${j.cambios?`<div style="margin-top:4px">${String(j.cambios).replace(/</g,'&lt;')}</div>`:''}<div class="study-src">${delta}</div></div>`;
+    }catch(e){ gout.innerHTML='<div class="err">Error al aplicar la guía: '+e.message+'</div>'; }
+  });
+
+  ov.querySelector('#btnFichaSave').addEventListener('click', async ()=>{
+    const j=parse(); if(!j) return;
+    const errs=validateFicha(j);
+    if(errs.length){ out.className='test-out bad'; out.textContent='No se puede guardar: '+errs.join(' · '); return; }
+    out.className='test-out'; out.textContent='Guardando…';
+    try{
+      const mode=await persistFicha(j);
+      close();
+      renderInicio();
+      const idx=await getIndex();
+      setActiveFicha(j, {via:'manual', confianza:1}, idx.fichas||[]);
+      showToast('Ficha guardada'+(mode==='commit'?' y commiteada a GitHub':' (caché local · GitHub sin configurar)'));
+    }catch(e){ out.className='test-out bad'; out.textContent='Error al guardar: '+e.message; }
+  });
+}
+
+/* ===========================================================================
+   PARTE F — Módulo 8: Diferencial por umbrales + panel génico + estudio genético
+   =========================================================================== */
+function entidadStatus(e){
+  const present = id => !!selections[id];
+  const maj = (e.mayores||[]).filter(present);
+  const min = (e.menores||[]).filter(present);
+  const needMaj = e.min_mayores||0, needMin = e.min_menores||0;
+  const majOk = maj.length>=needMaj, minOk = min.length>=needMin;
+  const logica = (e.logica||'and').toLowerCase();
+  const cumple = (needMaj||needMin) ? (logica==='or' ? (majOk||minOk) : (majOk&&minOk)) : (maj.length+min.length>0);
+  return {maj, min, needMaj, needMin, cumple, score: maj.length*2 + min.length};
+}
+function geneChip(g){ return `<span class="gene">${g}</span>`; }
+function geneLinks(g){
+  const e=encodeURIComponent(g);
+  return {
+    PanelApp: panelAppLink(g),
+    GeneReviews: 'https://www.ncbi.nlm.nih.gov/books/?term='+encodeURIComponent(g+'[gene] AND GeneReviews[book]'),
+    OMIM: 'https://www.omim.org/search?index=entry&search='+e,
+    ClinGen: 'https://search.clinicalgenome.org/kb/genes?page=1&search='+e,
+    HealthInCode: 'https://www.healthincode.com/?s='+e
+  };
+}
+function geneRowHtml(g){
+  const L=geneLinks(g);
+  return `<div class="gene-row"><b>${g}</b> ${Object.entries(L).map(([k,u])=>`<a href="${u}" target="_blank" rel="noopener">${k}</a>`).join(' · ')}</div>`;
+}
+function dxHtml(e, st){
+  const genes=(e.genes||[]).map(geneChip).join(' ');
+  return `<div class="dx top">
+    <div class="dx-hd"><span class="dx-nm">${e.nombre}</span><span class="pill sug">cumple umbral</span></div>
+    <div class="dx-meta">Mayores presentes ${st.maj.length}/${st.needMaj} · Menores ${st.min.length}/${st.needMin}</div>
+    ${e.umbral?`<div class="dx-rule">${e.umbral}</div>`:''}
+    ${genes?`<div class="gp-genes" style="margin-top:6px">${genes}</div>`:''}
+  </div>`;
+}
+function renderStudyEval(){
+  if(!studyEval) return '';
+  if(studyEval.loading) return '<div class="loading" style="padding:8px 0">Consultando guías vigentes en la web…</div>';
+  if(studyEval.error) return '<div class="err">'+studyEval.error+'</div>';
+  const r=studyEval.result||{}; const g=r.guia||{};
+  return `<div class="eval ${r.indicado?'on':'off'}">
+    <b>${r.indicado?'✓ Estudio indicado':'✗ No indicado'}</b> · ${r.cumple_criterios?'cumple criterios':'no cumple criterios'}
+    ${r.justificacion?`<div style="margin-top:4px">${r.justificacion}</div>`:''}
+    ${g.url?`<div class="study-src">Según: <a href="${g.url}" target="_blank" rel="noopener">${g.titulo||g.url}${g.anio?' ('+g.anio+')':''}</a></div>`:(g.titulo?`<div class="study-src">Según: ${g.titulo}</div>`:'')}
+  </div>`;
+}
+function studyHtml(){
+  if(!activeFicha) return '';
+  const s = activeFicha.estudio_genetico;
+  const ind=(s&&s.indicaciones||[]).map(i=>`<li>${i}</li>`).join('');
+  const src=(s&&s.fuentes||[]).map(f=>`<a href="${f.url}" target="_blank" rel="noopener">${f.titulo}${f.anio?' ('+f.anio+')':''}</a>`).join(' · ');
+  return `<div class="study">
+    <div class="study-h">🧬 Indicación de estudio genético</div>
+    ${s ? `
+      ${s.indicado===false?'<div class="study-flag">No indicado de rutina</div>':''}
+      ${s.tipo?`<div><b>Tipo:</b> ${s.tipo}</div>`:''}
+      ${s.detalle?`<div style="margin-top:3px">${s.detalle}</div>`:''}
+      ${ind?`<div style="margin-top:4px"><b>Cuándo:</b><ul style="margin:4px 0 0 16px; padding:0">${ind}</ul></div>`:''}
+      ${src?`<div class="study-src">Guías: ${src}</div>`:''}
+    ` : '<div style="color:var(--ink3); font-size:11.5px">La ficha no detalla indicación; evalúala según guías vigentes.</div>'}
+    <button class="btn" id="btnEvalGuias" style="margin-top:8px">¿Cumple criterios? Evaluar según guías (web)</button>
+    ${renderStudyEval()}
+  </div>`;
+}
+async function evalIndicacionGenetica(){
+  if(!activeFicha) return;
+  if(!anyProvider()){ studyEval={error:'Configura una API key (Claude u OpenAI) en ⚙ Ajustes.'}; renderDifferential(); return; }
+  studyEval={loading:true}; renderDifferential();
+  try{
+    const cumplen=(activeFicha.entidades||[]).map(e=>({e,st:entidadStatus(e)})).filter(x=>x.st.cumple).map(x=>x.e.nombre);
+    const system='Eres genetista clínico. Determina, SEGÚN LAS GUÍAS Y RECOMENDACIONES VIGENTES (búscalas en la web y CÍTALAS), si en ESTE paciente concreto está indicado el estudio genético para la entidad de la ficha, y si cumple los criterios formales para indicarlo. '+SOURCE_PRIORITY+' Devuelve SOLO JSON {"indicado":bool,"cumple_criterios":bool,"justificacion":"texto breve citando el criterio/guía","guia":{"titulo":"...","url":"https://...","anio":"AAAA"}}.';
+    const user=JSON.stringify({ ficha:activeFicha.nombre_es, motivo:patient.motivo, edad:patient.edad, sexo:patient.sexo, hpo_presentes:Object.keys(selections), entidades_que_cumplen:cumplen, estudio_ficha:activeFicha.estudio_genetico||null });
+    const resp=await callLLM({system, user, webSearch:true, maxTokens:700, task:'eval'});
+    const j=extractJSON(resp);
+    studyEval = j ? {result:j} : {error:'La IA no devolvió un veredicto válido.'};
+  }catch(e){ studyEval={error:e.message}; }
+  renderDifferential();
+}
+function renderDifferential(){
+  const dbox=document.getElementById('differentialBox');
+  const gbox=document.getElementById('genePanelBox');
+  if(!dbox||!gbox) return;
+  if(!activeFicha || !((activeFicha.entidades||[]).length || activeFicha.estudio_genetico || (activeFicha.panel_genes||[]).length)){
+    dbox.style.display='none'; gbox.style.display='none'; return;
+  }
+  const ents=(activeFicha.entidades||[]).map(e=>({e, st:entidadStatus(e)}));
+  const cumplen=ents.filter(x=>x.st.cumple).sort((a,b)=>b.st.score-a.st.score);
+  // Diferencial: SOLO entidades que cruzan su umbral formal
+  if(activeFicha.entidades && activeFicha.entidades.length){
+    dbox.style.display='block';
+    dbox.innerHTML = `<div class="cart-group-title">Diferencial${(patient.edad||patient.sexo)?` · ${[patient.edad,patient.sexo].filter(Boolean).join(' · ')}`:''}</div>` +
+      (cumplen.length
+        ? cumplen.map(x=>dxHtml(x.e, x.st)).join('')
+        : '<div class="empty">Ninguna entidad cruza aún su umbral formal. Marca más rasgos.</div>');
+  } else { dbox.style.display='none'; }
+  // Panel génico: genes de las entidades activas; si ninguna, panel_genes completo
+  const genes = cumplen.length ? [...new Set(cumplen.flatMap(x=>x.e.genes||[]))] : (activeFicha.panel_genes||[]);
+  if(genes.length || activeFicha.estudio_genetico || (activeFicha.entidades||[]).length){
+    gbox.style.display='block';
+    gbox.innerHTML = studyHtml() + (genes.length ? `
+      <div class="cart-group-title">Panel génico ${cumplen.length?'(entidades activas)':'(sugerido)'} · ${genes.length} gen(es)</div>
+      <div class="gp-genes">${genes.map(geneChip).join(' ')}</div>
+      <details class="gene-links"><summary>Enlaces por gen (PanelApp · GeneReviews · OMIM · ClinGen · HealthInCode)</summary>${genes.map(geneRowHtml).join('')}</details>` : '');
+    const eb=gbox.querySelector('#btnEvalGuias'); if(eb) eb.addEventListener('click', evalIndicacionGenetica);
+  } else { gbox.style.display='none'; }
+}
+
+/* ===========================================================================
+   PARTE G — Módulo 9: Informes (radiología / laboratorio) → HPO
+   =========================================================================== */
+function informeRowHtml(h, i){
+  return `<div class="inf-row">
+    <div class="inf-main"><b>${h.es}</b> <span class="hp">${h.id}</span>${h.ambiguo?' <span class="warn" title="hallazgo ambiguo según la IA">⚠</span>':''}
+      <div class="inf-src">“${(h.origen||'').replace(/</g,'&lt;')}”</div></div>
+    <button class="btn" data-addone="${i}">Añadir</button>
+  </div>`;
+}
+async function extraerInforme(tipo){
+  const DEF = {
+    radio:   {ta:'infRadio',   out:'radioResults',   label:'radiología'},
+    lab:     {ta:'infLab',     out:'labResults',     label:'laboratorio'},
+    electro: {ta:'infElectro', out:'electroResults', label:'electrofisiología'}
+  };
+  const map = DEF[tipo]; if(!map) return;
+  const texto=(document.getElementById(map.ta).value||'').trim();
+  const out=document.getElementById(map.out);
+  if(!texto){ out.innerHTML='<div class="empty">Pega el informe primero.</div>'; return; }
+  if(!anyProvider()){ out.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
+  out.innerHTML='<div class="loading">Extrayendo HPO (solo hallazgos anómalos)…</div>';
+  try{
+    const SYS = {
+      radio: 'Extrae SOLO hallazgos ANÓMALOS de un informe de RADIOLOGÍA como términos HPO. Devuelve SOLO JSON {"hallazgos":[{"id":"HP:0000000","nombre":"etiqueta","origen":"frase exacta del informe","ambiguo":false}]}. No incluyas hallazgos normales ni descripciones de normalidad. Usa códigos HPO reales y vigentes.',
+      lab: 'Eres genetista clínico. Extrae SOLO valores ANÓMALOS de un informe de LABORATORIO como términos HPO, interpretando los rangos de referencia según la edad ('+(patient.edad||'no indicada')+') y el sexo ('+(patient.sexo||'no indicado')+') del paciente. NUNCA generes HPO de valores dentro de rango/normales. Devuelve SOLO JSON {"hallazgos":[{"id":"HP:0000000","nombre":"etiqueta","origen":"parámetro y valor de origen","ambiguo":false}]}. Marca ambiguo=true si la interpretación o el rango es incierto. Usa códigos HPO reales y vigentes.',
+      electro: 'Eres neurofisiólogo clínico y genetista. Extrae SOLO hallazgos ANÓMALOS de un informe de PRUEBAS ELECTROFISIOLÓGICAS (EEG, EMG, electroneurografía/ENG, estudios de conducción nerviosa, ECG/Holter, potenciales evocados visuales/auditivos/somatosensoriales, electrorretinograma/ERG, electrooculograma) como términos HPO. Interpreta según la edad ('+(patient.edad||'no indicada')+') y el sexo ('+(patient.sexo||'no indicado')+'). NO incluyas hallazgos normales. Devuelve SOLO JSON {"hallazgos":[{"id":"HP:0000000","nombre":"etiqueta","origen":"frase/parámetro de origen","ambiguo":false}]}. Usa códigos HPO reales y vigentes.'
+    };
+    const system = SYS[tipo];
+    const resp=await callLLM({system, user:texto, webSearch:false, maxTokens:1200, task:'extract'});
+    const j=extractJSON(resp);
+    const hs=(j&&j.hallazgos)||[];
+    // Regla dura: verificar contra JAX + reetiquetar babelon; descartar inventados
+    const verified=[];
+    for(const h of hs){ const r=await verifyAndRelabel(h.id, h.nombre); if(r.verified) verified.push({id:r.id, es:r.es, en:r.en, origen:h.origen||'', ambiguo:!!h.ambiguo}); }
+    if(!verified.length){ out.innerHTML='<div class="empty">Sin hallazgos HPO verificables en el informe.</div>'; return; }
+    out.innerHTML = `<button class="btn" id="addAll_${tipo}" style="margin-bottom:8px">+ Añadir todos (${verified.length})</button>`
+      + verified.map((h,i)=>informeRowHtml(h,i)).join('');
+    const addOne=(h)=>{ selections[h.id]={hpo:h.id, es:h.es, en:h.en, region:map.label, origen:map.label, verified:true}; renderCart(); };
+    out.querySelector('#addAll_'+tipo).addEventListener('click', ()=>{ verified.forEach(addOne); showToast('Añadidos '+verified.length+' HPO de '+map.label); });
+    out.querySelectorAll('[data-addone]').forEach(b=> b.addEventListener('click', ()=>{ addOne(verified[+b.dataset.addone]); b.textContent='✓'; b.disabled=true; }));
+  }catch(e){ out.innerHTML='<div class="err">Error al extraer: '+e.message+'</div>'; }
+}
+function openInformes(){
+  const ov=document.createElement('div'); ov.className='overlay'; ov.id='informesOverlay';
+  ov.innerHTML=`
+  <div class="modal" role="dialog" aria-label="Informes a HPO" style="max-width:720px">
+    <h2>📄 Informes → HPO</h2>
+    <div class="msub">Pega el informe; la IA extrae <b>solo hallazgos anómalos</b> como HPO (verificados contra JAX). En laboratorio usa edad/sexo del paciente para no marcar valores normales. Revisa cada propuesta antes de añadir.</div>
+    <h3>Radiología</h3>
+    <textarea id="infRadio" spellcheck="false" placeholder="Pega aquí el informe de radiología…" style="width:100%; min-height:110px; padding:10px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink); font-size:13px"></textarea>
+    <button class="btn" id="btnExtractRadio" style="margin-top:8px">Extraer HPO de radiología</button>
+    <div id="radioResults" style="margin-top:8px"></div>
+    <h3>Laboratorio</h3>
+    <textarea id="infLab" spellcheck="false" placeholder="Pega aquí el informe de laboratorio…" style="width:100%; min-height:110px; padding:10px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink); font-size:13px"></textarea>
+    <button class="btn" id="btnExtractLab" style="margin-top:8px">Extraer HPO de laboratorio</button>
+    <div id="labResults" style="margin-top:8px"></div>
+    <h3>Pruebas electrofisiológicas</h3>
+    <textarea id="infElectro" spellcheck="false" placeholder="Pega aquí el informe electrofisiológico (EEG, EMG/ENG, ECG/Holter, potenciales evocados, ERG…)…" style="width:100%; min-height:110px; padding:10px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink); font-size:13px"></textarea>
+    <button class="btn" id="btnExtractElectro" style="margin-top:8px">Extraer HPO de electrofisiología</button>
+    <div id="electroResults" style="margin-top:8px"></div>
+    <div class="modal-actions"><button class="btn ghost" id="infClose">Cerrar</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('#infClose').addEventListener('click', ()=>ov.remove());
+  ov.addEventListener('click', e=>{ if(e.target===ov) ov.remove(); });
+  ov.querySelector('#btnExtractRadio').addEventListener('click', ()=>extraerInforme('radio'));
+  ov.querySelector('#btnExtractLab').addEventListener('click', ()=>extraerInforme('lab'));
+  ov.querySelector('#btnExtractElectro').addEventListener('click', ()=>extraerInforme('electro'));
+}
+
+/* ===========================================================================
+   PARTE H — Módulo 10: Export (PDF con jsPDF + copiar códigos)
+   =========================================================================== */
+function generatePdf(){
+  if(!(window.jspdf && window.jspdf.jsPDF)){ showToast('jsPDF no se cargó (¿sin red?)'); return; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({unit:'pt', format:'a4'});
+  const L=40, W=515; let y=46;
+  const write=(txt, o={})=>{
+    doc.setFont('helvetica', o.bold?'bold':'normal'); doc.setFontSize(o.size||10);
+    doc.splitTextToSize(String(txt), W).forEach(t=>{ if(y>800){ doc.addPage(); y=46; } doc.text(t, L, y); y+=(o.lh||14); });
+  };
+  write('fenotipHAC — Informe de fenotipado', {size:15, bold:true});
+  write(new Date().toLocaleString('es-ES'), {size:8}); y+=4;
+  write('Motivo: '+(patient.motivo||'—')+'    Edad: '+(patient.edad||'—')+'    Sexo: '+(patient.sexo||'—'));
+  if(activeFicha) write('Ficha: '+(activeFicha.nombre_es||activeFicha.id));
+  y+=6;
+  const ids=Object.keys(selections);
+  write('Fenotipo HPO ('+ids.length+')', {size:12, bold:true});
+  ids.forEach(id=>{ const s=selections[id]; write('• '+id+'  '+(s.es||'')+(s.verified===false?'  [no verificado]':''), {size:9, lh:12}); });
+  if(activeFicha && (activeFicha.entidades||[]).length){
+    const cumplen=(activeFicha.entidades||[]).map(e=>({e,st:entidadStatus(e)})).filter(x=>x.st.cumple);
+    if(cumplen.length){ y+=6; write('Diferencial (cumple umbral)', {size:12, bold:true});
+      cumplen.forEach(x=> write('• '+x.e.nombre+' — genes: '+(x.e.genes||[]).join(', '), {size:9, lh:12})); }
+  }
+  if(activeFicha && activeFicha.estudio_genetico){
+    y+=6; write('Estudio genético', {size:12, bold:true});
+    const s=activeFicha.estudio_genetico;
+    write((s.tipo||'')+(s.detalle?'. '+s.detalle:''), {size:9, lh:12});
+  }
+  write('— Orientativo; no sustituye el juicio clínico ni la confirmación molecular.', {size:8, lh:12});
+  doc.save('fenotiphac-informe.pdf');
+}
+
+/* ===========================================================================
+   PARTE I — Módulo 5: Estado del arte (freshness > 30 días)
+   =========================================================================== */
+function freshnessInfo(id){
+  const t=localStorage.getItem('fh_fresh_'+id);
+  if(!t) return {never:true, stale:true, days:null};
+  const days=Math.floor((Date.now()-Date.parse(t))/86400000);
+  return {never:false, stale:days>30, days};
+}
+function freshnessBannerHtml(id){
+  const fi=freshnessInfo(id);
+  const txt = fi.never ? 'Estado del arte sin comprobar nunca' : (fi.stale ? `Sin comprobar el estado del arte hace ${fi.days} día(s)` : `Estado del arte revisado hace ${fi.days} día(s)`);
+  return `<div class="fresh ${fi.stale?'stale':''}">
+    <span>${fi.stale?'⚠ ':'✓ '}${txt}</span>
+    <button class="btn" id="btnFreshCheck">Comprobar ahora</button>
+    <div id="freshOut" style="width:100%"></div>
+  </div>`;
+}
+async function comprobarFreshness(){
+  if(!activeFicha) return;
+  const out=document.getElementById('freshOut'); if(!out) return;
+  if(!anyProvider()){ out.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
+  out.innerHTML='<div class="loading" style="padding:6px 0">Comprobando novedades en guías/criterios/genes (web)…</div>';
+  try{
+    const system='Eres genetista clínico. Comprueba en la web si desde la versión indicada hay NOVEDADES relevantes en criterios diagnósticos, guías o genes para esta entidad. Devuelve SOLO JSON {"novedad":bool,"resumen":"texto breve","fuentes":[{"titulo":"...","url":"https://...","anio":"AAAA"}]}.';
+    const user=JSON.stringify({ ficha:activeFicha.nombre_es, version:activeFicha.version||'desconocida' });
+    const resp=await callLLM({ system, user, webSearch:true, maxTokens:700, task:'freshness' });
+    const j=extractJSON(resp)||{};
+    localStorage.setItem('fh_fresh_'+activeFicha.id, new Date().toISOString());
+    const src=(j.fuentes||[]).map(f=>`<a href="${f.url}" target="_blank" rel="noopener">${f.titulo}${f.anio?' ('+f.anio+')':''}</a>`).join(' · ');
+    out.innerHTML=`<div class="fresh-res ${j.novedad?'new':''}">
+      <b>${j.novedad?'Hay novedades':'Sin novedades relevantes'}</b>
+      ${j.resumen?`<div style="margin-top:4px">${j.resumen}</div>`:''}
+      ${src?`<div class="study-src">${src}</div>`:''}
+      ${j.novedad?'<button class="btn" id="btnRegen" style="margin-top:8px">Regenerar ficha con IA</button>':''}
+    </div>`;
+    const rg=out.querySelector('#btnRegen'); if(rg) rg.addEventListener('click', ()=>generarFichaIA(activeFicha.nombre_es||patient.motivo));
+  }catch(e){ out.innerHTML='<div class="err">Error: '+e.message+'</div>'; }
+}
+
+/* ---- Búsqueda HPO global (caja de la barra lateral) ---- */
+function wireGlobalSearch(){
+  const inp=document.getElementById('globalSearch'); if(!inp) return;
+  let t=null;
+  inp.addEventListener('input', (e)=>{
+    clearTimeout(t);
+    const term=e.target.value.trim();
+    t=setTimeout(()=>runInlineSearch(term, 'Búsqueda global', 'globalSearchResults'), 350);
+  });
+}
+
+/* ---- Export (stubs Módulo 10) ---- */
+function copyCodes(){
+  const codes=Object.keys(selections).join(', ');
+  if(navigator.clipboard && codes){ navigator.clipboard.writeText(codes).then(()=>showToast('Códigos HPO copiados')); }
+  else showToast(codes?'Sin portapapeles disponible':'No hay códigos que copiar');
+}
+
+/* ---- Init ---- */
+function init(){
+  document.getElementById('openSettings').addEventListener('click', openSettings);
+  document.getElementById('openInformes').addEventListener('click', openInformes);
+  document.getElementById('copyCodesBtn').addEventListener('click', copyCodes);
+  document.getElementById('generatePdfBtn').addEventListener('click', generatePdf);
+  renderInicio();
+  renderPatientLine();
+  renderCart();
+  renderStatus();
+  wireGlobalSearch();
+  // Pre-carga del babelon (gratis) → marca estado
+  loadEsLabels().then(map=>{ babelonReady = !!(map && Object.keys(map).length); renderStatus(); });
+}
+/* ===========================================================================
+   Puerta de acceso (login básico de cliente)
+   - Disuasorio, NO seguridad real (es HTML estático: cualquiera puede ver el
+     código). Para protección de verdad usa Cloudflare/Netlify con contraseña.
+   - Se ACTIVA solo si pones un hash. Por defecto (hash vacío) NO pide nada.
+   - Para fijar tu contraseña: abre la app con #sethash al final de la URL,
+     escribe una contraseña, copia el hash que sale y pégalo en AUTH.hash; sube
+     el index.html. Opcional: AUTH.user para exigir también un usuario.
+   =========================================================================== */
+const AUTH = { user: '', hash: '' };  // ← pon aquí tu hash (de #sethash) para activar el login
+async function sha256hex(s){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+function authGate(){
+  if(!AUTH.hash) return Promise.resolve(true);                 // login desactivado
+  if(sessionStorage.getItem('fh_auth')==='1') return Promise.resolve(true);
+  return new Promise(resolve=>{
+    const ov=document.createElement('div'); ov.className='overlay'; ov.id='authOverlay';
+    ov.innerHTML=`<div class="modal" role="dialog" aria-label="Acceso" style="max-width:380px">
+      <h2>🔒 Acceso</h2>
+      <div class="msub">Introduce tus credenciales para entrar.</div>
+      ${AUTH.user?'<div class="field"><label>Usuario</label><input id="authUser" type="text" autocomplete="username"></div>':''}
+      <div class="field"><label>Contraseña</label><input id="authPass" type="password" autocomplete="current-password"></div>
+      <div class="test-out" id="authOut"></div>
+      <div class="modal-actions"><button class="btn primary" id="authGo">Entrar</button></div>
+    </div>`;
+    document.body.appendChild(ov);
+    const tryAuth=async()=>{
+      const out=ov.querySelector('#authOut');
+      const u=AUTH.user ? (ov.querySelector('#authUser').value||'') : '';
+      const p=ov.querySelector('#authPass').value||'';
+      const okUser = !AUTH.user || u===AUTH.user;
+      const okPass = (await sha256hex(p))===AUTH.hash;
+      if(okUser && okPass){ sessionStorage.setItem('fh_auth','1'); ov.remove(); resolve(true); }
+      else { out.className='test-out bad'; out.textContent='Credenciales incorrectas.'; }
+    };
+    ov.querySelector('#authGo').addEventListener('click', tryAuth);
+    ov.querySelector('#authPass').addEventListener('keydown', e=>{ if(e.key==='Enter') tryAuth(); });
+  });
+}
+/* Generador de hash: abre la app con #sethash para obtener el hash a pegar en AUTH.hash */
+function renderHashTool(){
+  document.body.innerHTML='<div style="max-width:520px;margin:60px auto;font-family:system-ui;color:#e8edf2">'+
+    '<h2>Generar hash de contraseña</h2><p style="color:#9fb0c0">Escribe una contraseña; copia el hash SHA-256 y pégalo en <code>AUTH.hash</code> dentro de index.html. Luego sube el archivo.</p>'+
+    '<input id="hp" type="text" placeholder="contraseña" style="width:100%;padding:10px;border-radius:8px;border:1px solid #2a3340;background:#1d2530;color:#e8edf2">'+
+    '<div id="ho" style="margin-top:12px;font-family:monospace;word-break:break-all;color:#3fb6a8"></div></div>';
+  document.getElementById('hp').addEventListener('input', async e=>{
+    document.getElementById('ho').textContent = e.target.value ? await sha256hex(e.target.value) : '';
+  });
+}
+async function boot(){
+  if(location.hash==='#sethash'){ renderHashTool(); return; }
+  const ok = await authGate();
+  if(ok) init();
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', boot);
+else boot();
+</script>
+</body>
+</html>
