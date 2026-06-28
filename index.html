@@ -302,8 +302,9 @@
   .fview ul{margin:4px 0 0 18px; padding:0; font-size:13px; line-height:1.6;}
   .fview .ent{border:1px solid var(--line); border-radius:8px; padding:9px 12px; margin-bottom:8px; font-size:13px;}
   .fview .ent b{color:var(--ink);}
-  .fview .src{font-size:11.5px; color:var(--ink2); line-height:1.6;}
+  .fview .src{font-size:11.5px; color:var(--ink2); line-height:1.8;}
   .fview .src a{color:var(--accent);}
+  .doc-have{color:var(--ok) !important; text-decoration:none; font-weight:600;}
   .fview-bar{display:flex; gap:8px; max-width:820px; margin:0 auto 14px; flex-wrap:wrap;}
 
   /* Impresión profesional: solo la ficha, en papel blanco */
@@ -743,6 +744,42 @@ async function saveFicha(ficha){
   await ghPutFile('fichas/index.json', idx, 'index: '+ficha.id, idxSha);
   cacheIndex(idx);
   localStorage.setItem('fh_ficha_'+ficha.id, JSON.stringify(ficha));
+  return idx;
+}
+
+/* ---- Registro de documentos (docs/index.json en GitHub) ----
+   El usuario descarga el PDF (acceso propio) y lo registra con un ENLACE (su nube).
+   El programa compara cada referencia de la ficha con el registro y la marca. */
+function cacheDocs(idx){ try{ localStorage.setItem('fh_docs', JSON.stringify(idx)); }catch(e){} }
+function cachedDocs(){ try{ return JSON.parse(localStorage.getItem('fh_docs')); }catch(e){ return null; } }
+function normUrl(u){ return (u||'').toLowerCase().trim().replace(/^https?:\/\//,'').replace(/^www\./,'').replace(/[\/#?].*$/,'').replace(/\/$/,''); }
+async function getDocsIndex(){
+  if(ghConfigured()){
+    try{ const r=await ghGetFile('docs/index.json'); if(r.json){ cacheDocs(r.json); return r.json; } if(r.missing) return {docs:[]}; }
+    catch(e){ console.warn('getDocsIndex → caché', e.message); }
+  }
+  return cachedDocs() || {docs:[]};
+}
+function matchDoc(fuente, docs){
+  if(!fuente) return null;
+  const fu=normUrl(fuente.url), ft=normTxt(fuente.titulo||'');
+  return (docs||[]).find(d=>{
+    if(fu && (normUrl(d.url)===fu || normUrl(d.enlace)===fu)) return true;
+    if(d.doi && fuente.url && fuente.url.toLowerCase().includes(d.doi.toLowerCase())) return true;
+    if(ft && d.titulo && normTxt(d.titulo)===ft) return true;
+    return false;
+  }) || null;
+}
+async function registrarDoc(doc){
+  let idx, sha=null;
+  try{ const ci=await ghGetFile('docs/index.json'); idx=ci.json||{docs:[]}; sha=ci.sha; }
+  catch(e){ idx=cachedDocs()||{docs:[]}; }
+  if(!idx.docs) idx.docs=[];
+  if(!doc.id) doc.id = slugify(doc.titulo||doc.url||'doc')+'-'+Math.random().toString(36).slice(2,6);
+  const i=idx.docs.findIndex(d=>(doc.url && normUrl(d.url)===normUrl(doc.url)) || d.id===doc.id);
+  if(i>=0) idx.docs[i]=Object.assign({}, idx.docs[i], doc); else idx.docs.push(doc);
+  await ghPutFile('docs/index.json', idx, 'docs: '+(doc.titulo||doc.id), sha);
+  cacheDocs(idx);
   return idx;
 }
 
@@ -2183,11 +2220,19 @@ function libCardHtml(f){
 async function abrirFichaBiblioteca(id, edit){
   const ficha=await getFicha(id);
   if(!ficha){ showToast('No se pudo cargar la ficha'); return; }
-  if(edit) openFichaReview(ficha); else renderFichaView(ficha);
+  if(edit) openFichaReview(ficha); else await renderFichaView(ficha);
 }
-function renderFichaView(f){
+async function renderFichaView(f){
   const box=document.getElementById('bibliotecaView'); if(!box) return;
-  const fuentes=(f.fuentes||[]).map(s=>`<li><a href="${s.url}" target="_blank" rel="noopener">${s.titulo||s.url}</a>${s.anio?' ('+s.anio+')':''}</li>`).join('');
+  const docs=(await getDocsIndex()).docs||[];
+  const fuentesArr=f.fuentes||[];
+  const fuentes=fuentesArr.map((s,i)=>{
+    const d=matchDoc(s, docs);
+    const status = d
+      ? ` · <a href="${d.enlace||d.url}" target="_blank" rel="noopener" class="doc-have">📄 Tengo el PDF</a>`
+      : ` · <button class="btn doc-reg" data-fi="${i}" style="padding:3px 8px;font-size:11px">+ Registrar PDF</button>`;
+    return `<li><a href="${s.url}" target="_blank" rel="noopener">${s.titulo||s.url}</a>${s.anio?' ('+s.anio+')':''}${status}</li>`;
+  }).join('');
   const doms=(f.dominios||[]).map(d=>`<div class="dom"><div class="dom-n">${d.nombre}</div><ul>${(d.preguntas||[]).map(q=>`<li>${q.texto}</li>`).join('')}</ul></div>`).join('');
   const ents=(f.entidades||[]).map(e=>`<div class="ent"><b>${e.nombre}</b>${e.genes&&e.genes.length?` · genes: ${e.genes.join(', ')}`:''}<br>Criterio: ${e.umbral||('≥'+(e.min_mayores||0)+' mayores '+(((e.logica||'and')==='or')?'o':'y')+' ≥'+(e.min_menores||0)+' menores')} · mayores: ${(e.mayores||[]).join(', ')||'—'} · menores: ${(e.menores||[]).join(', ')||'—'}</div>`).join('');
   const eg=f.estudio_genetico;
@@ -2212,6 +2257,36 @@ function renderFichaView(f){
   document.getElementById('fvBack').addEventListener('click', ()=>renderBiblioteca());
   document.getElementById('fvEdit').addEventListener('click', ()=>openFichaReview(f));
   document.getElementById('fvPrint').addEventListener('click', ()=>window.print());
+  box.querySelectorAll('.doc-reg').forEach(b=>b.addEventListener('click', ()=>openRegistrarDoc(fuentesArr[+b.dataset.fi], ()=>renderFichaView(f))));
+}
+
+/* Registrar un PDF descargado: el PDF vive en la nube del usuario; aquí guardamos el enlace + metadatos en docs/index.json. */
+function openRegistrarDoc(fuente, onDone){
+  fuente = fuente || {};
+  const ov=document.createElement('div'); ov.className='overlay'; ov.id='regDocOverlay';
+  ov.innerHTML=`<div class="modal" role="dialog" aria-label="Registrar documento" style="max-width:520px">
+    <h2>Registrar PDF descargado</h2>
+    <div class="msub">Descarga el artículo con tu acceso y pega aquí el <b>enlace</b> donde lo guardas (tu nube/Drive) o su DOI. El PDF queda en tu nube; en tu repo solo se guarda el registro (docs/index.json), y la referencia quedará marcada en todas las fichas que la citen.</div>
+    <div class="field"><label>Título</label><input id="rdTit" type="text" value="${(fuente.titulo||'').replace(/"/g,'&quot;')}"></div>
+    <div class="field"><label>Referencia (URL del artículo/guía)</label><input id="rdUrl" type="text" value="${(fuente.url||'').replace(/"/g,'&quot;')}"></div>
+    <div class="field"><label>DOI (opcional)</label><input id="rdDoi" type="text" placeholder="10.xxxx/…"></div>
+    <div class="field"><label>Enlace al PDF (tu nube)</label><input id="rdLink" type="text" placeholder="https://drive.google.com/…"></div>
+    <div class="test-out" id="rdOut"></div>
+    <div class="modal-actions"><button class="btn ghost" id="rdCancel">Cancelar</button><button class="btn primary" id="rdSave">Registrar</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  const close=()=>ov.remove();
+  ov.querySelector('#rdCancel').addEventListener('click', close);
+  ov.addEventListener('click', e=>{ if(e.target===ov) close(); });
+  ov.querySelector('#rdSave').addEventListener('click', async ()=>{
+    const out=ov.querySelector('#rdOut');
+    const doc={ titulo:ov.querySelector('#rdTit').value.trim(), url:ov.querySelector('#rdUrl').value.trim(), doi:ov.querySelector('#rdDoi').value.trim(), enlace:ov.querySelector('#rdLink').value.trim(), anio:fuente.anio||'' };
+    if(!doc.enlace && !doc.doi){ out.className='test-out bad'; out.textContent='Pon al menos el enlace al PDF o un DOI.'; return; }
+    if(!ghConfigured()){ out.className='test-out bad'; out.textContent='Configura GitHub en ⚙ Ajustes para guardar el registro.'; return; }
+    out.className='test-out'; out.textContent='Registrando…';
+    try{ await registrarDoc(doc); close(); showToast('Documento registrado'); if(onDone) onDone(); }
+    catch(e){ out.className='test-out bad'; out.textContent='Error: '+e.message; }
+  });
 }
 
 function init(){
