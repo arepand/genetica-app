@@ -978,7 +978,14 @@ function openSettings(){
     saveCfg(Object.assign({}, prev, { gh_owner:tOwner, gh_repo:tRepo, gh_branch:tBranch, gh_pat:tPat }));
     try{
       const res=await ghGetFile('fichas/index.json');
-      if(res.missing){ out.className='test-out bad'; out.textContent='Conecta, pero falta fichas/index.json en el repo. Crea ese archivo con {"fichas":[]}.'; }
+      if(res.missing){
+        // Un 404 puede ser "archivo ausente" O "el token no ve el repo": distinguir consultando la raíz del repo
+        let repoOk=false;
+        try{ const rr=await fetch(ghBase().replace(/\/contents\/$/, ''), {headers:ghHeaders()}); repoOk=rr.ok; }catch(e){}
+        out.className='test-out bad';
+        if(repoOk){ out.textContent='Conecta y el repo es accesible, pero falta fichas/index.json. Créalo con {"fichas":[]} (o se creará solo al guardar tu primera ficha).'; }
+        else { out.textContent='El PAT autentica pero NO ve el repo "'+tOwner+'/'+tRepo+'": revisa que el nombre sea EXACTO y que el token tenga acceso a ESE repo (permiso Contents).'; }
+      }
       else { const n=(res.json&&res.json.fichas&&res.json.fichas.length)||0; out.className='test-out ok'; out.textContent='✓ Conexión correcta · '+n+' ficha(s) en el índice.'; }
     }catch(e){
       out.className='test-out bad';
