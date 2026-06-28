@@ -2086,7 +2086,7 @@ function init(){
      escribe una contraseña, copia el hash que sale y pégalo en AUTH.hash; sube
      el index.html. Opcional: AUTH.user para exigir también un usuario.
    =========================================================================== */
-const AUTH = { user: '', hash: '' };  // ← pon aquí tu hash (de #sethash) para activar el login
+const AUTH = { user: '', hash: 'd6d36c726094578282839f4d835e23433473d4f437c079026d5ffc05d871743c' };  // login activo (hash SHA-256; cámbialo vía #sethash)
 async function sha256hex(s){
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
