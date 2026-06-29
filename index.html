@@ -2202,6 +2202,15 @@ function findHpoLocal(text){
   for(const id in es){ if(normTxt(es[id])===n) return {id, es:es[id]}; }
   return null;
 }
+/* Nombre OFICIAL en ESPAÑOL de un HPO: babelon (__esLabels) → traducciones ES de JAX → null. NUNCA el inglés. */
+async function hpoEsName(id){
+  if(!/^HP:\d{7}$/.test(id||'')) return null;
+  if(window.__esLabels && window.__esLabels[id]) return window.__esLabels[id];
+  try{ const r=await fetch(HPO_API+'/terms/'+id); if(r.ok){ const d=await r.json();
+    const es=(d.translations||[]).find(x=>(x.language||'').toUpperCase()==='ES' && x.name);
+    if(es){ if(!window.__esLabels) window.__esLabels={}; window.__esLabels[id]=es.name; return es.name; } } }catch(e){}
+  return null;
+}
 async function findHpoByText(text){
   const loc=findHpoLocal(text);
   if(loc){ const t=await verifyHpo(loc.id); if(t) return {id:t.id, es:loc.es||((window.__esLabels||{})[t.id])||t.name, en:t.name}; }
@@ -3607,6 +3616,17 @@ async function añadirSindromePorNombre(name){
     _prenatalProps=[j]; renderPropuestasIA();   // NO añade directo: muestra propuesta (nuevo/fusionar) con justificación → tú confirmas
   }catch(e){ out.innerHTML='<div class="err">Error: '+e.message+'</div>'; }
 }
+/* Corrige retroactivamente las etiquetas de hallazgos VERIFICADOS al nombre oficial ES (p. ej. «Rhizomelia»→«Rizomelia»). Una vez. */
+let _relabelDone=false;
+async function relabelVerifiedEs(){
+  if(_relabelDone) return; _relabelDone=true;
+  let changed=false;
+  for(const t of (PRENATAL_CUSTOM.findings||[])){
+    if(!t.verified) continue;
+    try{ const es=await hpoEsName(t.id); if(es && t.es!==es){ t.es=es; changed=true; } }catch(e){}
+  }
+  if(changed){ await persistPrenatalCustom('prenatal: etiquetas oficiales ES'); renderPrenatal(); }
+}
 async function llmCandidato(system, user, thinking){
   try{ const resp=await callLLM({system, user, webSearch:true, maxTokens:thinking?3500:1800, task:'author', thinking}); return extractJSON(resp); }
   catch(e){ return null; }
@@ -3656,9 +3676,9 @@ async function verificarHallazgoIA(id){
     f.verified=true;                   // el código ya correspondía al nombre
     if(out) out.innerHTML='<div style="color:var(--ok);font-weight:600">✓ Verificado: «'+escHtml(f.es)+'» = '+f.id+'.</div>';
   } else {
-    // No se pudo resolver por la etiqueta (a menudo descriptiva). Si el CÓDIGO existe, ofrecer ACEPTAR su nombre oficial.
-    const t=await verifyHpo(f.id); const off=t?((window.__esLabels&&window.__esLabels[f.id])||t.name):null;
-    if(!t){ if(out) out.innerHTML='<div class="err">'+f.id+' no existe en HPO — quítalo ✕.</div>'; return; }
+    // No se pudo resolver por la etiqueta (a menudo descriptiva). Si el CÓDIGO existe, ofrecer ACEPTAR su nombre oficial EN ESPAÑOL.
+    const t=await verifyHpo(f.id); if(!t){ if(out) out.innerHTML='<div class="err">'+f.id+' no existe en HPO — quítalo ✕.</div>'; return; }
+    const off=(await hpoEsName(f.id))||t.name;   // español oficial (babelon/JAX); inglés solo si no hay ES
     if(out){ out.innerHTML='<div class="study-flag" style="color:#f2b3a6">⚠ No se pudo resolver «'+escHtml(f.es)+'» por su etiqueta. Su código '+f.id+' significa <b>«'+escHtml(off)+'»</b> en HPO. <button class="btn" id="btnAcceptOfficial">✓ Aceptar nombre oficial «'+escHtml(off)+'»</button> · o quítalo ✕.</div>';
       const ab=out.querySelector('#btnAcceptOfficial');
       if(ab) ab.addEventListener('click', async ()=>{ f.es=off; f.verified=true; await persistPrenatalCustom('prenatal: aceptar nombre oficial'); renderPrenatal();
@@ -3828,6 +3848,7 @@ function renderPrenatal(){
   box.querySelectorAll('[data-rmf]').forEach(a=>a.addEventListener('click', (e)=>{ e.stopPropagation(); quitarHallazgoIA(a.dataset.rmf); }));
   // refresca iconos de PDF una vez cuando el índice llega (sin remover el panel: solo re-renderiza si seguimos en prenatal)
   if(!_docsPrefetched){ _docsPrefetched=true; getDocsIndex().then(idx=>{ if((idx&&idx.docs&&idx.docs.length) && document.getElementById('prenatalPanelSlot')) renderPrenatalInd(); }); }
+  if(!_relabelDone) relabelVerifiedEs();   // corrige etiquetas verificadas al español oficial (una vez)
   box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
   box.querySelectorAll('.morfo-term').forEach(btn=>btn.addEventListener('click', async (e)=>{
     if(e.target.closest('.info-dot') || e.target.closest('.tip-ai') || e.target.closest('.x')) return;
