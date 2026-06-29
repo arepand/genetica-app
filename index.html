@@ -2175,7 +2175,7 @@ function renderDifferential(){
    activa ni usa LLM (coste 0). CORS abierto al origen arepand.github.io.
    =========================================================================== */
 const MONARCH_SEMSIM='https://api-v3.monarchinitiative.org/v3/api/semsim/search';
-let monarchState=null; // null | {loading} | {error} | {results, forIds}
+let monarchResults=null, monarchLoading=false, monarchError=null, monarchForIds='', monarchTimer=null;
 
 function monarchXrefLinks(xref){
   const out=[];
@@ -2196,8 +2196,9 @@ function monarchRowHtml(r){
 }
 async function runMonarchDx(){
   const ids=Object.keys(selections);
-  if(ids.length<2){ monarchState={error:'Marca al menos 2 rasgos HPO para buscar.'}; renderMonarch(); return; }
-  monarchState={loading:true}; renderMonarch();
+  if(ids.length<2) return;
+  const forIds=ids.join(',');
+  monarchLoading=true; monarchError=null; monarchForIds=forIds; renderMonarch();
   try{
     const resp=await fetch(MONARCH_SEMSIM, {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -2205,30 +2206,33 @@ async function runMonarchDx(){
     });
     if(!resp.ok) throw new Error('HTTP '+resp.status);
     const data=await resp.json();
-    const results=(Array.isArray(data)?data:[]).map(r=>({
+    monarchResults=(Array.isArray(data)?data:[]).map(r=>({
       id:r.subject&&r.subject.id, name:(r.subject&&r.subject.name)||'',
       score:r.score, xref:(r.subject&&r.subject.xref)||[],
       phenos:(r.subject&&r.subject.has_phenotype_count)||0
     })).filter(r=>r.id);
-    monarchState={results, forIds:ids.join(',')};
-  }catch(e){ monarchState={error:'No se pudo consultar Monarch ('+e.message+'). Posible bloqueo del proxy del hospital.'}; }
-  renderMonarch();
+  }catch(e){ monarchError='No se pudo consultar Monarch ('+e.message+'). Posible bloqueo del proxy del hospital.'; }
+  monarchLoading=false; renderMonarch();
 }
 function renderMonarch(){
   const box=document.getElementById('monarchBox'); if(!box) return;
   const ids=Object.keys(selections);
-  if(ids.length<2){ box.style.display='none'; return; }
+  if(ids.length<2){ box.style.display='none'; monarchTimer&&clearTimeout(monarchTimer); return; }
   box.style.display='block';
-  let body, stale='';
-  if(monarchState&&monarchState.loading) body='<div class="loading">Consultando Orphanet/Monarch por fenotipo…</div>';
-  else if(monarchState&&monarchState.error) body='<div class="err">'+monarchState.error+'</div>';
-  else if(monarchState&&monarchState.results){
-    if(monarchState.forIds!==ids.join(',')) stale='<div class="dx-meta" style="color:var(--warn,#b8860b)">Has cambiado los rasgos — recalcula.</div>';
-    body=(monarchState.results.length? monarchState.results.map(monarchRowHtml).join('') : '<div class="empty">Sin coincidencias para este conjunto de HPO.</div>');
-  } else body='<div class="dx-meta" style="margin:4px 0 8px">Enfermedades (MONDO · Orphanet · OMIM) que mejor encajan con tus '+ids.length+' HPO presentes. Gratis, sin IA.</div>';
-  box.innerHTML='<div class="cart-group-title">Diferencial por fenotipo (Orphanet/Monarch)</div>'+stale+body+
-    '<button class="btn" id="btnMonarch" style="margin-top:8px">'+((monarchState&&monarchState.results)?'↻ Recalcular':'🔎 Buscar por fenotipo')+'</button>';
-  const b=box.querySelector('#btnMonarch'); if(b) b.addEventListener('click', runMonarchDx);
+  const cur=ids.join(',');
+  // Auto en vivo: si los HPO cambiaron y no estamos ya consultándolos, relanza (con retardo)
+  if(!monarchLoading && monarchForIds!==cur){
+    monarchTimer&&clearTimeout(monarchTimer);
+    monarchTimer=setTimeout(runMonarchDx, 600);
+  }
+  let body;
+  if(monarchError) body='<div class="err">'+monarchError+'</div>';
+  else if(monarchResults && monarchResults.length) body=monarchResults.map(monarchRowHtml).join('');
+  else if(monarchLoading || monarchForIds!==cur) body='<div class="loading">Buscando enfermedades que encajan con el fenotipo…</div>';
+  else body='<div class="empty">Sin coincidencias para este conjunto de HPO.</div>';
+  const updating=(monarchLoading||monarchForIds!==cur) && monarchResults && monarchResults.length
+    ? ' <span class="dx-meta" style="font-weight:400">· actualizando…</span>' : '';
+  box.innerHTML='<div class="cart-group-title">Diferencial por fenotipo (Orphanet/Monarch)'+updating+'</div>'+body;
 }
 
 /* ===========================================================================
