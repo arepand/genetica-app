@@ -740,6 +740,7 @@ async function getFicha(id){
   try{ return JSON.parse(localStorage.getItem('fh_ficha_'+id)); }catch(e){ return null; }
 }
 async function saveFicha(ficha){
+  _fichaRefSet=null; // las referencias pueden haber cambiado
   // 1) sha actual de la ficha (si existe) y PUT de la ficha
   let sha=null;
   try{ const cur=await ghGetFile('fichas/'+ficha.id+'.json'); sha=cur.sha; }catch(e){}
@@ -780,6 +781,26 @@ function matchDoc(fuente, docs){
     if(ft && d.titulo && normTxt(d.titulo)===ft) return true;
     return false;
   }) || null;
+}
+// Conjunto de referencias (url/título) citadas por TODAS las fichas → para marcar "se usa en ficha".
+let _fichaRefSet=null;
+async function fichaRefSet(){
+  if(_fichaRefSet) return _fichaRefSet;
+  const urls=new Set(), titles=new Set();
+  try{
+    const idx=await getIndex();
+    for(const fi of (idx.fichas||[])){
+      const f=await getFicha(fi.id);
+      ((f&&f.fuentes)||[]).forEach(s=>{ const u=normUrl(s.url); if(u) urls.add(u); const t=normTxt(s.titulo||''); if(t) titles.add(t); });
+    }
+  }catch(e){}
+  _fichaRefSet={urls, titles};
+  return _fichaRefSet;
+}
+function docUsedInFicha(d, refset){
+  if(!d||!refset) return false;
+  const u1=normUrl(d.url), u2=normUrl(d.enlace), t=normTxt(d.titulo||'');
+  return (u1&&refset.urls.has(u1)) || (u2&&refset.urls.has(u2)) || (t&&refset.titles.has(t));
 }
 async function registrarDoc(doc){
   let idx, sha=null;
@@ -1919,13 +1940,16 @@ async function renderDriveList(files){
   const list=document.getElementById('docList'); if(!list) return;
   if(!files.length){ list.innerHTML='<div class="placeholder">No se encontraron PDFs en Drive (o en esa carpeta).</div>'; return; }
   const docs=(await getDocsIndex()).docs||[];
+  const refset=await fichaRefSet();
   const regOf=(f)=> docs.find(d=>d.driveId===f.id) || matchDoc({url:f.webViewLink, titulo:f.name}, docs);
   list.innerHTML=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} PDF(s) · ${Object.keys(ragDocs).length} marcados para RAG</div>
     <div class="lib-grid">`+files.map((f,i)=>{
     const reg=regOf(f);
+    const indexed=(()=>{ try{ return !!localStorage.getItem('fh_doctext_'+f.id); }catch(e){ return false; } })();
+    const usedHtml=(reg && docUsedInFicha(reg, refset)) ? ' · <span title="Este documento se cita en una ficha" style="color:var(--ok)">🔗 en ficha</span>' : '';
     return `<div class="lib-card">
       <div class="nm">${f.name}</div>
-      <div class="meta">${(f.modifiedTime||'').slice(0,10)}</div>
+      <div class="meta">${(f.modifiedTime||'').slice(0,10)}${indexed?' · <span title="Texto extraído e indexado (cacheado · sin coste)" style="color:var(--ok)">✓ indexado</span>':''}${usedHtml}</div>
       <div class="acts">
         ${f.webViewLink?`<a class="btn" href="${f.webViewLink}" target="_blank" rel="noopener">Abrir</a>`:''}
         ${reg ? `<button class="btn" data-unreg="${reg.id}" title="Quitar del registro">✓ Registrado ✕</button>` : `<button class="btn" data-reg="${i}">+ Registrar</button>`}
