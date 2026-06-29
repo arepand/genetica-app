@@ -435,8 +435,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.7.0';
+const APP_VERSION='1.7.1';
 const CHANGELOG=[
+  {v:'1.7.1', d:'2026-06-30', c:['RAG: el texto de cada PDF se guarda en tu GitHub (docs/text) → se indexa UNA sola vez, es permanente y funciona en cualquier dispositivo (no hay que reindexar ni reconectar Drive cada vez).','Informe PDF: A4 con el logo completo de Ariadna arriba a la izquierda.']},
   {v:'1.7.0', d:'2026-06-30', c:['RAG ahora funciona SOLO con Claude (sin OpenAI): la búsqueda en tus documentos pasa de embeddings (que requerían OpenAI) a recuperación léxica BM25 en el navegador — gratis, instantánea y sin API externa. Solo necesita el texto del PDF (Drive).']},
   {v:'1.6.4', d:'2026-06-30', c:['Búsqueda RAG: diagnóstico claro de por qué no funciona en vez de un genérico «sin coincidencias».']},
   {v:'1.6.3', d:'2026-06-30', c:['Logotipo definitivo del usuario (ariadna-logo.png): icono en la cabecera (recortado por CSS) y favicon.']},
@@ -2490,10 +2491,16 @@ async function buscarDocsRAG(query){
 /* ---- RAG LOCAL (BM25, sin API externa: funciona solo con Claude) ----
    Trocea el texto de cada documento marcado RAG y rankea por relevancia léxica. */
 function ragTokens(s){ return accLower(s||'').replace(/[^a-z0-9ñ ]/g,' ').split(/\s+/).filter(t=>t.length>=3 && !NL_STOP.has(t)); }
+/* Guarda/recupera el TEXTO extraído del PDF en GitHub (docs/text/{id}.json) → indexado UNA vez, permanente y entre dispositivos. */
+async function ghSaveDocText(id, text){
+  if(!ghConfigured() || !text) return;
+  try{ let sha=null; try{ const ci=await ghGetFile('docs/text/'+id+'.json'); sha=ci.sha; }catch(e){} await ghPutFile('docs/text/'+id+'.json', {text}, 'rag: texto '+id, sha); }catch(e){}
+}
 async function docChunkTexts(id, mt){
   let text=null;
   try{ const c=JSON.parse(localStorage.getItem('fh_doctext_'+id)); if(c&&c.text) text=c.text; }catch(e){}
-  if(!text){ try{ text=await driveDownloadText(id, mt); }catch(e){} }
+  if(!text && ghConfigured()){ try{ const r=await ghGetFile('docs/text/'+id+'.json'); if(r.json&&r.json.text){ text=r.json.text; try{ localStorage.setItem('fh_doctext_'+id, JSON.stringify({mt, text})); }catch(e){} } }catch(e){} }
+  if(!text){ try{ text=await driveDownloadText(id, mt); }catch(e){} if(text) ghSaveDocText(id, text); }   // primera vez: extrae de Drive y lo guarda
   if(!text) return null;
   return chunkText(text);
 }
@@ -2604,8 +2611,10 @@ async function renderDriveList(files){
       ragDocs[f.id]={name:f.name, mt:f.modifiedTime}; saveRag();
       if(!reg){ showToast('Marcado RAG → indexando con IA…'); try{ await indexarDriveDoc(f, {rag:true}); }catch(e){ showToast('Error: '+e.message); } }   // RAG ⇒ auto-indexa
       else { reg.rag=true; try{ await registrarDoc(reg); }catch(e){} }
-      // RAG: asegura el TEXTO del PDF en caché (lo usa la búsqueda local por relevancia; sin API externa)
-      try{ const c=JSON.parse(localStorage.getItem('fh_doctext_'+f.id)); if(!(c&&c.text)){ showToast('Leyendo el texto del PDF para RAG…'); await driveDownloadText(f.id, f.modifiedTime); } }catch(e){ try{ await driveDownloadText(f.id, f.modifiedTime); }catch(_){} }
+      // RAG: extrae y GUARDA el texto del PDF (localStorage + GitHub docs/text) → indexado una vez, permanente. No hay que reindexar.
+      try{ let txt=null; try{ const c=JSON.parse(localStorage.getItem('fh_doctext_'+f.id)); if(c&&c.text) txt=c.text; }catch(e){}
+        if(!txt){ showToast('Leyendo y guardando el texto del PDF para RAG…'); txt=await driveDownloadText(f.id, f.modifiedTime); }
+        if(txt) await ghSaveDocText(f.id, txt); }catch(e){}
     } else {
       delete ragDocs[f.id]; saveRag();
       if(reg){ reg.rag=false; try{ await registrarDoc(reg); }catch(e){} }
@@ -3165,15 +3174,24 @@ function renderInformes(){
    =========================================================================== */
 function generatePdf(){
   if(!(window.jspdf && window.jspdf.jsPDF)){ showToast('jsPDF no se cargó (¿sin red?)'); return; }
+  const img=new Image();
+  img.onload=()=>buildInformePdf(img);
+  img.onerror=()=>buildInformePdf(null);
+  img.src='ariadna-logo.png';
+}
+function buildInformePdf(img){
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({unit:'pt', format:'a4'});
-  const L=40, W=515; let y=46;
+  const doc = new jsPDF({unit:'pt', format:'a4'});   // A4 vertical (595×842 pt)
+  const L=40, W=515; let y;
+  if(img){ try{ doc.addImage(img, 'PNG', L, 28, 60, 60); }catch(e){} }   // logo completo, arriba a la izquierda
+  const tx = img?112:L;
+  doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('Ariadna — Informe de fenotipado', tx, 50);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.text(new Date().toLocaleString('es-ES'), tx, 66);
+  y = img?104:74;
   const write=(txt, o={})=>{
     doc.setFont('helvetica', o.bold?'bold':'normal'); doc.setFontSize(o.size||10);
     doc.splitTextToSize(String(txt), W).forEach(t=>{ if(y>800){ doc.addPage(); y=46; } doc.text(t, L, y); y+=(o.lh||14); });
   };
-  write('Ariadna — Informe de fenotipado', {size:15, bold:true});
-  write(new Date().toLocaleString('es-ES'), {size:8}); y+=4;
   write('Motivo: '+(patient.motivo||'—')+'    Edad: '+(patient.edad||'—')+'    Sexo: '+(patient.sexo||'—'));
   if(activeFicha) write('Ficha: '+(activeFicha.nombre_es||activeFicha.id));
   y+=6;
