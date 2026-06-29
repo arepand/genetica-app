@@ -641,7 +641,13 @@ async function fetchLiveDefinition(id){
       defEnglish[id]=enDef;
       const es = await translateFree(enDef);
       if(looksTranslated(es, enDef)){ result = es + ' (traducción automática)'; saveDefCache(id, result); }
-      else if(anyProvider()){ result = enDef + ' · ⓘ pulsa para traducir con IA'; } // se mejora al abrir
+      else if(anyProvider()){
+        // La traducción libre falló (p. ej. cuota MyMemory agotada) → IA automática, cacheada + GitHub.
+        // Así TODOS los tooltips quedan en español de forma consistente; coste único por término.
+        const ai = await llmTranslateDef(enDef);
+        if(ai){ result = ai + ' (traducción IA)'; saveDefCache(id, result); saveGhDef(id, result); }
+        else { result = enDef + ' (EN · sin traducción)'; saveDefCache(id, result); }
+      }
       else { result = enDef + ' (EN · sin traducción)'; saveDefCache(id, result); }
     }
   }catch(e){ result=''; }
@@ -662,19 +668,20 @@ async function upgradeDefinitionAi(id, dot){
   if(tip) tip.textContent=result;
   if(ai) saveGhDef(id, result);   // permanente y compartida entre dispositivos
 }
-function prefetchDefinitions(box){
+async function prefetchDefinitions(box){
   if(!box) return;
-  Array.from(box.querySelectorAll('.info-dot.pending')).forEach(async dot=>{
+  // Secuencial: evita ráfagas de traducción IA (cuando MyMemory falla) y respeta límites de API.
+  const dots=Array.from(box.querySelectorAll('.info-dot.pending'));
+  for(const dot of dots){
     const id = dot.dataset.id;
     const def = await fetchLiveDefinition(id);
-    if(def){
+    if(def && dot.querySelector('.tooltip')){
       dot.querySelector('.tooltip').textContent = def;
-      // marca para traducir con IA al abrir si quedó sin traducción válida
       if(/pulsa para traducir con IA/.test(def)) dot.dataset.ai='1';
       dot.classList.remove('pending'); dot.style.display = '';
       wireInfoDot(dot);
     }
-  });
+  }
 }
 
 /* Búsqueda trilingüe simultánea (ES babelon · EN JAX · código HP:). Verbatim. */
