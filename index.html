@@ -360,8 +360,8 @@
     <div class="cart-group-title">Rasgos presentes</div>
     <div id="cartList"><div class="empty">Aún no hay rasgos marcados</div></div>
     <div id="differentialBox" style="display:none"></div>
-    <div id="genePanelBox" style="display:none"></div>
     <div id="monarchBox" style="display:none"></div>
+    <div id="genePanelBox" style="display:none"></div>
     <div class="export-row">
       <button class="export-btn primary" id="generatePdfBtn">⬇ Informe (PDF)</button>
       <button class="export-btn secondary" id="copyCodesBtn">⧉ Copiar códigos HPO</button>
@@ -2096,16 +2096,28 @@ function dxHtml(e, st){
     ${genes?`<div class="gp-genes" style="margin-top:6px">${genes}</div>`:''}
   </div>`;
 }
-function renderStudyEval(){
-  if(!studyEval) return '';
-  if(studyEval.loading) return '<div class="loading" style="padding:8px 0">Consultando guías vigentes en la web…</div>';
-  if(studyEval.error) return '<div class="err">'+studyEval.error+'</div>';
-  const r=studyEval.result||{}; const g=r.guia||{};
+function genEvalKey(){ return activeFicha ? activeFicha.id+'|'+Object.keys(selections).sort().join(',') : ''; }
+function evalResultHtml(r, note){
+  r=r||{}; const g=r.guia||{};
   return `<div class="eval ${r.indicado?'on':'off'}">
     <b>${r.indicado?'✓ Estudio indicado':'✗ No indicado'}</b> · ${r.cumple_criterios?'cumple criterios':'no cumple criterios'}
     ${r.justificacion?`<div style="margin-top:4px">${r.justificacion}</div>`:''}
     ${g.url?`<div class="study-src">Según: <a href="${g.url}" target="_blank" rel="noopener">${g.titulo||g.url}${g.anio?' ('+g.anio+')':''}</a></div>`:(g.titulo?`<div class="study-src">Según: ${g.titulo}</div>`:'')}
+    ${note?`<div class="study-src" style="opacity:.85">${note}</div>`:''}
   </div>`;
+}
+function renderStudyEval(){
+  const curKey=genEvalKey();
+  const live = studyEval && (studyEval.loading || studyEval.error || studyEval.key===curKey);
+  if(!live){
+    // El veredicto por guías cuesta tokens: si ya evaluamos ESTE fenotipo, lo reutilizamos gratis
+    try{ const c=localStorage.getItem('fh_geneval_'+curKey); if(c) return evalResultHtml(JSON.parse(c), 'Evaluación previa para este mismo fenotipo (cacheada · sin coste).'); }catch(e){}
+    if(studyEval && studyEval.result) return evalResultHtml(studyEval.result, '')+'<div class="study-src" style="color:#b8860b">⚠ Has cambiado los rasgos desde esta evaluación — vuelve a confirmar.</div>';
+    return '';
+  }
+  if(studyEval.loading) return '<div class="loading" style="padding:8px 0">Consultando guías vigentes en la web…</div>';
+  if(studyEval.error) return '<div class="err">'+studyEval.error+'</div>';
+  return evalResultHtml(studyEval.result, '');
 }
 function studyHtml(){
   if(!activeFicha) return '';
@@ -2121,22 +2133,31 @@ function studyHtml(){
       ${ind?`<div style="margin-top:4px"><b>Cuándo:</b><ul style="margin:4px 0 0 16px; padding:0">${ind}</ul></div>`:''}
       ${src?`<div class="study-src">Guías: ${src}</div>`:''}
     ` : '<div style="color:var(--ink3); font-size:11.5px">La ficha no detalla indicación; evalúala según guías vigentes.</div>'}
-    <button class="btn" id="btnEvalGuias" style="margin-top:8px">¿Cumple criterios? Evaluar según guías (web)</button>
+    ${(function(){
+      if(!(activeFicha.entidades||[]).length) return '';
+      const cu=(activeFicha.entidades||[]).map(e=>({e,st:entidadStatus(e)})).filter(x=>x.st.cumple);
+      return cu.length
+        ? `<div style="margin-top:7px; font-size:12px; color:var(--ok)"><b>✓ Cumple criterios formales</b> de la ficha — ${cu.map(x=>x.e.nombre).join(', ')} <span style="color:var(--ink3); font-weight:400">(en vivo · sin coste)</span></div>`
+        : `<div style="margin-top:7px; font-size:11.5px; color:var(--ink3)">Aún no se cumplen los criterios formales de la ficha (marca más rasgos). Se comprueba en vivo, sin coste.</div>`;
+    })()}
+    <button class="btn" id="btnEvalGuias" style="margin-top:8px">Confirmar según guías vigentes (web · IA · usa tokens)</button>
     ${renderStudyEval()}
   </div>`;
 }
 async function evalIndicacionGenetica(){
   if(!activeFicha) return;
   if(!anyProvider()){ studyEval={error:'Configura una API key (Claude u OpenAI) en ⚙ Ajustes.'}; renderDifferential(); return; }
-  studyEval={loading:true}; renderDifferential();
+  const key=genEvalKey();
+  studyEval={loading:true, key}; renderDifferential();
   try{
     const cumplen=(activeFicha.entidades||[]).map(e=>({e,st:entidadStatus(e)})).filter(x=>x.st.cumple).map(x=>x.e.nombre);
     const system='Eres genetista clínico. Determina, SEGÚN LAS GUÍAS Y RECOMENDACIONES VIGENTES (búscalas en la web y CÍTALAS), si en ESTE paciente concreto está indicado el estudio genético para la entidad de la ficha, y si cumple los criterios formales para indicarlo. '+SOURCE_PRIORITY+' Devuelve SOLO JSON {"indicado":bool,"cumple_criterios":bool,"justificacion":"texto breve citando el criterio/guía","guia":{"titulo":"...","url":"https://...","anio":"AAAA"}}.';
     const user=JSON.stringify({ ficha:activeFicha.nombre_es, motivo:patient.motivo, edad:patient.edad, sexo:patient.sexo, hpo_presentes:Object.keys(selections), entidades_que_cumplen:cumplen, estudio_ficha:activeFicha.estudio_genetico||null });
     const resp=await callLLM({system, user, webSearch:true, maxTokens:700, task:'eval'});
     const j=extractJSON(resp);
-    studyEval = j ? {result:j} : {error:'La IA no devolvió un veredicto válido.'};
-  }catch(e){ studyEval={error:e.message}; }
+    if(j){ studyEval={result:j, key}; try{ localStorage.setItem('fh_geneval_'+key, JSON.stringify(j)); }catch(e){} }
+    else studyEval={error:'La IA no devolvió un veredicto válido.', key};
+  }catch(e){ studyEval={error:e.message, key}; }
   renderDifferential();
 }
 function renderDifferential(){
