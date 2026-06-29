@@ -435,8 +435,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.5.2';
+const APP_VERSION='1.5.3';
 const CHANGELOG=[
+  {v:'1.5.3', d:'2026-06-29', c:['«Mis documentos»: botón ✏ Editar para corregir nombre y descripción a mano, y ↻ IA ahora REGENERA leyendo el TEXTO REAL del PDF (no el nombre del fichero) → títulos correctos.']},
   {v:'1.5.2', d:'2026-06-29', c:['Asignar PDF desde una referencia: ya NO analiza con IA (evita títulos erróneos); el nombre se toma de la referencia y solo se LIGA el PDF que elijas de tus documentos. La IA (✨, opcional) sigue disponible y el análisis automático se mantiene al indexar desde «Documentos».']},
   {v:'1.5.1', d:'2026-06-29', c:['Versionado de 3 niveles: mayor (gran avance) · menor (mejora) · parche (arreglo o detalle menor, p. ej. 1.5.1).']},
   {v:'1.5.0', d:'2026-06-29', c:['Google Drive: el acceso se recuerda (≈1 h) — no hay que reautorizar en cada refresco; al abrir «Documentos» se recargan solos si el acceso sigue vigente.','Flag «unido a bibliografía» ahora se enciende también cuando ligas un PDF por referencia (alias) y cuenta las referencias de síndromes prenatales.']},
@@ -2539,7 +2540,7 @@ async function renderDriveList(files){
       <div class="meta">${(f.modifiedTime||'').slice(0,10)} · ${flag(esRag,'RAG','¿Se usa para RAG (la IA lo lee al generar fichas)?')} · ${flag(indexado,'indexado','¿Analizado por IA y guardado en tu repositorio (docs/index.json) con nombre+descripción?')} · ${flag(enBib,'bibliografía','¿Citado por alguna referencia/ficha?')}</div>
       <div class="acts">
         ${f.webViewLink?`<a class="btn" href="${f.webViewLink}" target="_blank" rel="noopener">Abrir</a>`:''}
-        ${indexado ? `<button class="btn" data-reindex="${i}" title="Re-analizar con IA (nombre+descripción)">↻ IA</button><button class="btn ghost" data-unreg="${reg.id}" title="Quitar del índice">Quitar del índice</button>` : `<button class="btn primary" data-index="${i}" title="La IA lo analiza una vez y lo guarda en tu repositorio">✨ Indexar (IA)</button>`}
+        ${indexado ? `<button class="btn" data-editmeta="${i}" title="Editar nombre y descripción (a mano o regenerar con IA)">✏ Editar</button><button class="btn" data-reindex="${i}" title="Regenerar nombre+descripción con IA leyendo el texto del PDF">↻ IA</button><button class="btn ghost" data-unreg="${reg.id}" title="Quitar del índice">Quitar del índice</button>` : `<button class="btn primary" data-index="${i}" title="La IA lo analiza una vez y lo guarda en tu repositorio">✨ Indexar (IA)</button>`}
         <label class="q-opt" style="font-size:11px"><input type="checkbox" data-rag="${i}" ${esRag?'checked':''}> RAG</label>
       </div>
     </div>`;
@@ -2552,6 +2553,7 @@ async function renderDriveList(files){
   };
   list.querySelectorAll('[data-index]').forEach(b=>b.addEventListener('click', ()=>idx(+b.dataset.index,false)));
   list.querySelectorAll('[data-reindex]').forEach(b=>b.addEventListener('click', ()=>idx(+b.dataset.reindex,true)));
+  list.querySelectorAll('[data-editmeta]').forEach(b=>b.addEventListener('click', ()=>editarDocMeta(files[+b.dataset.editmeta], regOf(files[+b.dataset.editmeta]), ()=>renderDriveList(files))));
   list.querySelectorAll('[data-unreg]').forEach(b=>b.addEventListener('click', async ()=>{
     try{ await desregistrarDoc(b.dataset.unreg); showToast('Quitado del índice'); renderDriveList(files); }
     catch(e){ showToast('Error: '+e.message); }
@@ -2572,9 +2574,41 @@ async function renderDriveList(files){
   }));
 }
 /* Indexa un PDF de Drive: la IA lo analiza una vez (nombre+descripción) y se guarda en docs/index.json. */
+/* Editar a mano (o regenerar con IA leyendo el PDF) el nombre y la descripción de un documento ya indexado. */
+function editarDocMeta(f, reg, onDone){
+  if(!reg) return;
+  const ov=document.createElement('div'); ov.className='overlay'; ov.id='editMetaOverlay';
+  ov.innerHTML=`<div class="modal" style="max-width:540px"><h2>Editar documento</h2>
+    <div class="msub">${escHtml(f.name)} — corrige el nombre y la descripción a mano, o pulsa <b>✨ Regenerar (IA)</b> para que la IA los rehaga <b>leyendo el texto real del PDF</b>.</div>
+    <div class="field"><label>Nombre</label><input id="emTit" type="text" value="${escHtml(reg.titulo||f.name).replace(/"/g,'&quot;')}"></div>
+    <div class="field"><label>Descripción — qué es</label><textarea id="emDesc" style="width:100%;min-height:80px;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">${escHtml(reg.descripcion||'')}</textarea></div>
+    <div class="test-out" id="emOut"></div>
+    <div class="modal-actions"><button class="btn ghost" id="emCancel">Cancelar</button><button class="btn" id="emAi">✨ Regenerar (IA)</button><button class="btn primary" id="emSave">Guardar</button></div></div>`;
+  document.body.appendChild(ov);
+  const close=()=>ov.remove();
+  const tit=ov.querySelector('#emTit'), desc=ov.querySelector('#emDesc'), out=ov.querySelector('#emOut');
+  ov.querySelector('#emCancel').addEventListener('click', close);
+  ov.addEventListener('click', e=>{ if(e.target===ov) close(); });
+  ov.querySelector('#emAi').addEventListener('click', async ()=>{
+    if(!anyProvider()){ out.className='test-out bad'; out.textContent='Configura una API key en ⚙ Ajustes.'; return; }
+    out.className='test-out'; out.innerHTML='✨ Leyendo el PDF y regenerando…';
+    let pdfText=null; try{ pdfText=await driveDownloadText(f.id, f.modifiedTime); }catch(e){}
+    try{ const j=await analizarDocIA({titulo:f.name, url:f.webViewLink||reg.url}, pdfText);
+      if(j){ if(j.nombre) tit.value=j.nombre; if(j.descripcion) desc.value=j.descripcion; out.className='test-out ok'; out.innerHTML='✓ Regenerado'+(pdfText?' a partir del texto del PDF':' (sin texto del PDF; conecta Drive para más precisión)')+'.'; }
+      else out.textContent='La IA no devolvió datos.';
+    }catch(e){ out.className='test-out bad'; out.textContent='Error: '+e.message; }
+  });
+  ov.querySelector('#emSave').addEventListener('click', async ()=>{
+    if(!ghConfigured()){ out.className='test-out bad'; out.textContent='Configura GitHub en ⚙ Ajustes.'; return; }
+    out.className='test-out'; out.textContent='Guardando…';
+    try{ await registrarDoc(Object.assign({}, reg, {titulo:tit.value.trim()||reg.titulo, descripcion:desc.value.trim()})); close(); showToast('Documento actualizado'); if(onDone) onDone(); }
+    catch(e){ out.className='test-out bad'; out.textContent='Error: '+e.message; }
+  });
+}
 async function indexarDriveDoc(f, opts){
   opts=opts||{};
-  const j = anyProvider() ? await analizarDocIA({titulo:f.name, url:f.webViewLink}).catch(()=>null) : null;
+  let pdfText=null; try{ pdfText=await driveDownloadText(f.id, f.modifiedTime); }catch(e){}   // texto real del PDF → análisis preciso
+  const j = anyProvider() ? await analizarDocIA({titulo:f.name, url:f.webViewLink}, pdfText).catch(()=>null) : null;
   const doc={ titulo:(j&&j.nombre)||f.name, descripcion:(j&&j.descripcion)||'', tipo:(j&&j.tipo)||'', anio:(j&&j.anio)||(f.modifiedTime||'').slice(0,4),
     url:f.webViewLink||('drive:'+f.id), enlace:f.webViewLink||('https://drive.google.com/file/d/'+f.id), driveId:f.id, iaAnalizado:!!j, rag:!!opts.rag };
   await registrarDoc(doc);
@@ -4074,10 +4108,10 @@ async function renderFichaView(f){
 /* Registrar un PDF descargado: el PDF vive en la nube del usuario; aquí guardamos el enlace + metadatos en docs/index.json. */
 /* La IA identifica el documento (por título/URL/DOI, con búsqueda web) → nombre + descripción + tipo.
    Es el "análisis una sola vez": el resultado se guarda en docs/index.json (GitHub). */
-async function analizarDocIA(fuente){
-  const sys='Eres documentalista clínico-genético. Identifica el documento bibliográfico indicado a partir de su título, URL o DOI (usa búsqueda web para confirmarlo; NO inventes). Devuelve SOLO JSON {"nombre":"título breve y claro en español, sin comillas","descripcion":"1-2 frases: QUÉ es y para qué sirve, p. ej. «Guía clínica de la SEGO sobre cribado prenatal de aneuploidías» o «Revisión de casos prenatales del síndrome de…»","tipo":"guía clínica|revisión|artículo original|consenso|libro|base de datos|otro","anio":"AAAA"}.';
-  const user='Documento a identificar: '+JSON.stringify({titulo:fuente.titulo||'', url:fuente.url||'', doi:fuente.doi||''});
-  const resp=await callLLM({system:sys, user, webSearch:true, maxTokens:600, task:'eval'});
+async function analizarDocIA(fuente, pdfText){
+  const sys='Eres documentalista clínico-genético. Identifica el documento bibliográfico. '+(pdfText?'Te doy un EXTRACTO del texto real del PDF: úsalo como FUENTE PRINCIPAL (el nombre del fichero puede inducir a error, NO te fíes de él). ':'Usa el título/URL/DOI y búsqueda web; NO inventes. ')+'Devuelve SOLO JSON {"nombre":"título real, breve y claro en español, sin comillas","descripcion":"1-2 frases: QUÉ es y para qué sirve","tipo":"guía clínica|revisión|artículo original|consenso|libro|base de datos|otro","anio":"AAAA"}.';
+  const user='Documento: '+JSON.stringify({titulo:fuente.titulo||'', url:fuente.url||'', doi:fuente.doi||''})+(pdfText?('\n\nEXTRACTO DEL PDF (texto real, prioritario):\n'+pdfText.slice(0,6000)):'');
+  const resp=await callLLM({system:sys, user, webSearch:!pdfText, maxTokens:600, task:'eval'});  // si hay texto del PDF, no hace falta búsqueda web
   return extractJSON(resp);
 }
 function openRegistrarDoc(fuente, onDone){
