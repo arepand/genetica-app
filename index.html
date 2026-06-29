@@ -635,7 +635,7 @@ function patientAgeYears(){
 /* ---- Config en localStorage ---- */
 const CFG_KEY='fh_cfg';
 const CFG_DEFAULTS={ anthropicKey:'', openaiKey:'', preferProvider:'anthropic', models:{}, gh_owner:'', gh_repo:'', gh_branch:'main', gh_pat:'',
-  driveClientId:'672017094614-goqdjb7159poff6jieh7rgjtop06askb.apps.googleusercontent.com', driveFolder:'' };
+  driveClientId:'672017094614-goqdjb7159poff6jieh7rgjtop06askb.apps.googleusercontent.com', driveFolder:'', driveSubfolders:false };
 function loadCfg(){
   let c; try{ c=Object.assign({}, CFG_DEFAULTS, JSON.parse(localStorage.getItem(CFG_KEY))||{}); }catch(e){ c=Object.assign({}, CFG_DEFAULTS); }
   // Migración desde el esquema antiguo {provider, llmKey}
@@ -784,6 +784,15 @@ async function registrarDoc(doc){
   const i=idx.docs.findIndex(d=>(doc.url && normUrl(d.url)===normUrl(doc.url)) || d.id===doc.id);
   if(i>=0) idx.docs[i]=Object.assign({}, idx.docs[i], doc); else idx.docs.push(doc);
   await ghPutFile('docs/index.json', idx, 'docs: '+(doc.titulo||doc.id), sha);
+  cacheDocs(idx);
+  return idx;
+}
+async function desregistrarDoc(id){
+  let idx, sha=null;
+  try{ const ci=await ghGetFile('docs/index.json'); idx=ci.json||{docs:[]}; sha=ci.sha; }
+  catch(e){ idx=cachedDocs()||{docs:[]}; }
+  idx.docs=(idx.docs||[]).filter(d=>d.id!==id);
+  await ghPutFile('docs/index.json', idx, 'docs: quitar '+id, sha);
   cacheDocs(idx);
   return idx;
 }
@@ -1029,8 +1038,9 @@ function openSettings(){
     <h3>Repositorio documental (Google Drive)</h3>
     <div class="field"><label>Client ID de Google <span class="hint">(público; atado a tu origen)</span></label>
       <input id="cfgDriveCid" type="text" value="${(c.driveClientId||'').replace(/"/g,'&quot;')}" placeholder="…apps.googleusercontent.com" autocomplete="off"></div>
-    <div class="field"><label>Carpeta de Drive (opcional) <span class="hint">(ID de carpeta; vacío = todos tus PDFs)</span></label>
+    <div class="field"><label>Carpeta de Drive a vigilar (opcional) <span class="hint">(ID de carpeta; vacío = todos tus PDFs)</span></label>
       <input id="cfgDriveFolder" type="text" value="${(c.driveFolder||'').replace(/"/g,'&quot;')}" placeholder="ID de carpeta" autocomplete="off"></div>
+    <label class="q-opt" style="font-size:13px"><input id="cfgDriveSub" type="checkbox" ${c.driveSubfolders?'checked':''}> Incluir también los PDFs de las subcarpetas</label>
 
     <div class="modal-actions">
       <button class="btn ghost" id="cfgCancel">Cancelar</button>
@@ -1117,7 +1127,8 @@ function openSettings(){
       gh_branch: ov.querySelector('#cfgBranch').value.trim()||'main',
       gh_pat: ov.querySelector('#cfgPat').value.trim(),
       driveClientId: ov.querySelector('#cfgDriveCid').value.trim(),
-      driveFolder: ov.querySelector('#cfgDriveFolder').value.trim()
+      driveFolder: ov.querySelector('#cfgDriveFolder').value.trim(),
+      driveSubfolders: ov.querySelector('#cfgDriveSub').checked
     });
     renderStatus();
     showToast('Ajustes guardados');
@@ -1805,7 +1816,9 @@ async function extractPdfText(file){ return extractPdfTextFromBuffer(await file.
 let _driveToken=null;
 let _driveTokenClient=null;
 let _onDriveToken=null;
-let ragDocs={};   // fileId -> {name, ...} marcados para usar en la creación de fichas
+let _driveFilesCache=[];
+let ragDocs=(()=>{ try{ return JSON.parse(localStorage.getItem('fh_rag'))||{}; }catch(e){ return {}; } })();  // fileId -> {name, mt}
+function saveRag(){ try{ localStorage.setItem('fh_rag', JSON.stringify(ragDocs)); }catch(e){} }
 function driveClientId(){ return loadCfg().driveClientId || ''; }
 /* Crea (una vez) el token client. El callback ejecuta lo que haya en _onDriveToken. */
 function ensureDriveTokenClient(){
@@ -1823,75 +1836,105 @@ function ensureDriveTokenClient(){
   });
   return _driveTokenClient;
 }
-async function driveListPdfs(folderId){
-  if(!_driveToken) throw new Error('Conecta con Google Drive primero.');
-  let q="mimeType='application/pdf' and trashed=false";
-  if(folderId) q="'"+folderId.replace(/'/g,"")+"' in parents and "+q;
-  const url='https://www.googleapis.com/drive/v3/files?pageSize=200&orderBy=modifiedTime desc&fields='+encodeURIComponent('files(id,name,webViewLink,modifiedTime,size)')+'&q='+encodeURIComponent(q);
+async function driveQuery(q){
+  const url='https://www.googleapis.com/drive/v3/files?pageSize=1000&orderBy=modifiedTime desc&fields='+encodeURIComponent('files(id,name,webViewLink,modifiedTime,mimeType)')+'&q='+encodeURIComponent(q);
   const r=await fetch(url, {headers:{Authorization:'Bearer '+_driveToken}});
-  if(!r.ok) throw new Error('Drive list '+r.status+' '+await r.text());
+  if(!r.ok) throw new Error('Drive '+r.status+' '+await r.text());
   const d=await r.json(); return d.files||[];
 }
-async function driveDownloadText(fileId){
+async function driveListPdfs(folderId, recursive){
+  if(!_driveToken) throw new Error('Conecta con Google Drive primero.');
+  if(!folderId) return driveQuery("mimeType='application/pdf' and trashed=false");
+  const collect=async(fid, depth)=>{
+    const f=fid.replace(/'/g,'');
+    let pdfs=await driveQuery("'"+f+"' in parents and mimeType='application/pdf' and trashed=false");
+    if(recursive && depth<6){
+      const subs=await driveQuery("'"+f+"' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false");
+      for(const s of subs){ pdfs=pdfs.concat(await collect(s.id, depth+1)); }
+    }
+    return pdfs;
+  };
+  return collect(folderId, 0);
+}
+/* Descarga + extrae texto a "markdown" plano, CACHEADO por id+fecha (no re-extrae si no cambió). */
+async function driveDownloadText(fileId, mt){
+  const key='fh_doctext_'+fileId;
+  try{ const c=JSON.parse(localStorage.getItem(key)); if(c && c.mt===mt && c.text) return c.text; }catch(e){}
   if(!_driveToken) throw new Error('Conecta con Google Drive primero.');
   const r=await fetch('https://www.googleapis.com/drive/v3/files/'+fileId+'?alt=media', {headers:{Authorization:'Bearer '+_driveToken}});
   if(!r.ok) throw new Error('Drive download '+r.status);
-  return extractPdfTextFromBuffer(await r.arrayBuffer());
+  const text=await extractPdfTextFromBuffer(await r.arrayBuffer());
+  try{ localStorage.setItem(key, JSON.stringify({mt, text})); }catch(e){}
+  return text;
 }
-/* Texto de los documentos marcados para RAG (para inyectar en la creación de fichas). */
+/* Texto de los documentos marcados para RAG (usa caché; no requiere reconexión si ya indexado). */
 async function ragContext(maxDocs){
-  const ids=Object.keys(ragDocs); if(!ids.length || !_driveToken) return '';
+  const ids=Object.keys(ragDocs); if(!ids.length) return '';
   let out=''; let n=0;
-  for(const id of ids){ if(n>=(maxDocs||3)) break; try{ const t=await driveDownloadText(id); if(t){ out += '\n--- '+(ragDocs[id].name||id)+' ---\n'+t.slice(0,6000); n++; } }catch(e){} }
+  for(const id of ids){ if(n>=(maxDocs||4)) break; try{ const t=await driveDownloadText(id, ragDocs[id].mt); if(t){ out += '\n--- '+(ragDocs[id].name||id)+' ---\n'+t.slice(0,7000); n++; } }catch(e){} }
   return out;
 }
 
 function renderDocumentos(){
   const box=document.getElementById('documentosView'); if(!box) return;
   if(!driveClientId()){ box.innerHTML='<div class="placeholder">Configura el <b>Client ID de Google Drive</b> en ⚙ Ajustes para conectar tu repositorio documental.</div>'; return; }
+  const c=loadCfg();
+  const scope = c.driveFolder ? ('carpeta <code>'+c.driveFolder+'</code>'+(c.driveSubfolders?' (con subcarpetas)':'')) : 'todos tus PDFs de Drive';
   box.innerHTML=`
     <div class="lib-head">
       <h2>📁 Repositorio documental <span style="font-size:12px;color:var(--ink3)">(Google Drive)</span></h2>
-      <input class="lib-search" id="docFolder" placeholder="ID de carpeta de Drive (opcional; vacío = todos tus PDFs)" value="${(loadCfg().driveFolder||'').replace(/"/g,'&quot;')}">
-      <button class="btn primary" id="docConnect">Conectar y listar PDFs</button>
+      <span style="font-size:12px;color:var(--ink3);flex:1">Vigilando: ${scope} · <button class="btn ghost" id="docToAjustes" style="padding:3px 8px;font-size:11px">cambiar en Ajustes</button></span>
+      <button class="btn" id="docRefresh">↻ Refrescar</button>
+      <button class="btn primary" id="docConnect">Conectar</button>
     </div>
-    <div class="sec-note">Marca ☑ <b>RAG</b> en los documentos que quieras que la IA tenga en cuenta al crear fichas. "Registrar" los añade a tu biblioteca de documentos (docs/index.json) para marcar referencias en las fichas.</div>
-    <div id="docList"></div>`;
+    <div class="sec-note">Marca ☑ <b>RAG</b> en los documentos que la IA debe tener en cuenta al crear fichas (<b>complementan</b> la búsqueda web, no la sustituyen). "Registrar" los añade a tu biblioteca de documentos para marcar referencias en las fichas.</div>
+    <div id="docList">${_driveFilesCache.length?'':'<div class="placeholder">Pulsa "Conectar" para listar tus PDFs.</div>'}</div>`;
   document.getElementById('docConnect').addEventListener('click', cargarDriveDocs);
+  document.getElementById('docRefresh').addEventListener('click', cargarDriveDocs);
+  document.getElementById('docToAjustes').addEventListener('click', openSettings);
+  if(_driveFilesCache.length) renderDriveList(_driveFilesCache);
 }
 function cargarDriveDocs(){
   const list=document.getElementById('docList'); if(!list) return;
   if(!(window.google && google.accounts && google.accounts.oauth2)){ list.innerHTML='<div class="err">Google Identity no cargó (¿red o proxy del SERGAS bloqueando accounts.google.com?).</div>'; return; }
   const tc=ensureDriveTokenClient(); if(!tc){ list.innerHTML='<div class="err">Falta el Client ID de Google Drive en ⚙ Ajustes.</div>'; return; }
-  const folder=(document.getElementById('docFolder').value||'').trim();
-  const cfg=loadCfg(); cfg.driveFolder=folder; saveCfg(cfg);
-  list.innerHTML='<div class="loading">Conectando con Google Drive… (autoriza en la ventana emergente de Google)</div>';
-  _onDriveToken=async()=>{ try{ const files=await driveListPdfs(folder); renderDriveList(files); }catch(e){ list.innerHTML='<div class="err">'+e.message+'</div>'; } };
+  const c=loadCfg();
+  list.innerHTML='<div class="loading">Consultando Google Drive…</div>';
+  _onDriveToken=async()=>{ try{ const files=await driveListPdfs(c.driveFolder, c.driveSubfolders); _driveFilesCache=files; await renderDriveList(files); }catch(e){ list.innerHTML='<div class="err">'+e.message+'</div>'; } };
   // IMPORTANTE: abrir el popup SÍNCRONAMENTE dentro del clic (Safari bloquea popups tras await)
   if(_driveToken) _onDriveToken(); else tc.requestAccessToken();
 }
-function renderDriveList(files){
+async function renderDriveList(files){
   const list=document.getElementById('docList'); if(!list) return;
   if(!files.length){ list.innerHTML='<div class="placeholder">No se encontraron PDFs en Drive (o en esa carpeta).</div>'; return; }
-  list.innerHTML='<div class="lib-grid">'+files.map((f,i)=>`
-    <div class="lib-card">
+  const docs=(await getDocsIndex()).docs||[];
+  const regOf=(f)=> docs.find(d=>d.driveId===f.id) || matchDoc({url:f.webViewLink, titulo:f.name}, docs);
+  list.innerHTML=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} PDF(s) · ${Object.keys(ragDocs).length} marcados para RAG</div>
+    <div class="lib-grid">`+files.map((f,i)=>{
+    const reg=regOf(f);
+    return `<div class="lib-card">
       <div class="nm">${f.name}</div>
       <div class="meta">${(f.modifiedTime||'').slice(0,10)}</div>
       <div class="acts">
         ${f.webViewLink?`<a class="btn" href="${f.webViewLink}" target="_blank" rel="noopener">Abrir</a>`:''}
-        <button class="btn" data-reg="${i}">+ Registrar</button>
+        ${reg ? `<button class="btn" data-unreg="${reg.id}" title="Quitar del registro">✓ Registrado ✕</button>` : `<button class="btn" data-reg="${i}">+ Registrar</button>`}
         <label class="q-opt" style="font-size:11px"><input type="checkbox" data-rag="${i}" ${ragDocs[f.id]?'checked':''}> RAG</label>
       </div>
-    </div>`).join('')+'</div>';
+    </div>`;
+  }).join('')+'</div>';
   list.querySelectorAll('[data-reg]').forEach(b=>b.addEventListener('click', async ()=>{
     const f=files[+b.dataset.reg];
-    try{ await registrarDoc({titulo:f.name, url:f.webViewLink||('drive:'+f.id), enlace:f.webViewLink||('https://drive.google.com/file/d/'+f.id), anio:(f.modifiedTime||'').slice(0,4)}); b.textContent='✓ registrado'; b.disabled=true; }
+    try{ await registrarDoc({titulo:f.name, url:f.webViewLink||('drive:'+f.id), enlace:f.webViewLink||('https://drive.google.com/file/d/'+f.id), driveId:f.id, anio:(f.modifiedTime||'').slice(0,4)}); showToast('Registrado'); renderDriveList(files); }
     catch(e){ showToast('Error al registrar: '+e.message); }
+  }));
+  list.querySelectorAll('[data-unreg]').forEach(b=>b.addEventListener('click', async ()=>{
+    try{ await desregistrarDoc(b.dataset.unreg); showToast('Quitado del registro'); renderDriveList(files); }
+    catch(e){ showToast('Error: '+e.message); }
   }));
   list.querySelectorAll('[data-rag]').forEach(cb=>cb.addEventListener('change', ()=>{
     const f=files[+cb.dataset.rag];
-    if(cb.checked) ragDocs[f.id]={name:f.name}; else delete ragDocs[f.id];
-    showToast(Object.keys(ragDocs).length+' documento(s) para RAG');
+    if(cb.checked) ragDocs[f.id]={name:f.name, mt:f.modifiedTime}; else delete ragDocs[f.id];
+    saveRag(); showToast(Object.keys(ragDocs).length+' documento(s) para RAG');
   }));
 }
 
@@ -1904,7 +1947,7 @@ async function generarFichaIA(motivo, guiaContext){
   try{
     let user='Motivo de consulta: "'+(motivo||'')+'". Genera la ficha JSON más completa y vigente para esta entidad o grupo nosológico, con sus criterios diagnósticos actuales.';
     if(guiaContext){ user += '\n\nGUÍA APORTADA POR EL CLÍNICO (úsala como FUENTE PRINCIPAL y cítala en "fuentes"):\n'+guiaContext; }
-    if(Object.keys(ragDocs).length){ if(box) box.innerHTML='<div class="loading">Leyendo tus documentos del repositorio para la ficha…</div>'; const rag=await ragContext(); if(rag) user += '\n\nDOCUMENTOS DE TU REPOSITORIO INTERNO (úsalos como FUENTE PRIORITARIA y cítalos):\n'+rag; }
+    if(Object.keys(ragDocs).length){ if(box) box.innerHTML='<div class="loading">Leyendo tus documentos del repositorio para la ficha…</div>'; const rag=await ragContext(); if(rag) user += '\n\nDOCUMENTOS DE MI REPOSITORIO (tenlos en cuenta ADEMÁS de la búsqueda web — la COMPLEMENTAN, no la sustituyen — y cítalos en "fuentes"):\n'+rag; }
     const resp=await callLLM({system:FICHA_SYSTEM_PROMPT, user, webSearch:true, maxTokens:8000, task:'author'});
     const f=extractJSON(resp);
     if(!f){ if(box) box.innerHTML='<div class="err">La IA no devolvió un JSON válido. Reintenta.</div>'; return; }
