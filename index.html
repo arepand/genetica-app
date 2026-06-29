@@ -3402,9 +3402,18 @@ async function añadirSindromePorNombre(name){
   }catch(e){ out.innerHTML='<div class="err">Error: '+e.message+'</div>'; }
 }
 function quitarSindromeIA(name){
+  const syn=(PRENATAL_CUSTOM.syndromes||[]).find(s=>s.name===name);
+  if(!syn) return;
+  if(!confirm('¿Eliminar el síndrome «'+name+'» y los HPO que la IA creó solo para él?')) return;
   PRENATAL_CUSTOM.syndromes=(PRENATAL_CUSTOM.syndromes||[]).filter(s=>s.name!==name);
-  persistPrenatalCustom('prenatal: quitar '+name);
-  renderPrenatal();
+  // Borrado en cascada: quita los hallazgos IA que quedan huérfanos (no usados por ningún otro síndrome).
+  const used=new Set([...PRENATAL_SYNDROMES, ...PRENATAL_CUSTOM.syndromes].flatMap(s=>s.findings||[]));
+  const removed=(PRENATAL_CUSTOM.findings||[]).filter(t=>!used.has(t.id)).map(t=>t.id);
+  PRENATAL_CUSTOM.findings=(PRENATAL_CUSTOM.findings||[]).filter(t=>used.has(t.id));
+  removed.forEach(id=>{ delete selections[id]; });
+  persistPrenatalCustom('prenatal: quitar '+name+(removed.length?(' (+'+removed.length+' HPO huérfanos)'):''));
+  syncSelections(); renderPrenatal();
+  const out=document.getElementById('prenatalIAupd'); if(out) out.innerHTML='<div style="color:var(--ok);font-weight:600">✓ Eliminado «'+escHtml(name)+'»'+(removed.length?(' y '+removed.length+' HPO que solo usaba ('+removed.map(escHtml).join(', ')+')'):'')+'.</div>';
 }
 function quitarHallazgoIA(id){
   delete selections[id];
