@@ -1100,7 +1100,7 @@ async function callLLM({system, user, webSearch, maxTokens, task, thinking}){
     return d.choices[0].message.content;
   } else { // anthropic
     const body={model:pick.model, max_tokens:maxTokens, system, messages:[{role:'user',content:user}]};
-    if(thinking){ const budget=Math.min(10000, Math.max(3000, maxTokens)); body.thinking={type:'enabled', budget_tokens:budget}; body.max_tokens=maxTokens+budget; } // razonamiento extendido: máxima fiabilidad
+    if(thinking){ body.thinking={type:'adaptive'}; body.output_config={effort:'high'}; } // razonamiento adaptativo, esfuerzo alto: máxima fiabilidad
     if(webSearch) body.tools=[{type:'web_search_20250305', name:'web_search', max_uses:5}];
     const r=await fetch('https://api.anthropic.com/v1/messages', {
       method:'POST',
