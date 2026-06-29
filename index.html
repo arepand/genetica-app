@@ -435,8 +435,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.5.1';
+const APP_VERSION='1.5.2';
 const CHANGELOG=[
+  {v:'1.5.2', d:'2026-06-29', c:['Asignar PDF desde una referencia: ya NO analiza con IA (evita títulos erróneos); el nombre se toma de la referencia y solo se LIGA el PDF que elijas de tus documentos. La IA (✨, opcional) sigue disponible y el análisis automático se mantiene al indexar desde «Documentos».']},
   {v:'1.5.1', d:'2026-06-29', c:['Versionado de 3 niveles: mayor (gran avance) · menor (mejora) · parche (arreglo o detalle menor, p. ej. 1.5.1).']},
   {v:'1.5.0', d:'2026-06-29', c:['Google Drive: el acceso se recuerda (≈1 h) — no hay que reautorizar en cada refresco; al abrir «Documentos» se recargan solos si el acceso sigue vigente.','Flag «unido a bibliografía» ahora se enciende también cuando ligas un PDF por referencia (alias) y cuenta las referencias de síndromes prenatales.']},
   {v:'1.4.0', d:'2026-06-29', c:['Los síndromes prenatales aparecen también en «Protocolos» con la etiqueta «prenatal» (ver hallazgos / ir a Prenatal).','La pestaña pasa a llamarse «Protocolos» (antes «Biblioteca de fichas»).']},
@@ -4083,17 +4084,17 @@ function openRegistrarDoc(fuente, onDone){
   fuente = fuente || {};
   const ov=document.createElement('div'); ov.className='overlay'; ov.id='regDocOverlay';
   ov.innerHTML=`<div class="modal" role="dialog" aria-label="Indexar documento" style="max-width:540px">
-    <h2>Indexar PDF de la referencia</h2>
-    <div class="msub"><b>El nombre y la descripción los genera la IA automáticamente</b> (analiza el documento una sola vez y lo guarda en tu repositorio, docs/index.json). Solo añade el <b>enlace</b> al PDF en tu nube (opcional). El PDF queda en tu nube; en tu repo solo el índice. Quedará marcado en todas las referencias que lo citen.</div>
-    <div class="field"><label>Nombre <span class="dx-meta">(IA)</span></label><input id="rdTit" type="text" value="${(fuente.titulo||'').replace(/"/g,'&quot;')}" placeholder="Lo genera la IA…"></div>
-    <div class="field"><label>Descripción — qué es <span class="dx-meta">(IA)</span></label><input id="rdDesc" type="text" value="${(fuente.descripcion||'').replace(/"/g,'&quot;')}" placeholder="Lo genera la IA…"></div>
+    <h2>Asignar PDF a la referencia</h2>
+    <div class="msub"><b>Elige el PDF en «Enlace al PDF» (tus documentos)</b> para <b>ligarlo</b> a esta referencia — sin IA. El nombre se toma de la referencia. (Si el PDF aún NO está indexado, indéxalo primero en «Documentos»; ahí sí lo analiza la IA.) El botón <b>✨ IA</b> es opcional si quieres regenerar nombre+descripción.</div>
+    <div class="field"><label>Nombre</label><input id="rdTit" type="text" value="${(fuente.titulo||'').replace(/"/g,'&quot;')}" placeholder="Título de la referencia"></div>
+    <div class="field"><label>Descripción — qué es <span class="dx-meta">(opcional)</span></label><input id="rdDesc" type="text" value="${(fuente.descripcion||'').replace(/"/g,'&quot;')}" placeholder="(opcional)"></div>
     <div class="field"><label>Referencia (URL del artículo/guía)</label><input id="rdUrl" type="text" value="${(fuente.url||'').replace(/"/g,'&quot;')}"></div>
     <div class="field"><label>DOI (opcional)</label><input id="rdDoi" type="text" placeholder="10.xxxx/…"></div>
     <div class="field"><label>Enlace al PDF</label>
       ${_driveFilesCache.length?`<select id="rdDrive" style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px;margin-bottom:6px"><option value="">— elige un PDF de tus documentos (Drive) —</option>${_driveFilesCache.map(fl=>`<option value="${fl.id}" data-link="${escHtml(String(fl.webViewLink||'')).replace(/"/g,'&quot;')}">${escHtml(fl.name)}</option>`).join('')}<option value="__manual">— pegar enlace manual —</option></select>`:'<div class="dx-meta" style="margin-bottom:6px">Conecta tu Drive en «Documentos» para elegir de tu lista, o pega el enlace:</div>'}
       <input id="rdLink" type="text" placeholder="https://drive.google.com/…"></div>
     <div class="test-out" id="rdOut"></div>
-    <div class="modal-actions"><button class="btn ghost" id="rdCancel">Cancelar</button><button class="btn" id="rdAi">✨ Regenerar (IA)</button><button class="btn primary" id="rdSave">Indexar</button></div>
+    <div class="modal-actions"><button class="btn ghost" id="rdCancel">Cancelar</button><button class="btn" id="rdAi" title="Opcional: generar nombre+descripción con IA">✨ IA (opcional)</button><button class="btn primary" id="rdSave">Guardar</button></div>
   </div>`;
   document.body.appendChild(ov);
   const close=()=>ov.remove();
@@ -4116,7 +4117,7 @@ function openRegistrarDoc(fuente, onDone){
     }catch(e){ out.className='test-out bad'; out.textContent='No se pudo analizar: '+e.message; }
   }
   ov.querySelector('#rdAi').addEventListener('click', ()=>autoAnalizar(true));
-  autoAnalizar(false);   // AUTOMÁTICO al abrir
+  // NO se analiza con IA al abrir: desde una referencia solo se LIGA (el nombre viene de la referencia).
   let chosenDriveId='', linkDocId='';
   const saveBtn=ov.querySelector('#rdSave'), aiBtn=ov.querySelector('#rdAi');
   const dsel=ov.querySelector('#rdDrive');
@@ -4129,8 +4130,8 @@ function openRegistrarDoc(fuente, onDone){
         linkDocId=reg.id; if(reg.titulo) tit.value=reg.titulo; if(reg.descripcion) desc.value=reg.descripcion; iaTipo=reg.tipo||iaTipo; iaAnio=reg.anio||iaAnio;
         saveBtn.textContent='Guardar (ligar)'; if(aiBtn) aiBtn.style.display='none';
         out.className='test-out ok'; out.innerHTML='✓ Este PDF ya está en «Mis documentos». Se <b>ligará</b> a esta referencia (sin volver a indexar).';
-      } else { linkDocId=''; saveBtn.textContent='Indexar'; if(aiBtn) aiBtn.style.display=''; }
-    } else { chosenDriveId=''; linkDocId=''; saveBtn.textContent='Indexar'; if(aiBtn) aiBtn.style.display=''; } });
+      } else { linkDocId=''; saveBtn.textContent='Guardar'; if(aiBtn) aiBtn.style.display=''; }
+    } else { chosenDriveId=''; linkDocId=''; saveBtn.textContent='Guardar'; if(aiBtn) aiBtn.style.display=''; } });
   saveBtn.addEventListener('click', async ()=>{
     if(!ghConfigured()){ out.className='test-out bad'; out.textContent='Configura GitHub en ⚙ Ajustes para guardar el índice.'; return; }
     if(linkDocId){   // LIGAR a un documento ya indexado (no crea ni re-analiza)
