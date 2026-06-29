@@ -2555,9 +2555,47 @@ function renderDifferential(){
    =========================================================================== */
 const MONARCH_SEMSIM='https://api-v3.monarchinitiative.org/v3/api/semsim/search';
 const PCF_API='https://pubcasefinder.dbcls.jp/api/pcf_get_ranked_list?target=omim&format=json&hpo_id=';
+const JAX_ANNOT='https://ontology.jax.org/api/network/annotation/';
 const DX_TOP=5;   // mostrar solo las 5 mejores de cada fuente
 let monarchResults=null, monarchLoading=false, monarchError=null, monarchForIds='', monarchTimer=null;
 let pcfResults=null, pcfLoading=false, pcfError=null, pcfForIds='';
+let jaxResults=null, jaxLoading=false, jaxError=null, jaxForIds='';
+const jaxDiseaseCache={};
+function diseaseLinks(id){
+  const m=/^([A-Za-z]+):(.+)$/.exec(id||''); if(!m) return [id||''];
+  const pre=m[1].toUpperCase(), n=m[2];
+  if(pre==='OMIM') return [`<a href="https://omim.org/entry/${n}" target="_blank" rel="noopener">OMIM:${n}</a>`];
+  if(pre==='ORPHA'||pre==='ORPHANET') return [`<a href="https://www.orpha.net/es/disease/detail/${n}" target="_blank" rel="noopener">Orphanet:${n}</a>`];
+  if(pre==='MONDO') return [`<a href="https://monarchinitiative.org/${id}" target="_blank" rel="noopener">${id}</a>`];
+  return [escHtml(id)];
+}
+async function fetchDiseasesFor(id){
+  if(jaxDiseaseCache[id]) return jaxDiseaseCache[id];
+  try{ const r=await fetch(JAX_ANNOT+id); const d=await r.json();
+    const ds=(d.diseases||[]).map(x=>({id:x.id, name:x.name})); jaxDiseaseCache[id]=ds; return ds;
+  }catch(e){ return []; }
+}
+function jaxRowHtml(r){
+  return `<div class="dx">
+    <div class="dx-hd"><span class="dx-nm">${escHtml(r.name||r.id)}</span><span class="pill sug" title="Nº de TUS HPO anotados en esta enfermedad (solapamiento curado en HPO). NO es probabilidad ni grado de evidencia.">${r.count}/${r.total} rasgos</span></div>
+    <div class="dx-meta">${diseaseLinks(r.id).join(' · ')}</div>
+  </div>`;
+}
+async function runJaxDx(){
+  const ids=Object.keys(selections); if(ids.length<3){ jaxResults=null; return; }
+  const forIds=ids.join(','); if(jaxForIds===forIds && (jaxResults||jaxError) && !jaxLoading) return;
+  jaxLoading=true; jaxError=null; jaxForIds=forIds; renderMonarch();
+  try{
+    const subset=ids.slice(0,8);
+    const lists=await Promise.all(subset.map(fetchDiseasesFor));
+    if(jaxForIds!==Object.keys(selections).join(',')){ jaxLoading=false; return; } // cambió mientras
+    const counts={}, names={};
+    lists.forEach(list=> list.forEach(x=>{ counts[x.id]=(counts[x.id]||0)+1; names[x.id]=x.name; }));
+    jaxResults=Object.keys(counts).map(id=>({id, name:names[id], count:counts[id], total:subset.length}))
+      .filter(d=>d.count>=2).sort((a,b)=>b.count-a.count).slice(0,DX_TOP);
+  }catch(e){ jaxError='No se pudo consultar JAX ('+e.message+').'; }
+  jaxLoading=false; renderMonarch();
+}
 
 function monarchXrefLinks(xref){
   const out=[];
@@ -2580,6 +2618,7 @@ async function runMonarchDx(){
   const ids=Object.keys(selections);
   if(ids.length<2) return;
   const forIds=ids.join(',');
+  if(monarchForIds===forIds && (monarchResults||monarchError) && !monarchLoading) return;
   monarchLoading=true; monarchError=null; monarchForIds=forIds; renderMonarch();
   try{
     const resp=await fetch(MONARCH_SEMSIM, {
@@ -2628,14 +2667,24 @@ function renderMonarch(){
   if(ids.length<2){ box.style.display='none'; monarchTimer&&clearTimeout(monarchTimer); return; }
   box.style.display='block';
   const cur=ids.join(',');
-  // Monarch en vivo (debounce); PubCaseFinder a demanda (payload grande)
-  if(!monarchLoading && monarchForIds!==cur){ monarchTimer&&clearTimeout(monarchTimer); monarchTimer=setTimeout(runMonarchDx, 600); }
+  // En vivo (debounce): solapamiento JAX (≥3 HPO) + Monarch. PubCaseFinder a demanda (payload grande).
+  const needM=!monarchLoading && monarchForIds!==cur;
+  const needJ=ids.length>=3 && !jaxLoading && jaxForIds!==cur;
+  if(needM || needJ){ monarchTimer&&clearTimeout(monarchTimer); monarchTimer=setTimeout(()=>{ runMonarchDx(); if(ids.length>=3) runJaxDx(); }, 600); }
+  // JAX (solapamiento de enfermedades anotadas en HPO)
+  let jBody;
+  if(ids.length<3) jBody='<div class="empty">Marca ≥3 rasgos para el solapamiento.</div>';
+  else if(jaxError) jBody='<div class="err">'+jaxError+'</div>';
+  else if(jaxResults && jaxResults.length) jBody=jaxResults.map(jaxRowHtml).join('');
+  else if(jaxLoading || jaxForIds!==cur) jBody='<div class="loading">Calculando solapamiento de enfermedades en HPO…</div>';
+  else jBody='<div class="empty">Sin coincidencias claras todavía.</div>';
+  // Monarch (similitud semántica)
   let mBody;
   if(monarchError) mBody='<div class="err">'+monarchError+'</div>';
   else if(monarchResults && monarchResults.length) mBody=monarchResults.map(monarchRowHtml).join('');
   else if(monarchLoading || monarchForIds!==cur) mBody='<div class="loading">Buscando en Monarch…</div>';
   else mBody='<div class="empty">Sin coincidencias.</div>';
-  const mUpd=(monarchLoading||monarchForIds!==cur)&&monarchResults&&monarchResults.length?' · actualizando…':'';
+  // PubCaseFinder (a demanda)
   const pStale=pcfForIds && pcfForIds!==cur;
   let pBody='';
   if(pcfLoading) pBody='<div class="loading">Consultando PubCaseFinder… (puede tardar)</div>';
@@ -2644,8 +2693,9 @@ function renderMonarch(){
   const pBtn=`<button class="btn" id="btnPcf" style="margin-top:6px">${pcfResults?'↻ Recalcular':'🔎 Buscar en PubCaseFinder (OMIM)'}</button>`;
   const ext=`<div class="dx-meta" style="margin-top:10px">También: <a href="https://pubcasefinder.dbcls.jp/?hpo_id=${cur}" target="_blank" rel="noopener">PubCaseFinder web</a>. (El clásico <b>Phenomizer/Orphamizer</b> de Charité está descontinuado; su algoritmo lo provee hoy Monarch.)</div>`;
   box.innerHTML=`<div class="cart-group-title">Diferencial por fenotipo (fenotipo → enfermedad)</div>`
-    +`<div class="dx-meta" style="margin:-2px 0 8px">Las cifras son <b>similitud/ranking</b> de cada herramienta — <b>no</b> son probabilidad ni grado de evidencia clínica. Orientativo, máx. ${DX_TOP} por fuente.</div>`
-    +`<div class="dx-src">Monarch · MONDO${mUpd}</div>`+mBody
+    +`<div class="dx-meta" style="margin:-2px 0 8px">Las cifras son <b>solapamiento/similitud/ranking</b> de cada herramienta — <b>no</b> son probabilidad ni grado de evidencia clínica. Orientativo, máx. ${DX_TOP} por fuente.</div>`
+    +`<div class="dx-src">Solapamiento HPO · JAX (OMIM/Orphanet)</div>`+jBody
+    +`<div class="dx-src" style="margin-top:12px">Similitud semántica · Monarch (MONDO)</div>`+mBody
     +`<div class="dx-src" style="margin-top:12px">PubCaseFinder · OMIM</div>`+pBody+pBtn
     +ext;
   const b=box.querySelector('#btnPcf'); if(b) b.addEventListener('click', runPcfDx);
