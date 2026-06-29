@@ -3591,9 +3591,14 @@ async function verificarHallazgoIA(id){
     f.verified=true;                   // el código ya correspondía al nombre
     if(out) out.innerHTML='<div style="color:var(--ok);font-weight:600">✓ Verificado: «'+escHtml(f.es)+'» = '+f.id+'.</div>';
   } else {
-    // No se pudo resolver el nombre → NO renombrar, NO marcar verificado. Mostrar qué significa el código actual.
+    // No se pudo resolver por la etiqueta (a menudo descriptiva). Si el CÓDIGO existe, ofrecer ACEPTAR su nombre oficial.
     const t=await verifyHpo(f.id); const off=t?((window.__esLabels&&window.__esLabels[f.id])||t.name):null;
-    if(out) out.innerHTML='<div class="study-flag" style="color:#f2b3a6">⚠ No se pudo verificar «'+escHtml(f.es)+'» automáticamente. '+(off?('Su código '+f.id+' significa «'+escHtml(off)+'» en HPO — si NO coincide, quítalo ✕.'):(f.id+' no existe en HPO — quítalo ✕.'))+'</div>';
+    if(!t){ if(out) out.innerHTML='<div class="err">'+f.id+' no existe en HPO — quítalo ✕.</div>'; return; }
+    if(out){ out.innerHTML='<div class="study-flag" style="color:#f2b3a6">⚠ No se pudo resolver «'+escHtml(f.es)+'» por su etiqueta. Su código '+f.id+' significa <b>«'+escHtml(off)+'»</b> en HPO. <button class="btn" id="btnAcceptOfficial">✓ Aceptar nombre oficial «'+escHtml(off)+'»</button> · o quítalo ✕.</div>';
+      const ab=out.querySelector('#btnAcceptOfficial');
+      if(ab) ab.addEventListener('click', async ()=>{ f.es=off; f.verified=true; await persistPrenatalCustom('prenatal: aceptar nombre oficial'); renderPrenatal();
+        const o2=document.getElementById('prenatalIAupd'); if(o2) o2.innerHTML='<div style="color:var(--ok);font-weight:600">✓ «'+escHtml(off)+'» ('+f.id+') verificado con el nombre oficial de HPO.</div>'; });
+    }
     return;
   }
   await persistPrenatalCustom('prenatal: verificar hallazgo'); renderPrenatal();
@@ -3640,22 +3645,26 @@ function prenatalIndicacion(){
   return {lines, nucal, mayores, marcadores};
 }
 function renderPrenatalInd(){
+  renderPrenatalDx();   // panel derecho: síndromes que cumplen criterios
   const box=document.getElementById('prenatalInd'); if(!box) return;
   const r=prenatalIndicacion();
   if(!r){ box.innerHTML='<div class="empty">Marca hallazgos fetales para sugerir la indicación.</div>'; return; }
-  const sinds=prenatalSindromes();
-  const sindHtml = sinds.length
-    ? `<div class="cart-group-title" style="margin-top:12px">Síndromes a considerar</div>`
-      + sinds.map(s=>{ const link=(s.ref&&s.ref.url)?`<a href="${s.ref.url}" target="_blank" rel="noopener">${escHtml(s.ref.titulo||'Fuente')}</a>`:`<a href="${grLink(s.name)}" target="_blank" rel="noopener">GeneReviews</a>`;
-        return `<div class="study" style="margin:6px 0"><b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">· IA</span>':''} <span class="dx-meta">(${s.matched.length}/${s.total} hallazgos: ${s.matched.map(id=>escHtml((selections[id]&&selections[id].es)||id)).join(', ')})</span><br>→ Estudio dirigido: <b>${escHtml(s.test)}</b> · ${link}${s.ref?bibRefHtml(s.ref):''}</div>`; }).join('')
-    : '';
   box.innerHTML=`<div class="cart-group-title">Indicación de estudio prenatal sugerida</div>`
     +`<div class="dx-meta" style="margin-bottom:6px">${r.mayores} anomalía(s) mayor(es) · ${r.marcadores} marcador(es) · ${r.nucal} nucal/hidrops</div>`
     +r.lines.map(l=>`<div class="study" style="margin:6px 0">${l.html}${refsHtml(l.refs)}</div>`).join('')
-    +sindHtml
     +`<button class="btn" id="btnPrenatalIA" style="margin-top:8px">Evaluar según guías vigentes (web · IA · usa tokens)</button><div id="prenatalIAout"></div>`
     +`<div class="am-note">Orientativo (ISUOG/ACMG/SMFM/SEGO + GeneReviews): no sustituye el juicio clínico ni el consejo prenatal. Los síndromes se sugieren por solapamiento de hallazgos; no son diagnóstico.</div>`;
   const b=box.querySelector('#btnPrenatalIA'); if(b) b.addEventListener('click', evalPrenatalGuias);
+}
+/* Panel derecho (diferencial): síndromes prenatales cuyos CRITERIOS se cumplen con los hallazgos marcados. */
+function renderPrenatalDx(){
+  const box=document.getElementById('prenatalDxBox'); if(!box) return;
+  const sinds=prenatalSindromes();
+  if(!sinds.length){ box.innerHTML=''; return; }
+  box.innerHTML=`<div class="cart-group-title" style="color:var(--ok)">✓ Cumple criterios de ${sinds.length} síndrome(s)</div>`
+    + sinds.map(s=>{ const link=(s.ref&&s.ref.url)?`<a href="${escHtml(String(s.ref.url)).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">${escHtml(s.ref.titulo||'Fuente')}</a>`:`<a href="${grLink(s.name)}" target="_blank" rel="noopener">GeneReviews</a>`;
+      return `<div class="study" style="margin:6px 0;border-left:3px solid var(--ok);padding-left:8px"><b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">· IA</span>':''} <span class="dx-meta">(${s.matched.length}/${s.total} hallazgos: ${s.matched.map(id=>escHtml((selections[id]&&selections[id].es)||id)).join(', ')})</span><br>→ <b>${escHtml(s.test)}</b> · ${link}${s.ref?bibRefHtml(s.ref):''}</div>`; }).join('')
+    + `<div class="am-note" style="margin-top:4px">Por solapamiento de hallazgos; no es diagnóstico.</div>`;
 }
 async function evalPrenatalGuias(){
   const out=document.getElementById('prenatalIAout'); if(!out) return;
@@ -3700,24 +3709,33 @@ function renderPrenatal(){
       <div class="step-title">Estudio genético prenatal</div>
       <div class="step-sub">Subconjunto fenotípico fetal (hallazgos ecográficos). Pulsa los presentes → se añaden al fenotipo (panel derecho) y sugieren la indicación. La ⓘ explica cada término.</div>
       ${gaNote}
-      <div id="prenatalInd" style="margin:14px 0 18px"></div>
-      <details class="morfo-region"><summary>Síndromes incorporados <span style="color:var(--ink3);font-weight:400">· ${allPrenatalSyndromes().length}</span></summary>
-        <div style="font-size:12.5px;line-height:1.7;padding:4px 0">${allPrenatalSyndromes().map(s=>`<div>· <b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)" title="Ficha Orphanet (español)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">IA</span>':''} <span class="dx-meta hastip">— ${(s.findings||[]).length} hallazgos<span class="tooltip">${syndromeFindingsTip(s)}</span></span> <span class="dx-meta">· ${escHtml(s.test||'')}</span>${(s.ref&&s.ref.url)?` <a class="dx-meta" href="${escHtml(String(s.ref.url)).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">bibliografía</a>`:''}${s.ref?bibRefHtml(s.ref):''}${s.ia?` <a class="tip-ai" data-rmsyn="${escHtml(s.name)}">quitar</a>`:''}</div>`).join('')}</div>
-      </details>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0">
-        <input id="prenatalFilter" type="text" placeholder="🔎 Filtrar hallazgos (nombre o HP:…)" autocomplete="off" style="flex:1;min-width:180px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
-        <span style="position:relative;flex:1;min-width:220px;display:inline-block">
-          <input id="addSyndName" type="text" placeholder="Buscar síndrome en Orphanet (es) — p. ej. Beckwith, Pallister…" autocomplete="off" style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
-          <div id="orphaSugg" class="orpha-dd"></div>
-        </span>
-        <button class="btn" id="btnAddSynd" title="La IA genera ese síndrome; sus HPO se verifican contra JAX y se guarda en tu GitHub">+ Añadir (IA)</button>
-        <button class="btn" id="btnSindIA" title="La IA PROPONE síndromes (nuevos o actualizar existentes); tú aceptas/rechazas cada uno. Nada se guarda sin tu confirmación">✨ Proponer (IA)</button>
-        ${(PRENATAL_CUSTOM.findings||[]).some(t=>!t.verified)?'<button class="btn" id="btnRevisarIA" title="Comprueba que cada HPO añadido por IA corresponde realmente al concepto; corrige los erróneos">🔧 Revisar hallazgos IA</button>':''}
+      <div style="margin:12px 0 14px">
+        <input id="prenatalFilter" type="text" placeholder="🔎 Buscar / filtrar hallazgo HPO (nombre o HP:…)" autocomplete="off" style="width:100%;box-sizing:border-box;padding:10px 13px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
       </div>
-      <div id="prenatalIAupd" style="margin-bottom:10px"></div>
       ${findings}
+      <!-- Gestión de síndromes (movida a la parte de abajo) -->
+      <div style="margin-top:24px;border-top:1px solid var(--line);padding-top:16px">
+        <div id="prenatalInd" style="margin:0 0 16px"></div>
+        <details class="morfo-region"><summary>Síndromes incorporados <span style="color:var(--ink3);font-weight:400">· ${allPrenatalSyndromes().length}</span></summary>
+          <div style="font-size:12.5px;line-height:1.7;padding:4px 0">${allPrenatalSyndromes().map(s=>`<div>· <b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)" title="Ficha Orphanet (español)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">IA</span>':''} <span class="dx-meta hastip">— ${(s.findings||[]).length} hallazgos<span class="tooltip">${syndromeFindingsTip(s)}</span></span> <span class="dx-meta">· ${escHtml(s.test||'')}</span>${(s.ref&&s.ref.url)?` <a class="dx-meta" href="${escHtml(String(s.ref.url)).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">bibliografía</a>`:''}${s.ref?bibRefHtml(s.ref):''}${s.ia?` <a class="tip-ai" data-rmsyn="${escHtml(s.name)}">quitar</a>`:''}</div>`).join('')}</div>
+        </details>
+        <div class="cart-group-title" style="margin-top:14px">Añadir / proponer síndromes (IA)</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">
+          <span style="position:relative;flex:1;min-width:240px;display:inline-block">
+            <input id="addSyndName" type="text" placeholder="Buscar síndrome en Orphanet (es) — p. ej. Beckwith, Pallister…" autocomplete="off" style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
+            <div id="orphaSugg" class="orpha-dd"></div>
+          </span>
+          <button class="btn" id="btnAddSynd" title="La IA genera ese síndrome; sus HPO se verifican contra JAX y se guarda en tu GitHub">+ Añadir (IA)</button>
+          <button class="btn" id="btnSindIA" title="La IA PROPONE síndromes (nuevos o actualizar existentes); tú aceptas/rechazas cada uno. Nada se guarda sin tu confirmación">✨ Proponer (IA)</button>
+          ${(PRENATAL_CUSTOM.findings||[]).some(t=>!t.verified)?'<button class="btn" id="btnRevisarIA" title="Comprueba que cada HPO añadido por IA corresponde realmente al concepto; corrige los erróneos">🔧 Revisar hallazgos IA</button>':''}
+        </div>
+        <div id="prenatalIAupd" style="margin-bottom:10px"></div>
+      </div>
     </div>
-    <div id="prenatalPanelSlot" class="prenatal-aside"></div>
+    <div class="prenatal-aside">
+      <div id="prenatalDxBox" style="margin-bottom:14px"></div>
+      <div id="prenatalPanelSlot"></div>
+    </div>
   </div>`;
   renderPrenatalInd();
   const fil=document.getElementById('prenatalFilter'); if(fil) fil.addEventListener('input', e=>applyPrenatalFilter(e.target.value));
