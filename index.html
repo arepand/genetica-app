@@ -433,6 +433,21 @@
    funciones se reutilizan tal cual para la búsqueda HPO trilingüe.
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
+/* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
+const APP_VERSION='1.1.0';
+const CHANGELOG=[
+  {v:'1.1.0', d:'2026-06-29', c:['Estado de servicios (Claude/OpenAI/babelon/GitHub) unificado en un solo icono con detalle al pulsar.','Número de versión + changelog (este panel).','Indexar PDF: seleccionar el enlace desde "Mis documentos" (Drive); opción de eliminar un documento asignado desde la propia referencia.']},
+  {v:'1.0.0', d:'2026-06-29', c:['Primera versión versionada. Fenotipado dirigido por fichas (HPO trilingüe, diferencial por umbrales, panel génico, informes).','Prenatal: subconjunto fetal, indicación por guías, jerarquía HPO (auto-marca ancestros sin contar doble), propuestas IA con bibliografía obligatoria y verificación doble de HPO, panel diferencial con criterios cumplidos.','Bibliografía con PDF indexado por IA (nombre+descripción automáticos) y RAG vectorial (embeddings + búsqueda en lenguaje natural).','Seguridad: SRI en CDNs, sin secretos en el repo público.']},
+];
+function openChangelog(){
+  const ov=document.createElement('div'); ov.className='overlay'; ov.id='changelogOverlay';
+  ov.innerHTML=`<div class="modal" style="max-width:560px"><h2>Novedades · v${APP_VERSION}</h2><div class="msub">Historial de versiones · <b>mayor</b> = gran avance · <b>menor</b> = mejora.</div>
+   <div style="max-height:60vh;overflow:auto">${CHANGELOG.map(e=>`<div style="margin:12px 0"><b>v${escHtml(e.v)}</b> <span class="dx-meta">${escHtml(e.d)}</span><ul style="margin:4px 0 0 16px;font-size:13px">${e.c.map(x=>`<li>${escHtml(x)}</li>`).join('')}</ul></div>`).join('')}</div>
+   <div class="modal-actions"><button class="btn primary" id="clClose">Cerrar</button></div></div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('#clClose').addEventListener('click',()=>ov.remove());
+  ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); });
+}
 
 /* Definiciones ES curadas (se completan en vivo + traducción etiquetada). */
 const STATIC_DEFINITIONS = {
@@ -1086,7 +1101,8 @@ function bibRefHtml(fuente){
     const tip=escHtml(d.titulo||fuente.titulo||'Documento')
       +(d.descripcion?('<br><span class="dx-meta">'+escHtml(d.descripcion)+'</span>'):'')
       +(pdf?('<br><a href="'+escHtml(pdf).replace(/"/g,'&quot;')+'" target="_blank" rel="noopener">Abrir PDF ↗</a>'):'');
-    return ' <span class="hastip bib-have" title="PDF en tu repositorio">📄<span class="tooltip">'+tip+'</span></span>';
+    return ' <span class="hastip bib-have" title="PDF en tu repositorio">📄<span class="tooltip">'+tip+'</span></span>'
+      +(d.id?' <a class="tip-ai bib-unassign" data-docid="'+escHtml(String(d.id))+'" title="Eliminar este documento asignado del índice">✕</a>':'');
   }
   const enc=encodeURIComponent(JSON.stringify({titulo:fuente.titulo||'', url:fuente.url||'', anio:fuente.anio||''}));
   return ' <a class="tip-ai bib-assign" data-bibref="'+enc+'" title="Asignar/registrar el PDF de esta referencia en tu repositorio">📎 asignar PDF</a>';
@@ -1216,15 +1232,27 @@ let babelonReady=false;
 function renderStatus(){
   const c=loadCfg();
   const row=document.getElementById('statusRow'); if(!row) return;
+  row.style.position='relative';
   const ghOk = ghConfigured();
-  const chips=[
-    {on:!!c.anthropicKey, label: c.anthropicKey ? 'Claude listo' : 'Claude —'},
-    {on:!!c.openaiKey, label: c.openaiKey ? 'OpenAI listo' : 'OpenAI —'},
-    {on:babelonReady, label: babelonReady ? 'babelon cargado' : 'babelon…'},
-    {on:ghOk, label: ghOk ? 'GitHub conectado' : 'GitHub sin configurar'},
+  const services=[
+    {k:'Claude (Anthropic)', on:!!c.anthropicKey, txt:c.anthropicKey?'configurado':'sin clave'},
+    {k:'OpenAI', on:!!c.openaiKey, txt:c.openaiKey?'configurado (embeddings/RAG)':'sin clave'},
+    {k:'babelon (HPO español)', on:babelonReady, txt:babelonReady?'cargado':'cargando…'},
+    {k:'GitHub', on:ghOk, txt:ghOk?'conectado':'sin configurar'},
   ];
-  if(!anyProvider()) chips[0]={on:false, label:'LLM sin configurar'}, chips.splice(1,1);
-  row.innerHTML = chips.map(ch=>`<span class="status-chip ${ch.on?'on':'off'}"><span class="dot"></span>${ch.label}</span>`).join('');
+  const llm=!!c.anthropicKey||!!c.openaiKey;
+  const color = (llm && ghOk && babelonReady) ? 'var(--ok)' : ((llm||ghOk) ? '#d8a657' : 'var(--danger)');
+  const dotS='display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;flex:none';
+  row.innerHTML=`<span class="status-chip" id="statusBtn" style="cursor:pointer" title="Estado de servicios (pulsa para el detalle)"><span class="dot" style="background:${color}"></span>Estado</span>`
+    +`<span class="status-chip" id="verChip" style="cursor:pointer;color:var(--ink3)" title="Versión y novedades">v${APP_VERSION}</span>`
+    +`<div id="statusDetail" style="display:none;position:absolute;top:calc(100% + 4px);right:0;z-index:60;background:#0a0f14;border:1px solid var(--accent2);border-radius:9px;padding:10px 12px;box-shadow:var(--shadow);min-width:230px">`
+    +services.map(s=>`<div style="font-size:12px;margin:4px 0;white-space:nowrap"><span style="${dotS};background:${s.on?'var(--ok)':'var(--danger)'}"></span>${s.k}: <span style="color:var(--ink3)">${s.txt}</span></div>`).join('')
+    +`<div style="margin-top:6px"><button class="btn ghost" id="statusToAjustes" style="padding:3px 8px;font-size:11px">Configurar en Ajustes</button></div></div>`;
+  const btn=document.getElementById('statusBtn'), det=document.getElementById('statusDetail');
+  if(btn&&det){ btn.addEventListener('click',(e)=>{ e.stopPropagation(); det.style.display=det.style.display==='none'?'block':'none'; });
+    document.addEventListener('click', ()=>{ det.style.display='none'; }); }
+  const sa=document.getElementById('statusToAjustes'); if(sa) sa.addEventListener('click', openSettings);
+  const vc=document.getElementById('verChip'); if(vc) vc.addEventListener('click', openChangelog);
 }
 
 /* ---- Autodiagnóstico de la conexión a api.github.com ----
@@ -4016,7 +4044,9 @@ function openRegistrarDoc(fuente, onDone){
     <div class="field"><label>Descripción — qué es <span class="dx-meta">(IA)</span></label><input id="rdDesc" type="text" value="${(fuente.descripcion||'').replace(/"/g,'&quot;')}" placeholder="Lo genera la IA…"></div>
     <div class="field"><label>Referencia (URL del artículo/guía)</label><input id="rdUrl" type="text" value="${(fuente.url||'').replace(/"/g,'&quot;')}"></div>
     <div class="field"><label>DOI (opcional)</label><input id="rdDoi" type="text" placeholder="10.xxxx/…"></div>
-    <div class="field"><label>Enlace al PDF (tu nube, opcional)</label><input id="rdLink" type="text" placeholder="https://drive.google.com/…"></div>
+    <div class="field"><label>Enlace al PDF</label>
+      ${_driveFilesCache.length?`<select id="rdDrive" style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px;margin-bottom:6px"><option value="">— elige un PDF de tus documentos (Drive) —</option>${_driveFilesCache.map(fl=>`<option value="${fl.id}" data-link="${escHtml(String(fl.webViewLink||'')).replace(/"/g,'&quot;')}">${escHtml(fl.name)}</option>`).join('')}<option value="__manual">— pegar enlace manual —</option></select>`:'<div class="dx-meta" style="margin-bottom:6px">Conecta tu Drive en «Documentos» para elegir de tu lista, o pega el enlace:</div>'}
+      <input id="rdLink" type="text" placeholder="https://drive.google.com/…"></div>
     <div class="test-out" id="rdOut"></div>
     <div class="modal-actions"><button class="btn ghost" id="rdCancel">Cancelar</button><button class="btn" id="rdAi">✨ Regenerar (IA)</button><button class="btn primary" id="rdSave">Indexar</button></div>
   </div>`;
@@ -4042,8 +4072,14 @@ function openRegistrarDoc(fuente, onDone){
   }
   ov.querySelector('#rdAi').addEventListener('click', ()=>autoAnalizar(true));
   autoAnalizar(false);   // AUTOMÁTICO al abrir
+  let chosenDriveId='';
+  const dsel=ov.querySelector('#rdDrive');
+  if(dsel) dsel.addEventListener('change', ()=>{ const op=dsel.selectedOptions[0];
+    if(dsel.value && dsel.value!=='__manual'){ chosenDriveId=dsel.value; ov.querySelector('#rdLink').value=op.dataset.link||('https://drive.google.com/file/d/'+dsel.value); }
+    else { chosenDriveId=''; } });
   ov.querySelector('#rdSave').addEventListener('click', async ()=>{
     const doc={ titulo:tit.value.trim(), descripcion:desc.value.trim(), url:ov.querySelector('#rdUrl').value.trim(), doi:ov.querySelector('#rdDoi').value.trim(), enlace:ov.querySelector('#rdLink').value.trim(), tipo:iaTipo, anio:iaAnio, iaAnalizado:iaHecho };
+    if(chosenDriveId) doc.driveId=chosenDriveId;   // ligado a "Mis documentos" → quedará marcado allí
     if(!doc.titulo){ out.className='test-out bad'; out.textContent='Falta el nombre (deja que la IA lo genere o escríbelo).'; return; }
     if(!ghConfigured()){ out.className='test-out bad'; out.textContent='Configura GitHub en ⚙ Ajustes para guardar el índice.'; return; }
     out.className='test-out'; out.textContent='Indexando…';
@@ -4066,6 +4102,11 @@ function wireGlobalBib(){
     const assign = t.closest && t.closest('.bib-assign');
     if(assign){ e.preventDefault(); e.stopPropagation(); let fu={}; try{ fu=JSON.parse(decodeURIComponent(assign.dataset.bibref)); }catch(_){}
       openRegistrarDoc(fu, refreshBibViews); return; }
+    const unassign = t.closest && t.closest('.bib-unassign');
+    if(unassign){ e.preventDefault(); e.stopPropagation(); const id=unassign.dataset.docid;
+      if(confirm('¿Eliminar este documento del índice (docs/index.json)? La referencia volverá a «asignar PDF».')){
+        desregistrarDoc(id).then(()=>{ showToast('Documento eliminado del índice'); refreshBibViews(); }).catch(err=>showToast('Error: '+err.message)); }
+      return; }
     const tip = t.closest && t.closest('.hastip');
     if(tip && !(t.closest && t.closest('a'))){ e.stopPropagation(); tip.classList.toggle('open'); }
   });
