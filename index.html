@@ -292,6 +292,10 @@
   #morfoSelected{margin-bottom:14px; padding-bottom:12px; border-bottom:2px solid var(--line);}
   .tip-ai{display:inline-block; margin-top:5px; color:var(--accent); cursor:pointer; font-size:11px; text-decoration:underline; font-weight:600;}
   .dx-src{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--accent); margin:4px 0 5px;}
+  .prenatal-layout{display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:0; align-items:start;}
+  .prenatal-main{padding-right:22px; min-width:0;}
+  .prenatal-aside{min-width:0;}
+  @media (max-width:900px){ .prenatal-layout{grid-template-columns:1fr;} .prenatal-main{padding-right:0;} }
   .cart.cart-full{position:static; top:auto; border-left:none; width:auto; max-width:1080px; margin:0 auto; padding:24px 30px 90px;}
   .patient-bar{display:flex; align-items:center; flex-wrap:wrap; gap:14px; padding:9px 30px; border-bottom:1px solid var(--line); background:var(--panel2); font-size:12.5px;}
   .patient-bar .pb-group{display:flex; align-items:center; gap:6px;}
@@ -3125,6 +3129,17 @@ const PRENATAL_FINDINGS=[
     {id:'HP:0010442', es:'Polidactilia', tipo:'mayor'}]}
 ];
 const PRENATAL_TIPO={}; PRENATAL_FINDINGS.forEach(s=>s.terms.forEach(t=>PRENATAL_TIPO[t.id]=t.tipo));
+const PRENATAL_REFS={
+  acmgExome:{t:'ACMG · Secuenciación de exoma fetal, Points to Consider (Genet Med 2021)', u:'https://www.gimjournal.org/article/S1098-3600(21)01166-7/fulltext', a:'2021'},
+  page:{t:'PAGE · Lord et al., Exoma prenatal en anomalías estructurales (Lancet 2019)', u:'https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6386638/', a:'2019'},
+  mellis:{t:'Mellis et al., Rendimiento del exoma prenatal — metaanálisis (Prenat Diagn 2022)', u:'https://obgyn.onlinelibrary.wiley.com/doi/10.1002/pd.6115', a:'2022'},
+  hydrops:{t:'Sparks et al., Exoma en hidrops fetal no inmune (NEJM 2021)', u:'https://www.nejm.org/doi/full/10.1056/NEJMoa2023643', a:'2021'},
+  jogc456:{t:'JOGC Guideline No. 456 · Cribado prenatal de anomalías cromosómicas (2024)', u:'https://www.jogc.com/article/S1701-2163(24)00517-6/abstract', a:'2024'},
+  overview:{t:'Santoli et al., Revisión de guías de cribado y diagnóstico prenatal (2025)', u:'https://obgyn.onlinelibrary.wiley.com/doi/full/10.1002/pmf2.70016', a:'2025'}
+};
+function refsHtml(keys){
+  return `<div class="study-src">Fuentes: `+keys.map(k=>{ const r=PRENATAL_REFS[k]; return `<a href="${r.u}" target="_blank" rel="noopener">${escHtml(r.t)} (${r.a})</a>`; }).join(' · ')+`</div>`;
+}
 function prenatalIndicacion(){
   const sel=Object.keys(selections).filter(id=>PRENATAL_TIPO[id]);
   const nucal=sel.filter(id=>PRENATAL_TIPO[id]==='nucal').length;
@@ -3132,10 +3147,10 @@ function prenatalIndicacion(){
   const marcadores=sel.filter(id=>PRENATAL_TIPO[id]==='marcador').length;
   if(!sel.length) return null;
   const lines=[];
-  if(nucal) lines.push('<b>TN aumentada / higroma / hidrops</b> → estudio invasivo con <b>cariotipo + QF-PCR</b> y <b>microarray (CMA)</b>. Si normal y persiste, valorar <b>panel de RASopatías</b> (Noonan).');
-  if(mayores>=2) lines.push(`<b>${mayores} anomalías estructurales</b> (multisistémico) → <b>microarray (CMA)</b>; si normal, considerar <b>exoma fetal (WES)</b>.`);
-  else if(mayores===1) lines.push('<b>Anomalía estructural mayor</b> → <b>microarray cromosómico (CMA)</b> de 1.ª línea (± cariotipo/QF-PCR).');
-  if(!nucal && !mayores && marcadores) lines.push(`<b>${marcadores} marcador(es) blando(s) aislado(s)</b> → ajustar riesgo de aneuploidía / cribado; estudio invasivo no indicado de rutina si es realmente aislado.`);
+  if(nucal) lines.push({html:'<b>TN aumentada / higroma / hidrops</b> → estudio invasivo con <b>cariotipo + QF-PCR</b> y <b>microarray (CMA)</b>. Si normal y persiste, valorar <b>panel de RASopatías</b> (Noonan); en hidrops, considerar <b>exoma</b>.', refs:['hydrops','overview','acmgExome']});
+  if(mayores>=2) lines.push({html:`<b>${mayores} anomalías estructurales</b> (multisistémico) → <b>microarray (CMA)</b>; si normal, considerar <b>exoma fetal (WES)</b>.`, refs:['acmgExome','page','mellis']});
+  else if(mayores===1) lines.push({html:'<b>Anomalía estructural mayor</b> → <b>microarray cromosómico (CMA)</b> de 1.ª línea (± cariotipo/QF-PCR); si normal, valorar exoma.', refs:['overview','jogc456','acmgExome']});
+  if(!nucal && !mayores && marcadores) lines.push({html:`<b>${marcadores} marcador(es) blando(s) aislado(s)</b> → ajustar riesgo de aneuploidía / cribado; estudio invasivo no indicado de rutina si es realmente aislado.`, refs:['jogc456','overview']});
   return {lines, nucal, mayores, marcadores};
 }
 function renderPrenatalInd(){
@@ -3144,9 +3159,9 @@ function renderPrenatalInd(){
   if(!r){ box.innerHTML='<div class="empty">Marca hallazgos fetales para sugerir la indicación.</div>'; return; }
   box.innerHTML=`<div class="cart-group-title">Indicación de estudio prenatal sugerida</div>`
     +`<div class="dx-meta" style="margin-bottom:6px">${r.mayores} anomalía(s) mayor(es) · ${r.marcadores} marcador(es) · ${r.nucal} nucal/hidrops</div>`
-    +r.lines.map(l=>`<div class="study" style="margin:6px 0">${l}</div>`).join('')
+    +r.lines.map(l=>`<div class="study" style="margin:6px 0">${l.html}${refsHtml(l.refs)}</div>`).join('')
     +`<button class="btn" id="btnPrenatalIA" style="margin-top:8px">Evaluar según guías vigentes (web · IA · usa tokens)</button><div id="prenatalIAout"></div>`
-    +`<div class="am-note">Regla orientativa (ISUOG/ACMG/SEGO): no sustituye el juicio clínico ni el consejo prenatal. El diferencial por fenotipo (Fenotipo) usa estos mismos HPO.</div>`;
+    +`<div class="am-note">Regla orientativa (ISUOG/ACMG/SMFM/SEGO): no sustituye el juicio clínico ni el consejo prenatal.</div>`;
   const b=box.querySelector('#btnPrenatalIA'); if(b) b.addEventListener('click', evalPrenatalGuias);
 }
 async function evalPrenatalGuias(){
@@ -3172,14 +3187,20 @@ function renderPrenatal(){
   const gaNote = ga
     ? `<div class="dx-meta">Edad gestacional: <b>${ga}</b> · ${patientLabel()||'feto'}</div>`
     : `<div class="study-flag">Marca <b>«Gestación»</b> en la barra superior e indica semanas+días para el contexto prenatal.</div>`;
-  box.innerHTML=`<div class="step-title">Estudio genético prenatal</div>
-    <div class="step-sub">Subconjunto fenotípico fetal (hallazgos ecográficos). Pulsa los presentes → se añaden al fenotipo y sugieren la indicación. La ⓘ explica cada término.</div>
-    ${gaNote}
-    <div id="prenatalInd" style="margin:14px 0 18px"></div>`
-    + PRENATAL_FINDINGS.map(s=>`<details class="morfo-region" open><summary>${s.system} <span style="color:var(--ink3);font-weight:400">· ${s.terms.length}</span></summary><div class="morfo-terms">${s.terms.map(t=>{
+  const findings = PRENATAL_FINDINGS.map(s=>`<details class="morfo-region" open><summary>${s.system} <span style="color:var(--ink3);font-weight:400">· ${s.terms.length}</span></summary><div class="morfo-terms">${s.terms.map(t=>{
         const on=!!selections[t.id];
         return `<button class="morfo-term${on?' on':''}" data-pid="${t.id}" data-pes="${t.es.replace(/"/g,'&quot;')}">${t.es} <span class="hp">${t.id}</span>${infoDotHtml(t.id)}</button>`;
       }).join('')}</div></details>`).join('');
+  box.innerHTML=`<div class="prenatal-layout">
+    <div class="prenatal-main">
+      <div class="step-title">Estudio genético prenatal</div>
+      <div class="step-sub">Subconjunto fenotípico fetal (hallazgos ecográficos). Pulsa los presentes → se añaden al fenotipo (panel derecho) y sugieren la indicación. La ⓘ explica cada término.</div>
+      ${gaNote}
+      <div id="prenatalInd" style="margin:14px 0 18px"></div>
+      ${findings}
+    </div>
+    <div id="prenatalPanelSlot" class="prenatal-aside"></div>
+  </div>`;
   renderPrenatalInd();
   box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
   box.querySelectorAll('.morfo-term').forEach(btn=>btn.addEventListener('click', (e)=>{
@@ -3215,7 +3236,7 @@ function showSection(s){
   else if(s==='documentos'){ if(doc){ doc.style.display='block'; renderDocumentos(); } }
   else if(s==='dismorfologia'){ if(dis){ dis.style.display='block'; renderDismorfologia(); } }
   else if(s==='antropometria'){ if(ant){ ant.style.display='block'; renderAntropometria(); } }
-  else if(s==='prenatal'){ const pv=document.getElementById('prenatalView'); if(pv){ pv.style.display='block'; renderPrenatal(); } }
+  else if(s==='prenatal'){ const pv=document.getElementById('prenatalView'); if(pv){ pv.style.display='block'; renderPrenatal(); const slot=document.getElementById('prenatalPanelSlot'); if(slot&&panel){ slot.appendChild(panel); panel.classList.remove('cart-full'); renderCart(); renderDifferential(); renderMonarch(); } } }
   else if(fen) fen.style.display='';
 }
 
