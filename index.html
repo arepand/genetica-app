@@ -279,6 +279,15 @@
   .section-btn:hover{color:var(--ink);}
   .section-btn.on{color:var(--accent); border-bottom-color:var(--accent);}
   .section-view{padding:24px 30px 90px; max-width:1100px; margin:0 auto;}
+  .morfo-region{margin:6px 0 4px; border-bottom:1px solid var(--line);}
+  .morfo-region > summary{cursor:pointer; font-weight:700; padding:10px 0; color:var(--accent); list-style:revert;}
+  .morfo-terms{display:flex; flex-wrap:wrap; gap:8px; padding:4px 0 12px;}
+  .morfo-term{display:inline-flex; align-items:center; gap:5px; border:1px solid var(--line); background:var(--panel2); color:var(--ink); border-radius:16px; padding:5px 11px; font-size:12.5px; cursor:pointer; line-height:1.3;}
+  .morfo-term:hover{border-color:var(--accent);}
+  .morfo-term.on{background:var(--accent); border-color:var(--accent); color:#fff;}
+  .morfo-term .hp{font-size:10px; opacity:.65;}
+  .morfo-chip{display:inline-flex; align-items:center; gap:6px; background:var(--panel2); border:1px solid var(--line); border-radius:14px; padding:4px 9px; font-size:12px; margin:0 4px 4px 0;}
+  #morfoSelected{margin-bottom:14px; padding-bottom:12px; border-bottom:2px solid var(--line);}
 
   /* Biblioteca de fichas */
   .lib-head{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:16px;}
@@ -345,6 +354,7 @@
 <nav class="section-nav" id="sectionNav">
   <button class="section-btn on" data-section="fenotipado">🧬 Fenotipado</button>
   <button class="section-btn" data-section="biblioteca">📚 Biblioteca de fichas</button>
+  <button class="section-btn" data-section="dismorfologia">🧑 Dismorfología</button>
   <button class="section-btn" data-section="documentos">📁 Documentos</button>
 </nav>
 
@@ -371,6 +381,7 @@
 </div>
 
 <div id="bibliotecaView" class="section-view" style="display:none"></div>
+<div id="dismorfologiaView" class="section-view" style="display:none"></div>
 <div id="documentosView" class="section-view" style="display:none"></div>
 
 <div id="toast"></div>
@@ -2475,15 +2486,112 @@ function copyCodes(){
    Carcasa de navegación + Biblioteca de fichas
    =========================================================================== */
 let currentSection='fenotipado';
+/* ===========================================================================
+   Dismorfología — recorrido región por región (Elements of Morphology).
+   Términos HPO estandarizados; al pulsar se verifican contra JAX y se añaden
+   al fenotipo. Coste 0 en runtime. Imágenes de los PDFs → v2.
+   =========================================================================== */
+const MORFO_REGIONS = [
+  {region:'Cráneo y forma craneal', terms:[
+    {id:'HP:0000256', es:'Macrocefalia'}, {id:'HP:0000252', es:'Microcefalia'},
+    {id:'HP:0000248', es:'Braquicefalia'}, {id:'HP:0000268', es:'Dolicocefalia'},
+    {id:'HP:0001357', es:'Plagiocefalia'}, {id:'HP:0000243', es:'Trigonocefalia'},
+    {id:'HP:0002007', es:'Prominencia frontal'}, {id:'HP:0005280', es:'Puente nasal deprimido'}
+  ]},
+  {region:'Cara (general)', terms:[
+    {id:'HP:0000280', es:'Facies tosca'}, {id:'HP:0000276', es:'Cara alargada'},
+    {id:'HP:0000325', es:'Cara triangular'}, {id:'HP:0000311', es:'Cara redonda'},
+    {id:'HP:0011800', es:'Hipoplasia mediofacial'}, {id:'HP:0000324', es:'Asimetría facial'},
+    {id:'HP:0011220', es:'Perfil facial plano'}
+  ]},
+  {region:'Ojos y región periorbital', terms:[
+    {id:'HP:0000316', es:'Hipertelorismo'}, {id:'HP:0000601', es:'Hipotelorismo'},
+    {id:'HP:0000506', es:'Telecanto'}, {id:'HP:0000582', es:'Fisuras palpebrales ascendentes'},
+    {id:'HP:0000494', es:'Fisuras palpebrales descendentes'}, {id:'HP:0000286', es:'Epicanto'},
+    {id:'HP:0000508', es:'Ptosis palpebral'}, {id:'HP:0000581', es:'Blefarofimosis'},
+    {id:'HP:0000520', es:'Proptosis'}, {id:'HP:0000664', es:'Sinofris'}, {id:'HP:0000527', es:'Pestañas largas'}
+  ]},
+  {region:'Nariz y filtrum', terms:[
+    {id:'HP:0000431', es:'Puente nasal ancho'}, {id:'HP:0000426', es:'Puente nasal alto'},
+    {id:'HP:0000463', es:'Narinas antevertidas'}, {id:'HP:0000414', es:'Nariz bulbosa'},
+    {id:'HP:0003196', es:'Nariz corta'}, {id:'HP:0000455', es:'Punta nasal ancha'},
+    {id:'HP:0000343', es:'Filtrum largo'}, {id:'HP:0000322', es:'Filtrum corto'}, {id:'HP:0000319', es:'Filtrum liso'}
+  ]},
+  {region:'Labios, boca y mandíbula', terms:[
+    {id:'HP:0000219', es:'Labio superior fino'}, {id:'HP:0000215', es:'Labio superior grueso'},
+    {id:'HP:0000154', es:'Boca ancha'}, {id:'HP:0000160', es:'Boca estrecha'},
+    {id:'HP:0002714', es:'Comisuras bucales hacia abajo'}, {id:'HP:0000218', es:'Paladar ojival'},
+    {id:'HP:0000175', es:'Fisura palatina'}, {id:'HP:0000204', es:'Labio leporino'},
+    {id:'HP:0000347', es:'Micrognatia'}, {id:'HP:0000278', es:'Retrognatia'},
+    {id:'HP:0000303', es:'Prognatismo mandibular'}, {id:'HP:0000158', es:'Macroglosia'}
+  ]},
+  {region:'Orejas', terms:[
+    {id:'HP:0000369', es:'Implantación baja de las orejas'}, {id:'HP:0000358', es:'Orejas rotadas posteriormente'},
+    {id:'HP:0000400', es:'Macrotia'}, {id:'HP:0008551', es:'Microtia'},
+    {id:'HP:0000384', es:'Apéndice preauricular'}, {id:'HP:0004467', es:'Fosita preauricular'},
+    {id:'HP:0000378', es:'Oreja en copa'}, {id:'HP:0000396', es:'Hélix sobreplegado'}
+  ]},
+  {region:'Manos y pies', terms:[
+    {id:'HP:0001156', es:'Braquidactilia'}, {id:'HP:0001166', es:'Aracnodactilia'},
+    {id:'HP:0004209', es:'Clinodactilia del 5º dedo'}, {id:'HP:0001159', es:'Sindactilia'},
+    {id:'HP:0010442', es:'Polidactilia'}, {id:'HP:0012385', es:'Camptodactilia'},
+    {id:'HP:0000954', es:'Pliegue palmar único'}, {id:'HP:0011304', es:'Pulgar ancho'},
+    {id:'HP:0001852', es:'Separación entre 1º y 2º dedos del pie'}, {id:'HP:0001182', es:'Dedos afilados'}
+  ]},
+  {region:'Pelo, piel y cuello/tronco', terms:[
+    {id:'HP:0001007', es:'Hirsutismo'}, {id:'HP:0000294', es:'Implantación baja del cabello (anterior)'},
+    {id:'HP:0002219', es:'Implantación baja del cabello (posterior)'}, {id:'HP:0000957', es:'Mancha café con leche'},
+    {id:'HP:0000470', es:'Cuello corto'}, {id:'HP:0000465', es:'Cuello alado (pterygium colli)'},
+    {id:'HP:0006610', es:'Pezones muy separados'}, {id:'HP:0000767', es:'Pectus excavatum'}, {id:'HP:0000768', es:'Pectus carinatum'}
+  ]},
+  {region:'Genitales', terms:[
+    {id:'HP:0000028', es:'Criptorquidia'}, {id:'HP:0000054', es:'Micropene'},
+    {id:'HP:0000047', es:'Hipospadias'}, {id:'HP:0000049', es:'Escroto en chal'}, {id:'HP:0008665', es:'Clitoromegalia'}
+  ]}
+];
+function morfoTermHtml(t){
+  const on = !!selections[t.id];
+  return `<button class="morfo-term${on?' on':''}" data-mid="${t.id}" data-mes="${t.es.replace(/"/g,'&quot;')}">${t.es} <span class="hp">${t.id}</span>${infoDotHtml(t.id)}</button>`;
+}
+function renderMorfoSelected(){
+  const el=document.getElementById('morfoSelected'); if(!el) return;
+  const ids=Object.keys(selections);
+  el.innerHTML = ids.length
+    ? `<div class="cart-group-title">Fenotipo actual · ${ids.length}</div><div>`+ids.map(id=>`<span class="morfo-chip">${(selections[id].es||id)} <span class="hp">${id}</span> <span class="x" data-mx="${id}" role="button" tabindex="0">✕</span></span>`).join('')+'</div>'
+    : '<div class="empty">Aún no has añadido rasgos. Pulsa los términos de cada región.</div>';
+  el.querySelectorAll('[data-mx]').forEach(x=>x.addEventListener('click', ()=>{ removeSelection(x.dataset.mx); renderDismorfologia(); }));
+}
+function renderDismorfologia(){
+  const box=document.getElementById('dismorfologiaView'); if(!box) return;
+  box.innerHTML = `<div class="step-title">Dismorfología</div>
+    <div class="step-sub">Recorrido región por región con términos estandarizados (<i>Elements of Morphology</i>). Pulsa un rasgo para añadirlo al fenotipo (se verifica contra JAX y se reetiqueta en español). La ⓘ explica el significado. Imágenes de referencia: próxima versión.</div>
+    <div id="morfoSelected"></div>`
+    + MORFO_REGIONS.map(r=>`<details class="morfo-region" open><summary>${r.region} <span style="color:var(--ink3);font-weight:400">· ${r.terms.length}</span></summary><div class="morfo-terms">${r.terms.map(morfoTermHtml).join('')}</div></details>`).join('');
+  renderMorfoSelected();
+  box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
+  box.querySelectorAll('.morfo-term').forEach(btn=>btn.addEventListener('click', async (e)=>{
+    if(e.target.closest('.info-dot')) return;
+    const id=btn.dataset.mid, es=btn.dataset.mes;
+    if(selections[id]){ delete selections[id]; renderCart(); refreshAnamnesisIfShown(); renderDismorfologia(); return; }
+    btn.classList.add('on');
+    let r; try{ r=await verifyAndRelabel(id, es); }catch(err){ r=null; }
+    selections[id] = (r&&r.verified)
+      ? {hpo:id, es:r.es, en:r.en, region:'dismorfología', origen:'dismorfología', verified:true}
+      : {hpo:id, es, en:es, region:'dismorfología', origen:'dismorfología', verified:false};
+    renderCart(); refreshAnamnesisIfShown(); renderDismorfologia();
+  }));
+}
 function showSection(s){
   currentSection=s;
   document.querySelectorAll('#sectionNav .section-btn').forEach(b=>b.classList.toggle('on', b.dataset.section===s));
   const fen=document.getElementById('fenotipadoView');
   const bib=document.getElementById('bibliotecaView');
   const doc=document.getElementById('documentosView');
-  [fen,bib,doc].forEach(v=>{ if(v) v.style.display='none'; });
+  const dis=document.getElementById('dismorfologiaView');
+  [fen,bib,doc,dis].forEach(v=>{ if(v) v.style.display='none'; });
   if(s==='biblioteca'){ if(bib){ bib.style.display='block'; renderBiblioteca(); } }
   else if(s==='documentos'){ if(doc){ doc.style.display='block'; renderDocumentos(); } }
+  else if(s==='dismorfologia'){ if(dis){ dis.style.display='block'; renderDismorfologia(); } }
   else if(fen) fen.style.display='';
 }
 
