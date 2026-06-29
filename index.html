@@ -2392,7 +2392,7 @@ async function generarFichaIA(motivo, guiaContext){
     const resp=await callLLM({system:FICHA_SYSTEM_PROMPT, user, webSearch:true, maxTokens:8000, task:'author'});
     const f=extractJSON(resp);
     if(!f){ if(box) box.innerHTML='<div class="err">La IA no devolvió un JSON válido. Reintenta.</div>'; return; }
-    openFichaReview(f);
+    openFichaReview(f, {autoVerify:true});
   }catch(e){ if(box) box.innerHTML='<div class="err">Error generando la ficha: '+e.message+'</div>'; }
 }
 
@@ -2415,7 +2415,7 @@ function openFichaReview(f, opts){
     <div class="msub">Revisa y edita el JSON. Al guardar se valida, se verifica una muestra de HPO contra JAX y se commitea a tu GitHub (o a caché local si GitHub no está configurado).</div>
     <textarea id="fichaJson" spellcheck="false" style="width:100%; min-height:340px; font-family:'IBM Plex Mono',ui-monospace,monospace; font-size:12px; line-height:1.5; padding:12px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink)">${JSON.stringify(f,null,2).replace(/</g,'&lt;')}</textarea>
     <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap">
-      <button class="btn" id="btnFichaVerify">Verificar HPO (muestra)</button>
+      <button class="btn" id="btnFichaVerify">Verificar/corregir HPO (todos)</button>
       <button class="btn" id="btnFichaDownload">⬇ Descargar JSON</button>
     </div>
     <div class="test-out" id="fichaVerifyOut"></div>
@@ -2442,15 +2442,27 @@ function openFichaReview(f, opts){
   ov.querySelector('#btnFichaCancel').addEventListener('click', close);
   ov.addEventListener('click', e=>{ if(e.target===ov) close(); });
   ov.querySelector('#btnFichaDownload').addEventListener('click', ()=>{ const j=parse(); if(j){ validateFicha(j); downloadJson(j); } });
-  ov.querySelector('#btnFichaVerify').addEventListener('click', async ()=>{
+  // Verificación COMPLETA contra JAX + autocorrección de los inválidos (raíz del problema).
+  async function runVerify(){
     const j=parse(); if(!j) return;
-    const ids=collectHpoIds(j); const sample=ids.slice(0,8);
-    out.className='test-out'; out.textContent='Verificando '+sample.length+' HPO contra JAX…';
-    let ok=0; const bad=[];
-    for(const id of sample){ const t=await verifyHpo(id); if(t) ok++; else bad.push(id); }
-    out.className='test-out '+(bad.length?'bad':'ok');
-    out.textContent=`HPO verificados ${ok}/${sample.length}`+(bad.length?(' · no válidos: '+bad.join(', ')):'')+(ids.length>sample.length?` (muestra de ${ids.length} en total)`:'');
-  });
+    const total=[...new Set(collectFichaHpoRefs(j).map(r=>r.id))].length;
+    out.className='test-out'; out.textContent='Verificando los '+total+' HPO contra JAX…';
+    let issues; try{ issues=await validarFichaHpo(j); }catch(e){ out.className='test-out bad'; out.textContent='Error verificando: '+e.message; return; }
+    if(!issues.length){ out.className='test-out ok'; out.textContent='✓ Todos los HPO válidos ('+total+').'; return; }
+    const fixable=issues.filter(it=>it.fix);
+    out.className='test-out bad';
+    out.innerHTML=`<b>${issues.length}</b> HPO inválido(s) de ${total}: `
+      + issues.map(it=>`${escHtml(it.id)}${it.label?' ('+escHtml(it.label)+')':''}${it.fix?' → <b>'+it.fix.id+'</b>':' <span style="color:#b8860b">sin corrección automática</span>'}`).join(' · ')
+      + (fixable.length?` <button class="btn" id="btnApplyFix" style="margin-left:8px;padding:3px 9px">Corregir ${fixable.length} automáticamente</button>`:'');
+    const af=out.querySelector('#btnApplyFix');
+    if(af) af.addEventListener('click', ()=>{
+      const fixes={}; fixable.forEach(it=>{ fixes[it.id]={to:it.fix.id, es:it.fix.es}; });
+      applyHpoFixes(j, fixes); ta.value=JSON.stringify(j,null,2);
+      out.className='test-out ok'; out.textContent='✓ Corregidos '+fixable.length+'. Revisa el JSON y guarda.';
+    });
+  }
+  ov.querySelector('#btnFichaVerify').addEventListener('click', runVerify);
+  if(opts.autoVerify) setTimeout(runVerify, 200); // autoría con IA → verificación automática al abrir
   ov.querySelector('#btnAplicarGuia').addEventListener('click', async ()=>{
     const cur=parse(); if(!cur) return;
     const gout=ov.querySelector('#revGuiaOut');
