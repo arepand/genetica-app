@@ -435,8 +435,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.5.0';
+const APP_VERSION='1.5.1';
 const CHANGELOG=[
+  {v:'1.5.1', d:'2026-06-29', c:['Versionado de 3 niveles: mayor (gran avance) · menor (mejora) · parche (arreglo o detalle menor, p. ej. 1.5.1).']},
   {v:'1.5.0', d:'2026-06-29', c:['Google Drive: el acceso se recuerda (≈1 h) — no hay que reautorizar en cada refresco; al abrir «Documentos» se recargan solos si el acceso sigue vigente.','Flag «unido a bibliografía» ahora se enciende también cuando ligas un PDF por referencia (alias) y cuenta las referencias de síndromes prenatales.']},
   {v:'1.4.0', d:'2026-06-29', c:['Los síndromes prenatales aparecen también en «Protocolos» con la etiqueta «prenatal» (ver hallazgos / ir a Prenatal).','La pestaña pasa a llamarse «Protocolos» (antes «Biblioteca de fichas»).']},
   {v:'1.3.0', d:'2026-06-29', c:['Asignar PDF: si eliges de «Mis documentos» un PDF ya indexado, se LIGA (botón «Guardar (ligar)») sin volver a indexar ni gastar tokens.','El botón «Informe (PDF)» ahora abre el PDF en otra pestaña (no lo descarga); lo descargas tú si quieres.']},
@@ -446,7 +447,7 @@ const CHANGELOG=[
 ];
 function openChangelog(){
   const ov=document.createElement('div'); ov.className='overlay'; ov.id='changelogOverlay';
-  ov.innerHTML=`<div class="modal" style="max-width:560px"><h2>Novedades · v${APP_VERSION}</h2><div class="msub">Historial de versiones · <b>mayor</b> = gran avance · <b>menor</b> = mejora.</div>
+  ov.innerHTML=`<div class="modal" style="max-width:560px"><h2>Novedades · v${APP_VERSION}</h2><div class="msub">Historial de versiones · <b>mayor</b> = gran avance · <b>menor</b> = mejora · <b>parche</b> = arreglo o detalle menor.</div>
    <div style="max-height:60vh;overflow:auto">${CHANGELOG.map(e=>`<div style="margin:12px 0"><b>v${escHtml(e.v)}</b> <span class="dx-meta">${escHtml(e.d)}</span><ul style="margin:4px 0 0 16px;font-size:13px">${e.c.map(x=>`<li>${escHtml(x)}</li>`).join('')}</ul></div>`).join('')}</div>
    <div class="modal-actions"><button class="btn primary" id="clClose">Cerrar</button></div></div>`;
   document.body.appendChild(ov);
