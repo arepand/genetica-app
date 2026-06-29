@@ -286,6 +286,11 @@
   .morfo-terms{display:flex; flex-wrap:wrap; gap:8px; padding:4px 0 12px;}
   .morfo-term{display:inline-flex; align-items:center; gap:5px; border:1px solid var(--line); background:var(--panel2); color:var(--ink); border-radius:16px; padding:5px 11px; font-size:12.5px; cursor:pointer; line-height:1.3;}
   .morfo-term:hover{border-color:var(--accent);}
+  .orpha-dd{position:absolute; top:calc(100% + 3px); left:0; right:0; z-index:40; background:var(--panel); border:1px solid var(--line); border-radius:9px; box-shadow:0 8px 24px rgba(0,0,0,.28); max-height:240px; overflow:auto; padding:4px;}
+  .orpha-dd:empty{display:none;}
+  .orpha-dd .orow{display:block; width:100%; text-align:left; padding:7px 10px; border-radius:6px; font-size:12.5px; cursor:pointer; color:var(--ink); background:none; border:0;}
+  .orpha-dd .orow:hover{background:var(--panel2);}
+  .orpha-dd .ohint{padding:7px 10px; font-size:12px; color:var(--ink3);}
   .morfo-term.on{background:var(--accent); border-color:var(--accent); color:#fff;}
   .morfo-term .hp{font-size:10px; opacity:.65;}
   .morfo-chip{display:inline-flex; align-items:center; gap:6px; background:var(--panel2); border:1px solid var(--line); border-radius:14px; padding:4px 9px; font-size:12px; margin:0 4px 4px 0;}
@@ -1072,7 +1077,7 @@ function extractJSON(text){
   if(a>=0 && b>a) s=s.slice(a,b+1);
   try{ return JSON.parse(s); }catch(e){ return null; }
 }
-async function callLLM({system, user, webSearch, maxTokens, task}){
+async function callLLM({system, user, webSearch, maxTokens, task, thinking}){
   const c=loadCfg();
   maxTokens = maxTokens || 1500;
   const pick = pickModel(task||'deepen');
@@ -1089,6 +1094,7 @@ async function callLLM({system, user, webSearch, maxTokens, task}){
     return d.choices[0].message.content;
   } else { // anthropic
     const body={model:pick.model, max_tokens:maxTokens, system, messages:[{role:'user',content:user}]};
+    if(thinking){ const budget=Math.min(10000, Math.max(3000, maxTokens)); body.thinking={type:'enabled', budget_tokens:budget}; body.max_tokens=maxTokens+budget; } // razonamiento extendido: máxima fiabilidad
     if(webSearch) body.tools=[{type:'web_search_20250305', name:'web_search', max_uses:5}];
     const r=await fetch('https://api.anthropic.com/v1/messages', {
       method:'POST',
@@ -3342,7 +3348,7 @@ async function actualizarSindromesIA(){
   try{
     const existing=allPrenatalSyndromes().map(s=>s.name);
     const system='Eres genetista clínico experto en DIAGNÓSTICO PRENATAL. Propón síndromes/entidades con diagnóstico prenatal relevante que NO estén ya en la lista del usuario. Para cada uno: nombre en español (sin prefijos como "Síndrome de"), "test" (estudio genético dirigido), "min" (1-3), "ref" {titulo,url} (GeneReviews/OMIM/guía), y 3-6 "findings": hallazgos ECOGRÁFICOS FETALES característicos, cada uno con "hpo" (código HPO REAL y VIGENTE, formato HP:0000000), "label" (etiqueta en español), "label_en" (EL NOMBRE EXACTO del término HPO en inglés, tal cual figura en HPO), "tipo" (mayor|marcador|nucal) y "sistema" (uno de: '+PRENATAL_SYSTEMS.join(' | ')+', o una categoría nueva si ninguna encaja). El "hpo" y "label_en" DEBEN ser el mismo término HPO. '+SOURCE_PRIORITY+' Devuelve SOLO JSON {"sindromes":[{"name":"","test":"","min":2,"ref":{"titulo":"","url":""},"findings":[{"hpo":"HP:0000000","label":"","label_en":"","tipo":"mayor","sistema":""}]}]}.';
-    const resp=await callLLM({system, user:'Síndromes ya incluidos (NO los repitas): '+existing.join('; '), webSearch:true, maxTokens:4000, task:'author'});
+    const resp=await callLLM({system, user:'Síndromes ya incluidos (NO los repitas): '+existing.join('; '), webSearch:true, maxTokens:4000, task:'author', thinking:true});
     const j=extractJSON(resp); const cands=(j&&j.sindromes)||[];
     if(!cands.length){ out.innerHTML='<div class="empty">La IA no devolvió síndromes nuevos.</div>'; return; }
     out.innerHTML='<div class="loading">Verificando los HPO propuestos contra JAX ('+cands.length+' síndromes)…</div>';
@@ -3375,7 +3381,7 @@ async function añadirSindromePorNombre(name){
   out.innerHTML='<div class="loading">Generando «'+escHtml(name)+'»'+(orpha?' (ORPHA:'+orpha.orpha+')':'')+' con IA y verificando HPO contra JAX…</div>';
   try{
     const system='Eres genetista clínico experto en diagnóstico prenatal. Para el síndrome/enfermedad indicado, devuelve sus hallazgos ECOGRÁFICOS FETALES característicos (cada uno con "hpo" código HPO REAL/vigente formato HP:0000000, "label" en español, "label_en" EL NOMBRE EXACTO del término HPO en inglés, "tipo" mayor|marcador|nucal y "sistema" uno de: '+PRENATAL_SYSTEMS.join(' | ')+', o una categoría nueva si ninguna encaja; "hpo" y "label_en" DEBEN ser el mismo término HPO), el "name" (sin prefijo "Síndrome de"), "test" (estudio genético dirigido), "min" (1-3), "ref"{titulo,url}, y "prenatal" (true si tiene hallazgos prenatales reconocibles; false si no los tiene). '+SOURCE_PRIORITY+' Devuelve SOLO JSON {"name":"","prenatal":true,"test":"","min":1,"ref":{"titulo":"","url":""},"findings":[{"hpo":"HP:0000000","label":"","label_en":"","tipo":"mayor","sistema":""}]}.';
-    const resp=await callLLM({system, user:'Síndrome/enfermedad: '+name+(orpha?' (Orphanet ORPHA:'+orpha.orpha+')':''), webSearch:true, maxTokens:1500, task:'author'});
+    const resp=await callLLM({system, user:'Síndrome/enfermedad: '+name+(orpha?' (Orphanet ORPHA:'+orpha.orpha+')':''), webSearch:true, maxTokens:1500, task:'author', thinking:true});
     const j=extractJSON(resp);
     if(!j){ out.innerHTML='<div class="err">La IA no devolvió datos válidos.</div>'; return; }
     if(j.prenatal===false || !(j.findings&&j.findings.length)){ out.innerHTML='<div class="study-flag">⚠ «'+escHtml(j.name||name)+'»: la IA NO reconoce hallazgos ecográficos prenatales característicos para esta entidad → no se añadió (no aporta a un cribado prenatal por imagen).</div>'; return; }
@@ -3539,12 +3545,14 @@ function renderPrenatal(){
       </details>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0">
         <input id="prenatalFilter" type="text" placeholder="🔎 Filtrar hallazgos (nombre o HP:…)" autocomplete="off" style="flex:1;min-width:180px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
-        <input id="addSyndName" type="text" placeholder="Añadir síndrome por nombre (p. ej. Fibrosis quística)" autocomplete="off" style="flex:1;min-width:220px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
+        <span style="position:relative;flex:1;min-width:220px;display:inline-block">
+          <input id="addSyndName" type="text" placeholder="Buscar síndrome en Orphanet (es) — p. ej. Beckwith, Pallister…" autocomplete="off" style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
+          <div id="orphaSugg" class="orpha-dd"></div>
+        </span>
         <button class="btn" id="btnAddSynd" title="La IA genera ese síndrome; sus HPO se verifican contra JAX y se guarda en tu GitHub">+ Añadir (IA)</button>
         <button class="btn" id="btnSindIA" title="La IA propone varios síndromes nuevos; HPO verificados contra JAX y guardados en tu GitHub">✨ Buscar nuevos (IA)</button>
         ${(PRENATAL_CUSTOM.findings||[]).some(t=>!t.verified)?'<button class="btn" id="btnRevisarIA" title="Comprueba que cada HPO añadido por IA corresponde realmente al concepto; corrige los erróneos">🔧 Revisar hallazgos IA</button>':''}
       </div>
-      <div id="orphaSugg" style="margin:-4px 0 8px"></div>
       <div id="prenatalIAupd" style="margin-bottom:10px"></div>
       ${findings}
     </div>
@@ -3557,15 +3565,18 @@ function renderPrenatal(){
   const addInp=document.getElementById('addSyndName'); const addBtn=document.getElementById('btnAddSynd');
   if(addBtn) addBtn.addEventListener('click', ()=>añadirSindromePorNombre(addInp.value));
   if(addInp){
-    addInp.addEventListener('keydown', e=>{ if(e.key==='Enter') añadirSindromePorNombre(addInp.value); });
+    const sg=document.getElementById('orphaSugg');
+    addInp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ if(sg) sg.innerHTML=''; añadirSindromePorNombre(addInp.value); } });
     let ot=null;
-    addInp.addEventListener('input', ()=>{ _orphaSel=null; clearTimeout(ot); const q=addInp.value.trim(); const sg=document.getElementById('orphaSugg');
+    addInp.addEventListener('input', ()=>{ _orphaSel=null; clearTimeout(ot); const q=addInp.value.trim();
       if(q.length<3){ if(sg) sg.innerHTML=''; return; }
-      ot=setTimeout(async ()=>{ const hits=await orphanetLookup(q); if(!sg) return;
-        sg.innerHTML = hits.length ? hits.slice(0,5).map(h=>`<a class="tip-ai" data-orpha="${h.orpha}" data-oname="${escHtml(h.name)}" data-ourl="${h.url||''}" style="display:inline-block;margin:0 8px 4px 0">${escHtml(h.name)} <span class="dx-meta">ORPHA:${h.orpha}</span></a>`).join('') : '<span class="dx-meta">Sin coincidencia en Orphanet (puedes añadir igualmente).</span>';
-        sg.querySelectorAll('[data-orpha]').forEach(a=>a.addEventListener('click', ()=>{ addInp.value=a.dataset.oname; _orphaSel={orpha:a.dataset.orpha, name:a.dataset.oname, url:a.dataset.ourl}; sg.innerHTML='<span class="dx-meta" style="color:var(--ok)">✓ '+escHtml(a.dataset.oname)+' (Orphanet ORPHA:'+a.dataset.orpha+')</span>'; }));
-      }, 450);
+      if(sg) sg.innerHTML='<div class="ohint">Buscando en Orphanet…</div>';
+      ot=setTimeout(async ()=>{ if(addInp.value.trim()!==q) return; const hits=await orphanetLookup(q); if(!sg||addInp.value.trim()!==q) return;
+        sg.innerHTML = hits.length ? hits.slice(0,6).map(h=>`<button type="button" class="orow" data-orpha="${h.orpha}" data-oname="${escHtml(h.name)}" data-ourl="${h.url||''}"><b>${escHtml(h.name)}</b> <span class="dx-meta">· ORPHA:${h.orpha}</span></button>`).join('') : '<div class="ohint">Sin coincidencia en Orphanet — puedes añadirlo igualmente con «+ Añadir (IA)».</div>';
+        sg.querySelectorAll('.orow').forEach(a=>a.addEventListener('mousedown', e=>{ e.preventDefault(); addInp.value=a.dataset.oname; _orphaSel={orpha:a.dataset.orpha, name:a.dataset.oname, url:a.dataset.ourl}; sg.innerHTML=''; addInp.focus(); }));
+      }, 400);
     });
+    addInp.addEventListener('blur', ()=>{ setTimeout(()=>{ if(sg) sg.innerHTML=''; }, 150); });
   }
   box.querySelectorAll('[data-rmsyn]').forEach(a=>a.addEventListener('click', ()=>quitarSindromeIA(a.dataset.rmsyn)));
   box.querySelectorAll('[data-vfy]').forEach(a=>a.addEventListener('click', (e)=>{ e.stopPropagation(); verificarHallazgoIA(a.dataset.vfy); }));
