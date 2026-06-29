@@ -3884,31 +3884,57 @@ async function renderFichaView(f){
 }
 
 /* Registrar un PDF descargado: el PDF vive en la nube del usuario; aquí guardamos el enlace + metadatos en docs/index.json. */
+/* La IA identifica el documento (por título/URL/DOI, con búsqueda web) → nombre + descripción + tipo.
+   Es el "análisis una sola vez": el resultado se guarda en docs/index.json (GitHub). */
+async function analizarDocIA(fuente){
+  const sys='Eres documentalista clínico-genético. Identifica el documento bibliográfico indicado a partir de su título, URL o DOI (usa búsqueda web para confirmarlo; NO inventes). Devuelve SOLO JSON {"nombre":"título breve y claro en español, sin comillas","descripcion":"1-2 frases: QUÉ es y para qué sirve, p. ej. «Guía clínica de la SEGO sobre cribado prenatal de aneuploidías» o «Revisión de casos prenatales del síndrome de…»","tipo":"guía clínica|revisión|artículo original|consenso|libro|base de datos|otro","anio":"AAAA"}.';
+  const user='Documento a identificar: '+JSON.stringify({titulo:fuente.titulo||'', url:fuente.url||'', doi:fuente.doi||''});
+  const resp=await callLLM({system:sys, user, webSearch:true, maxTokens:600, task:'eval'});
+  return extractJSON(resp);
+}
 function openRegistrarDoc(fuente, onDone){
   fuente = fuente || {};
   const ov=document.createElement('div'); ov.className='overlay'; ov.id='regDocOverlay';
-  ov.innerHTML=`<div class="modal" role="dialog" aria-label="Registrar documento" style="max-width:520px">
-    <h2>Registrar PDF descargado</h2>
-    <div class="msub">Descarga el artículo con tu acceso y pega aquí el <b>enlace</b> donde lo guardas (tu nube/Drive) o su DOI. El PDF queda en tu nube; en tu repo solo se guarda el registro (docs/index.json), y la referencia quedará marcada en todas las fichas que la citen.</div>
-    <div class="field"><label>Título</label><input id="rdTit" type="text" value="${(fuente.titulo||'').replace(/"/g,'&quot;')}"></div>
+  ov.innerHTML=`<div class="modal" role="dialog" aria-label="Indexar documento" style="max-width:540px">
+    <h2>Indexar PDF de la referencia</h2>
+    <div class="msub"><b>El nombre y la descripción los genera la IA automáticamente</b> (analiza el documento una sola vez y lo guarda en tu repositorio, docs/index.json). Solo añade el <b>enlace</b> al PDF en tu nube (opcional). El PDF queda en tu nube; en tu repo solo el índice. Quedará marcado en todas las referencias que lo citen.</div>
+    <div class="field"><label>Nombre <span class="dx-meta">(IA)</span></label><input id="rdTit" type="text" value="${(fuente.titulo||'').replace(/"/g,'&quot;')}" placeholder="Lo genera la IA…"></div>
+    <div class="field"><label>Descripción — qué es <span class="dx-meta">(IA)</span></label><input id="rdDesc" type="text" value="${(fuente.descripcion||'').replace(/"/g,'&quot;')}" placeholder="Lo genera la IA…"></div>
     <div class="field"><label>Referencia (URL del artículo/guía)</label><input id="rdUrl" type="text" value="${(fuente.url||'').replace(/"/g,'&quot;')}"></div>
     <div class="field"><label>DOI (opcional)</label><input id="rdDoi" type="text" placeholder="10.xxxx/…"></div>
-    <div class="field"><label>Enlace al PDF (tu nube)</label><input id="rdLink" type="text" placeholder="https://drive.google.com/…"></div>
-    <div class="field"><label>Descripción (qué es)</label><input id="rdDesc" type="text" value="${(fuente.descripcion||'').replace(/"/g,'&quot;')}" placeholder="p. ej. Guía SEGO de cribado prenatal; revisión de casos prenatales de…"></div>
+    <div class="field"><label>Enlace al PDF (tu nube, opcional)</label><input id="rdLink" type="text" placeholder="https://drive.google.com/…"></div>
     <div class="test-out" id="rdOut"></div>
-    <div class="modal-actions"><button class="btn ghost" id="rdCancel">Cancelar</button><button class="btn primary" id="rdSave">Registrar</button></div>
+    <div class="modal-actions"><button class="btn ghost" id="rdCancel">Cancelar</button><button class="btn" id="rdAi">✨ Regenerar (IA)</button><button class="btn primary" id="rdSave">Indexar</button></div>
   </div>`;
   document.body.appendChild(ov);
   const close=()=>ov.remove();
+  const out=ov.querySelector('#rdOut'), tit=ov.querySelector('#rdTit'), desc=ov.querySelector('#rdDesc');
   ov.querySelector('#rdCancel').addEventListener('click', close);
   ov.addEventListener('click', e=>{ if(e.target===ov) close(); });
+  let iaTipo='', iaAnio=fuente.anio||'', iaHecho=false;
+  async function autoAnalizar(force){
+    if(!anyProvider()){ if(force){ out.className='test-out bad'; out.textContent='Configura una API key (Claude u OpenAI) en ⚙ Ajustes para el análisis con IA.'; } return; }
+    const fu={titulo:tit.value.trim()||fuente.titulo||'', url:ov.querySelector('#rdUrl').value.trim()||fuente.url||'', doi:ov.querySelector('#rdDoi').value.trim()};
+    if(!fu.titulo && !fu.url && !fu.doi){ return; }
+    if(!force && tit.value.trim() && desc.value.trim()) return;   // ya hay datos → no malgastar tokens
+    out.className='test-out'; out.innerHTML='✨ Analizando el documento con IA…';
+    try{ const j=await analizarDocIA(fu);
+      if(j){ if(j.nombre && (force||!tit.value.trim())) tit.value=j.nombre;
+             if(j.descripcion && (force||!desc.value.trim())) desc.value=j.descripcion;
+             iaTipo=j.tipo||iaTipo; iaAnio=j.anio||iaAnio; iaHecho=true;
+             out.className='test-out ok'; out.innerHTML='✓ Nombre y descripción generados por IA'+(iaTipo?(' · '+escHtml(iaTipo)):'')+' — puedes editarlos.'; }
+      else { out.className='test-out'; out.textContent='No se pudo identificar automáticamente; edítalo a mano.'; }
+    }catch(e){ out.className='test-out bad'; out.textContent='No se pudo analizar: '+e.message; }
+  }
+  ov.querySelector('#rdAi').addEventListener('click', ()=>autoAnalizar(true));
+  autoAnalizar(false);   // AUTOMÁTICO al abrir
   ov.querySelector('#rdSave').addEventListener('click', async ()=>{
-    const out=ov.querySelector('#rdOut');
-    const doc={ titulo:ov.querySelector('#rdTit').value.trim(), url:ov.querySelector('#rdUrl').value.trim(), doi:ov.querySelector('#rdDoi').value.trim(), enlace:ov.querySelector('#rdLink').value.trim(), descripcion:ov.querySelector('#rdDesc').value.trim(), anio:fuente.anio||'' };
-    if(!doc.enlace && !doc.doi){ out.className='test-out bad'; out.textContent='Pon al menos el enlace al PDF o un DOI.'; return; }
-    if(!ghConfigured()){ out.className='test-out bad'; out.textContent='Configura GitHub en ⚙ Ajustes para guardar el registro.'; return; }
-    out.className='test-out'; out.textContent='Registrando…';
-    try{ await registrarDoc(doc); close(); showToast('Documento registrado'); if(onDone) onDone(); }
+    const doc={ titulo:tit.value.trim(), descripcion:desc.value.trim(), url:ov.querySelector('#rdUrl').value.trim(), doi:ov.querySelector('#rdDoi').value.trim(), enlace:ov.querySelector('#rdLink').value.trim(), tipo:iaTipo, anio:iaAnio, iaAnalizado:iaHecho };
+    if(!doc.titulo){ out.className='test-out bad'; out.textContent='Falta el nombre (deja que la IA lo genere o escríbelo).'; return; }
+    if(!ghConfigured()){ out.className='test-out bad'; out.textContent='Configura GitHub en ⚙ Ajustes para guardar el índice.'; return; }
+    out.className='test-out'; out.textContent='Indexando…';
+    try{ if(fuente && (fuente.url||fuente.titulo)) doc.aliases=[normUrl(fuente.url), fuente.titulo?('t:'+normTxt(fuente.titulo)):''].filter(Boolean);
+      await registrarDoc(doc); close(); showToast('Documento indexado'); if(onDone) onDone(); }
     catch(e){ out.className='test-out bad'; out.textContent='Error: '+e.message; }
   });
 }
