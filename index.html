@@ -435,8 +435,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.2.0';
+const APP_VERSION='1.3.0';
 const CHANGELOG=[
+  {v:'1.3.0', d:'2026-06-29', c:['Asignar PDF: si eliges de «Mis documentos» un PDF ya indexado, se LIGA (botón «Guardar (ligar)») sin volver a indexar ni gastar tokens.','El botón «Informe (PDF)» ahora abre el PDF en otra pestaña (no lo descarga); lo descargas tú si quieres.']},
   {v:'1.2.0', d:'2026-06-29', c:['«Informes» pasa de botón a pestaña propia.','Reordenadas las pestañas: Protocolos y Documentos al final.']},
   {v:'1.1.0', d:'2026-06-29', c:['Estado de servicios (Claude/OpenAI/babelon/GitHub) unificado en un solo icono con detalle al pulsar.','Número de versión + changelog (este panel).','Indexar PDF: seleccionar el enlace desde "Mis documentos" (Drive); opción de eliminar un documento asignado desde la propia referencia.']},
   {v:'1.0.0', d:'2026-06-29', c:['Primera versión versionada. Fenotipado dirigido por fichas (HPO trilingüe, diferencial por umbrales, panel génico, informes).','Prenatal: subconjunto fetal, indicación por guías, jerarquía HPO (auto-marca ancestros sin contar doble), propuestas IA con bibliografía obligatoria y verificación doble de HPO, panel diferencial con criterios cumplidos.','Bibliografía con PDF indexado por IA (nombre+descripción automáticos) y RAG vectorial (embeddings + búsqueda en lenguaje natural).','Seguridad: SRI en CDNs, sin secretos en el repo público.']},
@@ -3101,7 +3102,9 @@ function generatePdf(){
     write((s.tipo||'')+(s.detalle?'. '+s.detalle:''), {size:9, lh:12});
   }
   write('— Orientativo; no sustituye el juicio clínico ni la confirmación molecular.', {size:8, lh:12});
-  doc.save('fenotiphac-informe.pdf');
+  // Abrir en otra pestaña (no descargar): el usuario descarga desde el visor si quiere.
+  try{ const url=doc.output('bloburl'); const w=window.open(url, '_blank'); if(!w) doc.save('fenotiphac-informe.pdf'); }
+  catch(e){ doc.save('fenotiphac-informe.pdf'); }
 }
 
 /* ===========================================================================
@@ -4071,16 +4074,31 @@ function openRegistrarDoc(fuente, onDone){
   }
   ov.querySelector('#rdAi').addEventListener('click', ()=>autoAnalizar(true));
   autoAnalizar(false);   // AUTOMÁTICO al abrir
-  let chosenDriveId='';
+  let chosenDriveId='', linkDocId='';
+  const saveBtn=ov.querySelector('#rdSave'), aiBtn=ov.querySelector('#rdAi');
   const dsel=ov.querySelector('#rdDrive');
+  function regForDrive(driveId, link){ const docs=(cachedDocs()||{}).docs||[]; return docs.find(d=>d.driveId===driveId) || (link?matchDoc({url:link}, docs):null); }
   if(dsel) dsel.addEventListener('change', ()=>{ const op=dsel.selectedOptions[0];
-    if(dsel.value && dsel.value!=='__manual'){ chosenDriveId=dsel.value; ov.querySelector('#rdLink').value=op.dataset.link||('https://drive.google.com/file/d/'+dsel.value); }
-    else { chosenDriveId=''; } });
-  ov.querySelector('#rdSave').addEventListener('click', async ()=>{
+    if(dsel.value && dsel.value!=='__manual'){
+      chosenDriveId=dsel.value; const link=op.dataset.link||('https://drive.google.com/file/d/'+dsel.value); ov.querySelector('#rdLink').value=link;
+      const reg=regForDrive(dsel.value, link);
+      if(reg){   // ese PDF YA está indexado → solo ligarlo, sin re-indexar ni re-analizar
+        linkDocId=reg.id; if(reg.titulo) tit.value=reg.titulo; if(reg.descripcion) desc.value=reg.descripcion; iaTipo=reg.tipo||iaTipo; iaAnio=reg.anio||iaAnio;
+        saveBtn.textContent='Guardar (ligar)'; if(aiBtn) aiBtn.style.display='none';
+        out.className='test-out ok'; out.innerHTML='✓ Este PDF ya está en «Mis documentos». Se <b>ligará</b> a esta referencia (sin volver a indexar).';
+      } else { linkDocId=''; saveBtn.textContent='Indexar'; if(aiBtn) aiBtn.style.display=''; }
+    } else { chosenDriveId=''; linkDocId=''; saveBtn.textContent='Indexar'; if(aiBtn) aiBtn.style.display=''; } });
+  saveBtn.addEventListener('click', async ()=>{
+    if(!ghConfigured()){ out.className='test-out bad'; out.textContent='Configura GitHub en ⚙ Ajustes para guardar el índice.'; return; }
+    if(linkDocId){   // LIGAR a un documento ya indexado (no crea ni re-analiza)
+      out.className='test-out'; out.textContent='Guardando…';
+      try{ await enlazarFuenteADoc(fuente, linkDocId); close(); showToast('PDF ligado a la referencia'); if(onDone) onDone(); }
+      catch(e){ out.className='test-out bad'; out.textContent='Error: '+e.message; }
+      return;
+    }
     const doc={ titulo:tit.value.trim(), descripcion:desc.value.trim(), url:ov.querySelector('#rdUrl').value.trim(), doi:ov.querySelector('#rdDoi').value.trim(), enlace:ov.querySelector('#rdLink').value.trim(), tipo:iaTipo, anio:iaAnio, iaAnalizado:iaHecho };
     if(chosenDriveId) doc.driveId=chosenDriveId;   // ligado a "Mis documentos" → quedará marcado allí
     if(!doc.titulo){ out.className='test-out bad'; out.textContent='Falta el nombre (deja que la IA lo genere o escríbelo).'; return; }
-    if(!ghConfigured()){ out.className='test-out bad'; out.textContent='Configura GitHub en ⚙ Ajustes para guardar el índice.'; return; }
     out.className='test-out'; out.textContent='Indexando…';
     try{ if(fuente && (fuente.url||fuente.titulo)) doc.aliases=[normUrl(fuente.url), fuente.titulo?('t:'+normTxt(fuente.titulo)):''].filter(Boolean);
       await registrarDoc(doc); close(); showToast('Documento indexado'); if(onDone) onDone(); }
