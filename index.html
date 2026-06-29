@@ -291,6 +291,13 @@
   .morfo-chip{display:inline-flex; align-items:center; gap:6px; background:var(--panel2); border:1px solid var(--line); border-radius:14px; padding:4px 9px; font-size:12px; margin:0 4px 4px 0;}
   #morfoSelected{margin-bottom:14px; padding-bottom:12px; border-bottom:2px solid var(--line);}
   .tip-ai{display:inline-block; margin-top:5px; color:var(--accent); cursor:pointer; font-size:11px; text-decoration:underline; font-weight:600;}
+  .patient-bar{display:flex; align-items:center; flex-wrap:wrap; gap:14px; padding:9px 30px; border-bottom:1px solid var(--line); background:var(--panel2); font-size:12.5px;}
+  .patient-bar .pb-group{display:flex; align-items:center; gap:6px;}
+  .patient-bar .pb-l{color:var(--ink3); font-weight:600;}
+  .patient-bar .pb-in, .patient-bar .pb-sel{padding:5px 7px; border:1px solid var(--line); border-radius:7px; background:var(--panel); color:var(--ink); font-size:12.5px;}
+  .patient-bar .pb-gest{display:flex; align-items:center; gap:5px; color:var(--ink3); cursor:pointer;}
+  .patient-bar .pb-label{font-weight:700; color:var(--accent);}
+  .patient-bar .pb-spacer{flex:1;}
   .anthro-form{display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin:8px 0 18px; max-width:760px;}
   .morfo-sub{margin:2px 0 4px;}
   .morfo-sub-h{font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:var(--ink3); margin:10px 0 5px; padding-left:2px;}
@@ -366,6 +373,8 @@
   <button class="section-btn" data-section="antropometria">📏 Antropometría</button>
   <button class="section-btn" data-section="documentos">📁 Documentos</button>
 </nav>
+
+<div class="patient-bar" id="patientBar"></div>
 
 <div class="layout" id="fenotipadoView">
   <main id="main"></main>
@@ -761,13 +770,76 @@ function attachSearchRowHandlers(box, regionLabel){
 
 /* ---- Estado de la sesión (scope de módulo, NO en window) ---- */
 let selections = {};                 // id -> {hpo, es, en, region, origen, verified}
-let patient = {motivo:'', edadValor:'', edadUnidad:'años', sexo:'', tallaCm:'', pesoKg:'', envergaduraCm:'', perimetroCranealCm:''};
+let patient = {motivo:'', edadValor:'', edadUnidad:'años', sexo:'', tallaCm:'', pesoKg:'', envergaduraCm:'', perimetroCranealCm:'', gestacion:false, gestSemanas:'', gestDias:'', edad:''};
 let beighton = {};
 
 function patientAgeYears(){
+  if(patient.gestacion) return null; // feto: sin edad postnatal para percentiles
   const v=parseFloat(String(patient.edadValor).replace(',','.'));
   if(isNaN(v)) return null;
   return patient.edadUnidad==='meses' ? v/12 : v;
+}
+/* Etiqueta del paciente: adulto/a · niño/a · feto varón/mujer (gestación sem+días). */
+function patientLabel(){
+  if(patient.gestacion){
+    const sem=String(patient.gestSemanas||'').trim(), d=String(patient.gestDias||'').trim();
+    if(!sem && !d) return '';
+    const ga = sem + '+' + (d!==''?d:'0');
+    const w = patient.sexo==='Masculino'?'Feto varón':(patient.sexo==='Femenino'?'Feto mujer':'Feto');
+    return `${w} · ${ga}`;
+  }
+  const v=String(patient.edadValor||'').trim();
+  if(!v) return '';
+  const y=patientAgeYears(); const unit=patient.edadUnidad||'años';
+  let w;
+  if(y!=null && y<PED_MAX_AGE) w = patient.sexo==='Masculino'?'Niño':(patient.sexo==='Femenino'?'Niña':'Menor');
+  else w = patient.sexo==='Masculino'?'Adulto':(patient.sexo==='Femenino'?'Adulta':'Adulto/a');
+  return `${w} · ${v} ${unit}`;
+}
+function afterPatientChange(){
+  patient.edad = patient.edadValor ? `${patient.edadValor} ${patient.edadUnidad}` : '';
+  const lab=document.getElementById('pbLabel'); if(lab) lab.textContent=patientLabel();
+  renderPatientLine();
+  if(currentSection==='antropometria') renderAnthroResult();
+}
+function renderPatientBar(){
+  const bar=document.getElementById('patientBar'); if(!bar) return;
+  const gest=!!patient.gestacion;
+  bar.innerHTML = `
+    <div class="pb-group"><span class="pb-l">Sexo</span>
+      <select id="pbSexo" class="pb-sel">
+        <option value="">—</option>
+        <option value="Femenino" ${patient.sexo==='Femenino'?'selected':''}>Femenino</option>
+        <option value="Masculino" ${patient.sexo==='Masculino'?'selected':''}>Masculino</option>
+        <option value="Indeterminado" ${patient.sexo==='Indeterminado'?'selected':''}>Indeterminado</option>
+      </select></div>
+    <label class="pb-gest"><input type="checkbox" id="pbGest" ${gest?'checked':''}> Gestación</label>
+    ${gest ? `<div class="pb-group"><span class="pb-l">EG</span>
+        <input id="pbSem" class="pb-in" type="text" inputmode="numeric" value="${patient.gestSemanas||''}" placeholder="sem" style="width:52px"><span>+</span>
+        <input id="pbDia" class="pb-in" type="text" inputmode="numeric" value="${patient.gestDias||''}" placeholder="d" style="width:42px"></div>`
+      : `<div class="pb-group"><span class="pb-l">Edad</span>
+        <input id="pbEdad" class="pb-in" type="text" inputmode="decimal" value="${patient.edadValor||''}" placeholder="0" style="width:62px">
+        <select id="pbEdadU" class="pb-sel"><option value="años" ${patient.edadUnidad!=='meses'?'selected':''}>años</option><option value="meses" ${patient.edadUnidad==='meses'?'selected':''}>meses</option></select></div>`}
+    <span class="pb-label" id="pbLabel">${patientLabel()}</span>
+    <span class="pb-spacer"></span>
+    <button class="btn ghost" id="pbReset" title="Borrar todos los datos e iniciar un paciente nuevo">↺ Nuevo paciente</button>`;
+  const s=document.getElementById('pbSexo'); if(s) s.addEventListener('change', ()=>{ patient.sexo=s.value; afterPatientChange(); });
+  const g=document.getElementById('pbGest'); if(g) g.addEventListener('change', ()=>{ patient.gestacion=g.checked; renderPatientBar(); afterPatientChange(); });
+  const bind=(id,key,ev)=>{ const e=document.getElementById(id); if(e) e.addEventListener(ev||'input', ()=>{ patient[key]=e.value; afterPatientChange(); }); };
+  bind('pbEdad','edadValor'); bind('pbEdadU','edadUnidad','change'); bind('pbSem','gestSemanas'); bind('pbDia','gestDias');
+  const r=document.getElementById('pbReset'); if(r) r.addEventListener('click', resetPatient);
+}
+function resetPatient(){
+  if(typeof confirm==='function' && !confirm('¿Borrar TODOS los datos del paciente actual (sexo, edad, motivo, fenotipo, ficha) e iniciar uno nuevo?')) return;
+  patient = {motivo:'', edadValor:'', edadUnidad:'años', sexo:'', tallaCm:'', pesoKg:'', envergaduraCm:'', perimetroCranealCm:'', gestacion:false, gestSemanas:'', gestDias:'', edad:''};
+  for(const k in selections) delete selections[k];
+  for(const k in qOwned) delete qOwned[k];
+  activeFicha=null; studyEval=null;
+  try{ monarchResults=null; monarchError=null; monarchForIds=''; }catch(e){}
+  renderPatientBar();
+  showSection('fenotipado'); renderInicio();
+  syncSelections();
+  showToast('Paciente nuevo · datos borrados');
 }
 
 /* ---- Config en localStorage ---- */
@@ -1392,29 +1464,10 @@ function renderInicio(){
   const main=document.getElementById('main'); if(!main) return;
   main.innerHTML = `
     <div class="step-title">Inicio</div>
-    <div class="step-sub">Motivo de consulta + edad + sexo. La ficha asignada dirigirá la anamnesis.</div>
+    <div class="step-sub">Motivo de consulta. La edad y el sexo se introducen en la barra superior. La ficha asignada dirigirá la anamnesis.</div>
     <div style="max-width:560px">
       <div class="field"><label>Motivo de consulta</label>
         <input id="inMotivo" type="text" value="${(patient.motivo||'').replace(/"/g,'&quot;')}" placeholder='p. ej. "conectivopatía", "síndrome autoinflamatorio", "trombopenia crónica"'>
-      </div>
-      <div style="display:flex; gap:14px; flex-wrap:wrap">
-        <div class="field" style="flex:1; min-width:150px"><label>Edad</label>
-          <div style="display:flex; gap:6px">
-            <input id="inEdad" type="text" inputmode="decimal" value="${patient.edadValor||''}" placeholder="0" style="flex:1">
-            <select id="inEdadU" style="flex:0 0 100px">
-              <option value="años" ${patient.edadUnidad!=='meses'?'selected':''}>años</option>
-              <option value="meses" ${patient.edadUnidad==='meses'?'selected':''}>meses</option>
-            </select>
-          </div>
-        </div>
-        <div class="field" style="flex:1; min-width:150px"><label>Sexo</label>
-          <select id="inSexo">
-            <option value="" ${!patient.sexo?'selected':''}>Seleccionar…</option>
-            <option value="Femenino" ${patient.sexo==='Femenino'?'selected':''}>Femenino</option>
-            <option value="Masculino" ${patient.sexo==='Masculino'?'selected':''}>Masculino</option>
-            <option value="Indeterminado" ${patient.sexo==='Indeterminado'?'selected':''}>Indeterminado</option>
-          </select>
-        </div>
       </div>
       <button class="btn primary" id="btnAbrirFicha" style="margin-top:8px">Abrir ficha ›</button>
     </div>
@@ -1422,14 +1475,9 @@ function renderInicio(){
 
   const commit=()=>{
     patient.motivo = document.getElementById('inMotivo').value.trim();
-    patient.edadValor = document.getElementById('inEdad').value.trim();
-    patient.edadUnidad = document.getElementById('inEdadU').value;
-    patient.sexo = document.getElementById('inSexo').value;
-    patient.edad = patient.edadValor ? `${patient.edadValor} ${patient.edadUnidad}` : '';
     renderPatientLine();
   };
   document.getElementById('inMotivo').addEventListener('input', commit);
-  ['inEdad','inEdadU','inSexo'].forEach(id=>document.getElementById(id).addEventListener('change', commit));
   document.getElementById('btnAbrirFicha').addEventListener('click', ()=>{ commit(); openFichaFlow(); });
 }
 
@@ -1882,19 +1930,15 @@ function renderAnthroResult(){
 function renderAntropometria(){
   const box=document.getElementById('antropometriaView'); if(!box) return;
   box.innerHTML = `<div class="step-title">Antropometría</div>
-    <div class="step-sub">Sexo, edad y medidas → percentiles OMS y HPO sugeridos con gravedad. Comparte los datos del paciente con el resto de la app.</div>
+    <div class="step-sub">Edad y sexo se toman de la <b>barra superior</b>. Introduce las medidas → percentiles OMS y HPO sugeridos con gravedad.</div>
     <div class="anthro-form">
-      <div class="field"><label>Sexo</label><select id="anSexo"><option value="">—</option><option value="Masculino" ${patient.sexo==='Masculino'?'selected':''}>Masculino</option><option value="Femenino" ${patient.sexo==='Femenino'?'selected':''}>Femenino</option></select></div>
-      <div class="field"><label>Edad</label><div style="display:flex;gap:6px"><input id="anEdad" type="text" inputmode="decimal" value="${patient.edadValor||''}" placeholder="0" style="flex:1"><select id="anEdadU" style="flex:0 0 90px"><option value="años" ${patient.edadUnidad!=='meses'?'selected':''}>años</option><option value="meses" ${patient.edadUnidad==='meses'?'selected':''}>meses</option></select></div></div>
       <div class="field"><label>Talla (cm)</label><input id="anTalla" type="text" inputmode="decimal" value="${patient.tallaCm||''}"></div>
       <div class="field"><label>Peso (kg)</label><input id="anPeso" type="text" inputmode="decimal" value="${patient.pesoKg||''}"></div>
       <div class="field"><label>Perímetro cefálico (cm)</label><input id="anPC" type="text" inputmode="decimal" value="${patient.perimetroCranealCm||''}"></div>
     </div>
     <div id="anthroTabResult"></div>`;
-  const sel=document.getElementById('anSexo'); if(sel) sel.addEventListener('change', ()=>{ patient.sexo=sel.value; renderAnthroResult(); renderPatientLine(); });
-  const eu=document.getElementById('anEdadU'); if(eu) eu.addEventListener('change', ()=>{ patient.edadUnidad=eu.value; renderAnthroResult(); renderPatientLine(); });
-  const bind=(id,key)=>{ const e=document.getElementById(id); if(e) e.addEventListener('input', ()=>{ patient[key]=e.value; renderAnthroResult(); renderPatientLine(); }); };
-  bind('anEdad','edadValor'); bind('anTalla','tallaCm'); bind('anPeso','pesoKg'); bind('anPC','perimetroCranealCm');
+  const bind=(id,key)=>{ const e=document.getElementById(id); if(e) e.addEventListener('input', ()=>{ patient[key]=e.value; renderAnthroResult(); }); };
+  bind('anTalla','tallaCm'); bind('anPeso','pesoKg'); bind('anPC','perimetroCranealCm');
   renderAnthroResult();
 }
 
@@ -2922,6 +2966,7 @@ function init(){
   document.getElementById('copyCodesBtn').addEventListener('click', copyCodes);
   document.getElementById('generatePdfBtn').addEventListener('click', generatePdf);
   document.querySelectorAll('#sectionNav .section-btn').forEach(b=>b.addEventListener('click', ()=>showSection(b.dataset.section)));
+  renderPatientBar();
   renderInicio();
   renderPatientLine();
   renderCart();
