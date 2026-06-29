@@ -3510,7 +3510,7 @@ function renderPropuestasIA(){
     let extra='';
     if(k==='update'){ const ex=(PRENATAL_CUSTOM.syndromes||[]).find(s=>normSyndName(s.name)===normSyndName(c.name));
       if(ex) extra='<div class="dx-meta" style="margin:2px 0">Ya presente con '+(ex.findings||[]).length+' hallazgo(s) ('+(ex.findings||[]).map(prenatalFindingLabel).slice(0,6).join(', ')+'). <b>Fusionar</b> solo añade los que falten (tras verificar contra JAX); <b>Rechazar</b> = no hacer nada.</div>'; }
-    const fis=(c.findings||[]).map(f=>'· '+escHtml(f.label||f.hpo||'')+' <span class="hp">'+escHtml(f.hpo||'')+'</span> <span class="dx-meta">'+escHtml(f.tipo||'')+'</span>').join('<br>');
+    const fis=(c.findings||[]).map((f,fi)=>`<label class="q-opt" style="display:block;font-size:12px;margin:1px 0"><input type="checkbox" data-skip="${i}:${fi}" ${f._skip?'':'checked'}> ${escHtml(f.label||f.hpo||'')} <span class="hp">${escHtml(f.hpo||'')}</span> <span class="dx-meta">${escHtml(f.tipo||'')}</span></label>`).join('');
     const canAccept = hasRef && k!=='builtin';
     return '<div class="study" style="margin:8px 0;border:1px solid var(--line);border-radius:9px;padding:10px 12px">'
       +'<div><b>'+escHtml(c.name)+'</b> '+badge+'</div>'
@@ -3523,6 +3523,7 @@ function renderPropuestasIA(){
   };
   out.innerHTML='<div class="dx-meta" style="margin-bottom:6px">La IA propone <b>'+_prenatalProps.length+'</b> síndrome(s). Revisa y <b>acepta/rechaza cada uno</b>. Cada añadido se verifica contra JAX y exige bibliografía referenciada. <i>No se ha guardado nada todavía.</i></div>'
     + _prenatalProps.map(card).join('');
+  out.querySelectorAll('[data-skip]').forEach(cb=>cb.addEventListener('change',()=>{ const [pi,fi]=cb.dataset.skip.split(':').map(Number); if(_prenatalProps[pi]&&_prenatalProps[pi].findings[fi]) _prenatalProps[pi].findings[fi]._skip=!cb.checked; }));
   out.querySelectorAll('[data-acc]').forEach(b=>b.addEventListener('click',()=>aceptarPropuesta(+b.dataset.acc)));
   out.querySelectorAll('[data-rej]').forEach(b=>b.addEventListener('click',()=>rechazarPropuesta(+b.dataset.rej)));
 }
@@ -3547,6 +3548,7 @@ async function procesarPropuesta(c){
   const knownF=new Set([...PRENATAL_FINDINGS.flatMap(s=>s.terms.map(t=>t.id)), ...(PRENATAL_CUSTOM.findings||[]).map(t=>t.id)]);
   const findings=[];
   for(const f of (c.findings||[])){
+    if(f._skip) continue;   // hallazgo excluido por el usuario (p. ej. postnatal: «dificultades de deglución»)
     const id=await resolveHpoConcept(f.hpo, f.label_en, f.label); if(!id) continue;
     if(findings.some(x=>x.id===id)) continue;
     const tipo=(['mayor','marcador','nucal'].includes(f.tipo)?f.tipo:'mayor');
@@ -3555,15 +3557,15 @@ async function procesarPropuesta(c){
     findings.push({id, es:offEs, tipo, sistema});
   }
   const need=existing?1:2;
-  if(findings.length<need) return {ok:false, msg:'«'+c.name+'»: solo '+findings.length+' HPO verificados contra JAX (mínimo '+need+') → no se acepta.'};
+  if(findings.length<need) return {ok:false, msg:'«'+c.name+'»: solo '+findings.length+' HPO seleccionados/verificados contra JAX (mínimo '+need+') → no se acepta.'};
   for(const x of findings){ if(!knownF.has(x.id)){ PRENATAL_CUSTOM.findings.push({...x, ia:true}); PRENATAL_TIPO[x.id]=x.tipo; knownF.add(x.id); } }
   if(existing){
     const before=(existing.findings||[]).length;
     existing.findings=[...new Set([...(existing.findings||[]), ...findings.map(x=>x.id)])];
-    if(!existing.ref && c.ref) existing.ref=c.ref;
-    if(!existing.orpha && c.orpha) existing.orpha=c.orpha;
-    await persistPrenatalCustom('prenatal: actualizar '+c.name);
-    return {ok:true, kind:'update', msg:'✓ Actualizado «'+c.name+'»: +'+(existing.findings.length-before)+' hallazgo(s) nuevo(s) (bibliografía: '+escHtml(c.ref.titulo||c.ref.url)+').'};
+    if(c.ref && c.ref.url) existing.ref=c.ref;
+    if(c.orpha){ existing.orpha=c.orpha; if(c.name && c.name!==existing.name) existing.name=c.name; }  // adopta nombre+código Orphanet
+    await persistPrenatalCustom('prenatal: fusionar '+existing.name);
+    return {ok:true, kind:'update', msg:'✓ Fusionado en «'+existing.name+'»'+(c.orpha?(' (ORPHA:'+c.orpha+')'):'')+': +'+(existing.findings.length-before)+' hallazgo(s) nuevo(s).'};
   }
   PRENATAL_CUSTOM.syndromes.push({name:c.name, test:c.test||'', min:Math.max(1,Math.min(3,parseInt(c.min)||2)), findings:findings.map(x=>x.id), ref:c.ref, orpha:c.orpha||null, ia:true});
   await persistPrenatalCustom('prenatal: +1 síndrome IA '+c.name);
@@ -3695,7 +3697,8 @@ function refsHtml(keys){
   return `<div class="study-src">Fuentes: `+keys.map(k=>{ const r=PRENATAL_REFS[k]; return `<a href="${r.u}" target="_blank" rel="noopener">${escHtml(r.t)} (${r.a})</a>`+bibRefHtml({titulo:r.t, url:r.u, anio:r.a}); }).join(' · ')+`</div>`;
 }
 function prenatalIndicacion(){
-  const sel=Object.keys(selections).filter(id=>PRENATAL_TIPO[id]);
+  // Excluye los ancestros auto-marcados por jerarquía: NO son una anomalía adicional (es el mismo hallazgo generalizado).
+  const sel=Object.keys(selections).filter(id=>PRENATAL_TIPO[id] && selections[id].origen!=='prenatal-jerarquia');
   const nucal=sel.filter(id=>PRENATAL_TIPO[id]==='nucal').length;
   const mayores=sel.filter(id=>PRENATAL_TIPO[id]==='mayor').length;
   const marcadores=sel.filter(id=>PRENATAL_TIPO[id]==='marcador').length;
@@ -3943,14 +3946,7 @@ async function renderFichaView(f){
   const box=document.getElementById('bibliotecaView'); if(!box) return;
   const docs=(await getDocsIndex()).docs||[];
   const fuentesArr=f.fuentes||[];
-  const fuentes=fuentesArr.map((s,i)=>{
-    const d=matchDoc(s, docs);
-    const picker = docs.length ? ` <select class="doc-link" data-fi="${i}" style="font-size:11px;max-width:200px"><option value="">🔗 …es uno ya registrado</option>${docs.map(dd=>`<option value="${dd.id}">${(dd.titulo||dd.id).replace(/</g,'&lt;')}</option>`).join('')}</select>` : '';
-    const status = d
-      ? ` · <span class="hastip bib-have" title="PDF en tu repositorio"><a href="${d.enlace||d.url}" target="_blank" rel="noopener" class="doc-have">📄 Tengo el PDF</a><span class="tooltip">${escHtml(d.titulo||'')}${d.descripcion?'<br><span class="dx-meta">'+escHtml(d.descripcion)+'</span>':''}${(d.enlace||d.url)?'<br><a href="'+escHtml(String(d.enlace||d.url)).replace(/"/g,'&quot;')+'" target="_blank" rel="noopener">Abrir PDF ↗</a>':''}</span></span>`
-      : ` · <button class="btn doc-reg" data-fi="${i}" style="padding:3px 8px;font-size:11px">+ Registrar PDF</button>${picker}`;
-    return `<li><a href="${s.url}" target="_blank" rel="noopener">${s.titulo||s.url}</a>${s.anio?' ('+s.anio+')':''}${status}</li>`;
-  }).join('');
+  const fuentes=fuentesArr.map((s,i)=>`<li><a href="${escHtml(String(s.url||'')).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">${escHtml(s.titulo||s.url||'')}</a>${s.anio?' ('+s.anio+')':''}${bibRefHtml(s)}</li>`).join('');
   const doms=(f.dominios||[]).map(d=>`<div class="dom"><div class="dom-n">${d.nombre}</div><ul>${(d.preguntas||[]).map(q=>`<li>${q.texto}</li>`).join('')}</ul></div>`).join('');
   const ents=(f.entidades||[]).map(e=>`<div class="ent"><b>${e.nombre}</b>${e.genes&&e.genes.length?` · genes: ${e.genes.join(', ')}`:''}<br>Criterio: ${e.umbral||('≥'+(e.min_mayores||0)+' mayores '+(((e.logica||'and')==='or')?'o':'y')+' ≥'+(e.min_menores||0)+' menores')} · mayores: ${(e.mayores||[]).map(hpoCodeInfo).join(', ')||'—'} · menores: ${(e.menores||[]).map(hpoCodeInfo).join(', ')||'—'}</div>`).join('');
   const eg=f.estudio_genetico;
@@ -3978,12 +3974,6 @@ async function renderFichaView(f){
   document.getElementById('fvEdit').addEventListener('click', ()=>openFichaReview(f, {origin:'biblioteca'}));
   document.getElementById('fvValidate').addEventListener('click', ()=>openValidarHpo(f));
   document.getElementById('fvPrint').addEventListener('click', ()=>window.print());
-  box.querySelectorAll('.doc-reg').forEach(b=>b.addEventListener('click', ()=>openRegistrarDoc(fuentesArr[+b.dataset.fi], ()=>renderFichaView(f))));
-  box.querySelectorAll('.doc-link').forEach(sel=>sel.addEventListener('change', async ()=>{
-    const docId=sel.value; if(!docId) return;
-    try{ await enlazarFuenteADoc(fuentesArr[+sel.dataset.fi], docId); showToast('Referencia enlazada al documento'); renderFichaView(f); }
-    catch(e){ showToast('Error al enlazar: '+e.message); }
-  }));
 }
 
 /* Registrar un PDF descargado: el PDF vive en la nube del usuario; aquí guardamos el enlace + metadatos en docs/index.json. */
