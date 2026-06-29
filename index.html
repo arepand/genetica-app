@@ -3328,6 +3328,23 @@ function prenatalFindingLabel(id){
   return (window.__esLabels&&window.__esLabels[id])||id;
 }
 function syndromeFindingsTip(s){ return (s.findings||[]).map(id=>'· '+escHtml(prenatalFindingLabel(id))+' <span class="hp">'+id+'</span>').join('<br>'); }
+/* Jerarquía HPO: al marcar un hallazgo, auto-marca sus ANCESTROS que también estén en el set prenatal
+   (p. ej. CIV HP:0001629 → Anomalía cardiaca HP:0001627). Ancestros de JAX, cacheados. */
+let _ancCache={}; try{ _ancCache=JSON.parse(localStorage.getItem('fh_hpo_anc'))||{}; }catch(e){ _ancCache={}; }
+async function hpoAncestors(id){
+  if(_ancCache[id]) return _ancCache[id];
+  try{ const r=await fetch(HPO_API+'/terms/'+encodeURIComponent(id)+'/ancestors'); if(r.ok){ const d=await r.json();
+    const ids=(Array.isArray(d)?d:[]).map(x=>x.id).filter(x=>/^HP:\d{7}$/.test(x));
+    _ancCache[id]=ids; try{ localStorage.setItem('fh_hpo_anc', JSON.stringify(_ancCache)); }catch(e){} return ids; } }catch(e){}
+  return [];
+}
+function prenatalSetIds(){ return new Set([...PRENATAL_FINDINGS.flatMap(s=>s.terms.map(t=>t.id)), ...(PRENATAL_CUSTOM.findings||[]).map(t=>t.id)]); }
+async function autoMarkAncestros(id){
+  const set=prenatalSetIds(); const anc=await hpoAncestors(id);
+  const add=anc.filter(a=>set.has(a) && !selections[a]);
+  add.forEach(a=>{ const es=prenatalFindingLabel(a); selections[a]={hpo:a, es, en:es, region:'prenatal', origen:'prenatal-jerarquia', verified:true}; });
+  return add;
+}
 function prenatalSindromes(){
   const out=[];
   for(const s of allPrenatalSyndromes()){
@@ -3405,15 +3422,19 @@ function renderPropuestasIA(){
     const hasRef=!!(c.ref&&c.ref.url);
     const refHtml = hasRef ? '<a href="'+escHtml(String(c.ref.url)).replace(/"/g,'&quot;')+'" target="_blank" rel="noopener">'+escHtml(c.ref.titulo||'Bibliografía')+'</a>'
       : '<span style="color:#f2b3a6">⚠ sin bibliografía referenciada → no se puede aceptar</span>';
+    let extra='';
+    if(k==='update'){ const ex=(PRENATAL_CUSTOM.syndromes||[]).find(s=>normSyndName(s.name)===normSyndName(c.name));
+      if(ex) extra='<div class="dx-meta" style="margin:2px 0">Ya presente con '+(ex.findings||[]).length+' hallazgo(s) ('+(ex.findings||[]).map(prenatalFindingLabel).slice(0,6).join(', ')+'). <b>Fusionar</b> solo añade los que falten (tras verificar contra JAX); <b>Rechazar</b> = no hacer nada.</div>'; }
     const fis=(c.findings||[]).map(f=>'· '+escHtml(f.label||f.hpo||'')+' <span class="hp">'+escHtml(f.hpo||'')+'</span> <span class="dx-meta">'+escHtml(f.tipo||'')+'</span>').join('<br>');
     const canAccept = hasRef && k!=='builtin';
     return '<div class="study" style="margin:8px 0;border:1px solid var(--line);border-radius:9px;padding:10px 12px">'
       +'<div><b>'+escHtml(c.name)+'</b> '+badge+'</div>'
+      +extra
       +'<div class="dx-meta" style="margin:4px 0">Estudio: '+escHtml(c.test||'—')+' · Bibliografía: '+refHtml+'</div>'
       +'<div style="font-size:12px;margin:4px 0;line-height:1.6">'+fis+'</div>'
       +'<div style="display:flex;gap:8px;margin-top:8px">'
-      +(canAccept?'<button class="btn" data-acc="'+i+'">✓ Aceptar</button>':'')
-      +'<button class="btn" data-rej="'+i+'">✕ Rechazar</button></div></div>';
+      +(canAccept?'<button class="btn" data-acc="'+i+'">'+(k==='update'?'⤵ Fusionar':'✓ Aceptar')+'</button>':'')
+      +'<button class="btn" data-rej="'+i+'">✕ '+(k==='update'?'No fusionar':'Rechazar')+'</button></div></div>';
   };
   out.innerHTML='<div class="dx-meta" style="margin-bottom:6px">La IA propone <b>'+_prenatalProps.length+'</b> síndrome(s). Revisa y <b>acepta/rechaza cada uno</b>. Cada añadido se verifica contra JAX y exige bibliografía referenciada. <i>No se ha guardado nada todavía.</i></div>'
     + _prenatalProps.map(card).join('');
@@ -3483,22 +3504,25 @@ async function añadirSindromePorNombre(name){
   let orpha=null;
   if(_orphaSel && normSyndName(_orphaSel.name)===normSyndName(name)){ orpha=_orphaSel; }
   else { const hits=await orphanetLookup(name); if(hits.length){ orpha=hits[0]; name=orpha.name; } }
-  out.innerHTML='<div class="loading">Generando «'+escHtml(name)+'»'+(orpha?' (ORPHA:'+orpha.orpha+')':'')+' con IA y verificando HPO contra JAX…</div>';
+  // ¿ya está entre los presentes? (aviso temprano; la tarjeta de propuesta luego ofrece fusionar o no hacer nada)
+  const yaCustom=(PRENATAL_CUSTOM.syndromes||[]).some(s=>normSyndName(s.name)===normSyndName(name));
+  const yaBuiltin=PRENATAL_SYNDROMES.some(s=>normSyndName(s.name)===normSyndName(name));
+  out.innerHTML='<div class="loading">Generando «'+escHtml(name)+'»'+(orpha?' (ORPHA:'+orpha.orpha+')':'')+' con IA'+((yaCustom||yaBuiltin)?' — ya existe, prepararé una propuesta de fusión':'')+'…</div>';
   try{
     const system='Eres genetista clínico experto en diagnóstico prenatal. Para el síndrome/enfermedad indicado, devuelve sus hallazgos ECOGRÁFICOS FETALES característicos (cada uno con "hpo" código HPO REAL/vigente formato HP:0000000, "label" en español, "label_en" EL NOMBRE EXACTO del término HPO en inglés, "tipo" mayor|marcador|nucal y "sistema" uno de: '+PRENATAL_SYSTEMS.join(' | ')+', o una categoría nueva si ninguna encaja; "hpo" y "label_en" DEBEN ser el mismo término HPO), el "name" (sin prefijo "Síndrome de"), "test" (estudio genético dirigido), "min" (1-3), "ref"{titulo,url} = BIBLIOGRAFÍA OBLIGATORIA con URL REAL y verificable (GeneReviews/OMIM/PubMed/guía clínica; NO inventes la URL), y "prenatal" (true si tiene hallazgos prenatales reconocibles; false si no los tiene). '+SOURCE_PRIORITY+' Devuelve SOLO JSON {"name":"","prenatal":true,"test":"","min":1,"ref":{"titulo":"","url":""},"findings":[{"hpo":"HP:0000000","label":"","label_en":"","tipo":"mayor","sistema":""}]}.';
-    const resp=await callLLM({system, user:'Síndrome/enfermedad: '+name+(orpha?' (Orphanet ORPHA:'+orpha.orpha+')':''), webSearch:true, maxTokens:1500, task:'author', thinking:true});
-    const j=extractJSON(resp);
-    if(!j){ out.innerHTML='<div class="err">La IA no devolvió datos válidos.</div>'; return; }
-    if(j.prenatal===false || !(j.findings&&j.findings.length)){ out.innerHTML='<div class="study-flag">⚠ «'+escHtml(j.name||name)+'»: la IA NO reconoce hallazgos ecográficos prenatales característicos para esta entidad → no se añadió (no aporta a un cribado prenatal por imagen).</div>'; return; }
-    j.name=name; // usa el nombre normalizado (Orphanet si lo hubo)
-    if(orpha){ j.orpha=orpha.orpha; if(!(j.ref&&j.ref.url) && orpha.url) j.ref={titulo:'Orphanet: '+name, url:orpha.url}; } // bibliografía IA preferente; Orphanet de respaldo
-    const res=await addPrenatalCands([j], 1);
-    out.innerHTML = res.addedS
-      ? `<div style="color:var(--ok);font-weight:600">✓ Añadido «${escHtml(j.name)}» — guardado en tu GitHub y ya disponible en el desplegable.</div>`
-      : `<div class="study-flag" style="color:#f2b3a6">✗ NO se añadió «${escHtml(j.name)}». Motivo:</div>`;
-    if(res.log.length) out.innerHTML+=`<div class="dx-meta" style="margin-top:4px">${res.log.map(escHtml).join('<br>')}</div>`;
-    renderPrenatal();
+    const user='Síndrome/enfermedad: '+name+(orpha?' (Orphanet ORPHA:'+orpha.orpha+')':'');
+    let j=await llmCandidato(system, user, true);          // Opus 4.8 + razonamiento
+    if(!j) j=await llmCandidato(system, user, false);      // reintento sin thinking (evita "no devolvió datos válidos" por truncado)
+    if(!j){ out.innerHTML='<div class="err">La IA no devolvió datos válidos tras 2 intentos. Reintenta (a veces la búsqueda web tarda).</div>'; return; }
+    if(j.prenatal===false || !(j.findings&&j.findings.length)){ out.innerHTML='<div class="study-flag">⚠ «'+escHtml(j.name||name)+'»: la IA NO reconoce hallazgos ecográficos prenatales característicos → no aporta a un cribado prenatal por imagen.</div>'; return; }
+    j.name=name; // nombre normalizado (Orphanet si lo hubo)
+    if(orpha){ j.orpha=orpha.orpha; if(!(j.ref&&j.ref.url) && orpha.url) j.ref={titulo:'Orphanet: '+name, url:orpha.url}; }
+    _prenatalProps=[j]; renderPropuestasIA();   // NO añade directo: muestra propuesta (nuevo/fusionar) con justificación → tú confirmas
   }catch(e){ out.innerHTML='<div class="err">Error: '+e.message+'</div>'; }
+}
+async function llmCandidato(system, user, thinking){
+  try{ const resp=await callLLM({system, user, webSearch:true, maxTokens:thinking?3500:1800, task:'author', thinking}); return extractJSON(resp); }
+  catch(e){ return null; }
 }
 function quitarSindromeIA(name){
   const syn=(PRENATAL_CUSTOM.syndromes||[]).find(s=>s.name===name);
@@ -3703,13 +3727,15 @@ function renderPrenatal(){
   // refresca iconos de PDF una vez cuando el índice llega (sin remover el panel: solo re-renderiza si seguimos en prenatal)
   if(!_docsPrefetched){ _docsPrefetched=true; getDocsIndex().then(idx=>{ if((idx&&idx.docs&&idx.docs.length) && document.getElementById('prenatalPanelSlot')) renderPrenatalInd(); }); }
   box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
-  box.querySelectorAll('.morfo-term').forEach(btn=>btn.addEventListener('click', (e)=>{
+  box.querySelectorAll('.morfo-term').forEach(btn=>btn.addEventListener('click', async (e)=>{
     if(e.target.closest('.info-dot') || e.target.closest('.tip-ai') || e.target.closest('.x')) return;
     const id=btn.dataset.pid, es=btn.dataset.pes;
-    if(selections[id]){ delete selections[id]; }
-    else { selections[id]={hpo:id, es, en:es, region:'prenatal', origen:'prenatal', verified:true}; }
-    btn.classList.toggle('on', !!selections[id]);
-    syncSelections(); renderPrenatalInd();
+    if(selections[id]){ delete selections[id]; btn.classList.remove('on'); syncSelections(); renderPrenatalInd(); return; }
+    selections[id]={hpo:id, es, en:es, region:'prenatal', origen:'prenatal', verified:true};
+    btn.classList.add('on'); syncSelections(); renderPrenatalInd();
+    const add=await autoMarkAncestros(id);   // jerarquía: marca términos padre presentes en el set
+    if(add.length){ add.forEach(a=>{ const b2=box.querySelector('.morfo-term[data-pid="'+a+'"]'); if(b2) b2.classList.add('on'); });
+      syncSelections(); renderPrenatalInd(); showToast('También marcado (jerarquía): '+add.map(prenatalFindingLabel).join(', ')); }
   }));
 }
 function applyPrenatalFilter(q){
