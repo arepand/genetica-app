@@ -779,8 +779,24 @@ function matchDoc(fuente, docs){
     if(fu && (normUrl(d.url)===fu || normUrl(d.enlace)===fu)) return true;
     if(d.doi && fuente.url && fuente.url.toLowerCase().includes(d.doi.toLowerCase())) return true;
     if(ft && d.titulo && normTxt(d.titulo)===ft) return true;
+    // alias añadidos manualmente al enlazar una referencia a este documento
+    if(d.aliases && d.aliases.length && ((fu && d.aliases.includes(fu)) || (ft && d.aliases.includes('t:'+ft)))) return true;
     return false;
   }) || null;
+}
+// Asocia una referencia de ficha a un documento ya registrado (guarda alias url/título en el doc).
+async function enlazarFuenteADoc(fuente, docId){
+  let idx, sha=null;
+  try{ const ci=await ghGetFile('docs/index.json'); idx=ci.json||{docs:[]}; sha=ci.sha; }
+  catch(e){ idx=cachedDocs()||{docs:[]}; }
+  const d=(idx.docs||[]).find(x=>x.id===docId); if(!d) return idx;
+  d.aliases=d.aliases||[];
+  const u=normUrl(fuente.url), t=normTxt(fuente.titulo||'');
+  if(u && !d.aliases.includes(u)) d.aliases.push(u);
+  if(t && !d.aliases.includes('t:'+t)) d.aliases.push('t:'+t);
+  await ghPutFile('docs/index.json', idx, 'docs: enlazar referencia a '+docId, sha);
+  cacheDocs(idx);
+  return idx;
 }
 // Conjunto de referencias (url/título) citadas por TODAS las fichas → para marcar "se usa en ficha".
 let _fichaRefSet=null;
@@ -2507,9 +2523,10 @@ async function renderFichaView(f){
   const fuentesArr=f.fuentes||[];
   const fuentes=fuentesArr.map((s,i)=>{
     const d=matchDoc(s, docs);
+    const picker = docs.length ? ` <select class="doc-link" data-fi="${i}" style="font-size:11px;max-width:200px"><option value="">🔗 …es uno ya registrado</option>${docs.map(dd=>`<option value="${dd.id}">${(dd.titulo||dd.id).replace(/</g,'&lt;')}</option>`).join('')}</select>` : '';
     const status = d
       ? ` · <a href="${d.enlace||d.url}" target="_blank" rel="noopener" class="doc-have">📄 Tengo el PDF</a>`
-      : ` · <button class="btn doc-reg" data-fi="${i}" style="padding:3px 8px;font-size:11px">+ Registrar PDF</button>`;
+      : ` · <button class="btn doc-reg" data-fi="${i}" style="padding:3px 8px;font-size:11px">+ Registrar PDF</button>${picker}`;
     return `<li><a href="${s.url}" target="_blank" rel="noopener">${s.titulo||s.url}</a>${s.anio?' ('+s.anio+')':''}${status}</li>`;
   }).join('');
   const doms=(f.dominios||[]).map(d=>`<div class="dom"><div class="dom-n">${d.nombre}</div><ul>${(d.preguntas||[]).map(q=>`<li>${q.texto}</li>`).join('')}</ul></div>`).join('');
@@ -2538,6 +2555,11 @@ async function renderFichaView(f){
   document.getElementById('fvEdit').addEventListener('click', ()=>openFichaReview(f));
   document.getElementById('fvPrint').addEventListener('click', ()=>window.print());
   box.querySelectorAll('.doc-reg').forEach(b=>b.addEventListener('click', ()=>openRegistrarDoc(fuentesArr[+b.dataset.fi], ()=>renderFichaView(f))));
+  box.querySelectorAll('.doc-link').forEach(sel=>sel.addEventListener('change', async ()=>{
+    const docId=sel.value; if(!docId) return;
+    try{ await enlazarFuenteADoc(fuentesArr[+sel.dataset.fi], docId); showToast('Referencia enlazada al documento'); renderFichaView(f); }
+    catch(e){ showToast('Error al enlazar: '+e.message); }
+  }));
 }
 
 /* Registrar un PDF descargado: el PDF vive en la nube del usuario; aquí guardamos el enlace + metadatos en docs/index.json. */
