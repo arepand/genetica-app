@@ -440,21 +440,24 @@ function matchLexicon(qNorm){
 /* Carga de etiquetas ES OFFICIAL desde el babelon raw TSV → window.__esLabels */
 /* Adaptado del motor: además cachea el babelon en localStorage y, si la red lo
    bloquea (proxy SERGAS, sin conexión), trabaja con la última copia cacheada. */
+/* Babelon ES con varias fuentes (algunas redes/proxies como el SERGAS bloquean
+   raw.githubusercontent.com pero no jsDelivr). Cae a la copia cacheada si falla todo. */
 function loadEsLabels(){
   if(esLabelsPromise) return esLabelsPromise;
-  esLabelsPromise = fetch('https://raw.githubusercontent.com/obophenotype/hpo-translations/main/babelon/hp-es.babelon.tsv')
-    .then(r=>r.text())
-    .then(text=>{
-      const map = {};
-      const lines = text.split('\n');
-      for(let i=1;i<lines.length;i++){
-        const cols = lines[i].split('\t');
-        if(cols.length >= 6 && cols[4] === 'rdfs:label'){ map[cols[2]] = cols[5]; }
-      }
-      try{ localStorage.setItem('fh_babelon', JSON.stringify(map)); }catch(e){}
-      return map;
-    })
-    .catch(()=>{ try{ return JSON.parse(localStorage.getItem('fh_babelon'))||{}; }catch(e){ return {}; } });
+  const SOURCES = [
+    'https://raw.githubusercontent.com/obophenotype/hpo-translations/main/babelon/hp-es.babelon.tsv',
+    'https://cdn.jsdelivr.net/gh/obophenotype/hpo-translations@main/babelon/hp-es.babelon.tsv',
+    'https://fastly.jsdelivr.net/gh/obophenotype/hpo-translations@main/babelon/hp-es.babelon.tsv'
+  ];
+  const parse = (text)=>{ const map={}; const lines=text.split('\n'); for(let i=1;i<lines.length;i++){ const cols=lines[i].split('\t'); if(cols.length>=6 && cols[4]==='rdfs:label'){ map[cols[2]]=cols[5]; } } return map; };
+  esLabelsPromise = (async()=>{
+    for(const u of SOURCES){
+      try{ const r=await fetch(u); if(r.ok){ const m=parse(await r.text()); if(Object.keys(m).length){ try{ localStorage.setItem('fh_babelon', JSON.stringify(m)); }catch(e){} return m; } } }
+      catch(e){ /* siguiente fuente */ }
+    }
+    try{ const c=JSON.parse(localStorage.getItem('fh_babelon')); if(c && Object.keys(c).length) return c; }catch(e){}
+    return {};
+  })();
   return esLabelsPromise;
 }
 
@@ -757,7 +760,7 @@ async function saveFicha(ficha){
    El programa compara cada referencia de la ficha con el registro y la marca. */
 function cacheDocs(idx){ try{ localStorage.setItem('fh_docs', JSON.stringify(idx)); }catch(e){} }
 function cachedDocs(){ try{ return JSON.parse(localStorage.getItem('fh_docs')); }catch(e){ return null; } }
-function normUrl(u){ return (u||'').toLowerCase().trim().replace(/^https?:\/\//,'').replace(/^www\./,'').replace(/[\/#?].*$/,'').replace(/\/$/,''); }
+function normUrl(u){ return (u||'').toLowerCase().trim().replace(/^https?:\/\//,'').replace(/^www\./,'').replace(/[#?].*$/,'').replace(/\/+$/,''); }
 async function getDocsIndex(){
   if(ghConfigured()){
     try{ const r=await ghGetFile('docs/index.json'); if(r.json){ cacheDocs(r.json); return r.json; } if(r.missing) return {docs:[]}; }
@@ -882,9 +885,12 @@ function renderCart(){
   el.innerHTML = ids.map(id=>{
     const s=selections[id];
     const warn = s.verified===false ? '<span class="warn" title="No verificado contra JAX"> ⚠</span>' : '';
-    return `<div class="cart-item"><div>${s.es}<span class="region-tag">${id} · ${s.origen||''}${warn}</span></div><span class="x" data-x="${id}" role="button" tabindex="0" aria-label="Quitar ${id}">✕</span></div>`;
+    const fromInforme = /radiolog|laborat|electrofis|informe/i.test(s.origen||'') ? '<span title="Procede de un informe">📄</span> ' : '';
+    return `<div class="cart-item"><div>${fromInforme}${s.es}${infoDotHtml(id)}<span class="region-tag">${id} · ${s.origen||''}${warn}</span></div><span class="x" data-x="${id}" role="button" tabindex="0" aria-label="Quitar ${id}">✕</span></div>`;
   }).join('');
   el.querySelectorAll('.x').forEach(x=>x.addEventListener('click', ()=> removeSelection(x.dataset.x)));
+  el.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d));
+  prefetchDefinitions(el);
   renderDifferential();
 }
 
@@ -1625,7 +1631,7 @@ function questionHtml(q, dom){
   const opts = (q.opciones||[]).map((o,i)=>{
     const hint = (o.hpo&&o.hpo.length) ? `<span class="q-hpo">${o.hpo.map(h=>h.id).join(', ')}</span>` : '';
     // Pre-marcar si los HPO de la opción YA están en el fenotipo (p. ej. extraídos de un informe lab/rayos/electro)
-    const checked = (o.hpo && o.hpo.length && o.hpo.every(h=>!!selections[h.id])) ? ' checked' : '';
+    const checked = (o.hpo && o.hpo.length && o.hpo.some(h=>!!selections[h.id])) ? ' checked' : '';
     return `<label class="q-opt"><input type="${type}" name="q_${q.id}" data-oi="${i}"${checked}><span>${o.etiqueta}</span>${hint}</label>`;
   }).join('');
   return `<div class="q" data-qid="${q.id}"><div class="q-text">${q.texto}</div><div class="q-opts">${opts}</div></div>`;
