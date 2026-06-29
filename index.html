@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Ariadna · Genética clínica, de la sospecha al diagnóstico</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 96' fill='none' stroke='%2319a18d' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M58.4 15.4 A40 40 0 0 1 58.4 92.6'/%3E%3Cpath d='M37.6 15.4 A40 40 0 0 0 37.6 92.6'/%3E%3Cpath d='M56 24 A31 31 0 0 1 56 84'/%3E%3Cpath d='M40 24 A31 31 0 0 0 40 84'/%3E%3Cpath d='M53.7 32.7 A22 22 0 0 1 53.7 75.3'/%3E%3Cpath d='M42.3 32.7 A22 22 0 0 0 42.3 75.3'/%3E%3Cpath d='M51.4 41.4 A13 13 0 0 1 51.4 66.6'/%3E%3Cpath d='M44.6 41.4 A13 13 0 0 0 44.6 66.6'/%3E%3Cpath d='M48 41 C48 28 52 19 60 14 C66 10 72 9 75 10'/%3E%3Ccircle cx='77' cy='7' r='4'/%3E%3Cpath d='M48 67 C56 72 56 80 48 85'/%3E%3Cpath d='M48 67 C40 72 40 80 48 85'/%3E%3Cpath d='M42 73 L54 73'/%3E%3Cpath d='M42 79 L54 79'/%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 96' fill='none' stroke='%2319a18d' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M58.4 15.4 A40 40 0 0 1 58.4 92.6'/%3E%3Cpath d='M37.6 15.4 A40 40 0 0 0 37.6 92.6'/%3E%3Cpath d='M56 24 A31 31 0 0 1 56 84'/%3E%3Cpath d='M40 24 A31 31 0 0 0 40 84'/%3E%3Cpath d='M53.7 32.7 A22 22 0 0 1 53.7 75.3'/%3E%3Cpath d='M42.3 32.7 A22 22 0 0 0 42.3 75.3'/%3E%3Cpath d='M51.4 41.4 A13 13 0 0 1 51.4 66.6'/%3E%3Cpath d='M44.6 41.4 A13 13 0 0 0 44.6 66.6'/%3E%3Cpath d='M48 41 C48 28 52 19 60 14 C66 10 72 9 75 10'/%3E%3Ccircle cx='77' cy='7' r='4'/%3E%3Cpath d='M48 67 C56 72 56 80 48 85'/%3E%3Cpath d='M48 67 C40 72 40 80 48 85'/%3E%3Cpath d='M42 73 L54 73'/%3E%3Cpath d='M42 79 L54 79'/%3E%3C/svg%3E">
 <!--
   ============================================================================
   fenotipHAC · motor genérico dirigido por fichas (familia fenotipHAC)
@@ -68,9 +70,8 @@
     padding:12px 28px; display:flex; align-items:center; gap:14px; flex-wrap:wrap;
   }
   .brand{display:flex; align-items:center; gap:11px; min-width:0;}
-  .logo{width:38px; height:38px; border-radius:10px;
-    background:radial-gradient(circle at 30% 30%,#4ad0c0,#2d8c80);
-    display:grid; place-items:center; font-weight:800; color:#06201c; flex:none; box-shadow:var(--shadow); font-size:14px;}
+  .logo{width:44px; height:44px; display:grid; place-items:center; flex:none;}
+  .logo svg{width:42px; height:42px;}
   .brand h1{font-size:17px; margin:0; line-height:1.15; font-weight:700; letter-spacing:.2px;}
   .brand .sub{font-size:11.5px; color:var(--ink3); margin-top:2px;}
   .top .spacer{flex:1;}
@@ -371,10 +372,10 @@
 
 <header class="top">
   <div class="brand">
-    <div class="logo" title="Ariadna — el hilo que guía el diagnóstico genético">A</div>
+    <div class="logo" title="Ariadna — el hilo del diagnóstico"><svg viewBox="0 0 100 96" fill="none" stroke="#19a18d" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M58.4 15.4 A40 40 0 0 1 58.4 92.6"/><path d="M37.6 15.4 A40 40 0 0 0 37.6 92.6"/><path d="M56 24 A31 31 0 0 1 56 84"/><path d="M40 24 A31 31 0 0 0 40 84"/><path d="M53.7 32.7 A22 22 0 0 1 53.7 75.3"/><path d="M42.3 32.7 A22 22 0 0 0 42.3 75.3"/><path d="M51.4 41.4 A13 13 0 0 1 51.4 66.6"/><path d="M44.6 41.4 A13 13 0 0 0 44.6 66.6"/><path d="M48 41 C48 28 52 19 60 14 C66 10 72 9 75 10"/><circle cx="77" cy="7" r="4"/><path d="M48 67 C56 72 56 80 48 85"/><path d="M48 67 C40 72 40 80 48 85"/><path d="M42 73 L54 73"/><path d="M42 79 L54 79"/></svg></div>
     <div>
       <h1>Ariadna <span style="font-weight:400;color:var(--ink3);font-size:14px">· genética clínica</span></h1>
-      <div class="sub">El hilo que guía de la sospecha al diagnóstico</div>
+      <div class="sub">El hilo del diagnóstico · guía · ordena · descubre</div>
     </div>
   </div>
   <div class="spacer"></div>
@@ -435,8 +436,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.6.1';
+const APP_VERSION='1.6.2';
 const CHANGELOG=[
+  {v:'1.6.2', d:'2026-06-30', c:['Nuevo logotipo (laberinto + hilo + doble hélice de ADN) en la cabecera y como favicon. Subtítulo: «El hilo del diagnóstico · guía · ordena · descubre».']},
   {v:'1.6.1', d:'2026-06-29', c:['Eslogan corto: «El hilo que guía de la sospecha al diagnóstico».']},
   {v:'1.6.0', d:'2026-06-29', c:['Nueva identidad: la herramienta se llama ahora «Ariadna» — el hilo que guía el diagnóstico genético (antes fenotipHAC).']},
   {v:'1.5.4', d:'2026-06-29', c:['Búsquedas insensibles a tildes en toda la app: «fistula» encuentra «fístula» (HPO, dismorfología, prenatal, protocolos).']},
