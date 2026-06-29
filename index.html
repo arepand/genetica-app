@@ -2410,35 +2410,57 @@ async function renderDriveList(files){
   const docs=(await getDocsIndex()).docs||[];
   const refset=await fichaRefSet();
   const regOf=(f)=> docs.find(d=>d.driveId===f.id) || matchDoc({url:f.webViewLink, titulo:f.name}, docs);
-  list.innerHTML=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} PDF(s) · ${Object.keys(ragDocs).length} marcados para RAG</div>
+  const flag=(on,label,title)=> `<span class="dx-meta hastip" style="color:${on?'var(--ok)':'var(--ink3)'}">${on?'✓':'–'} ${label}<span class="tooltip">${escHtml(title)}</span></span>`;
+  list.innerHTML=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} PDF(s) · ${Object.keys(ragDocs).length} en RAG · <span class="dx-meta">flags: RAG · indexado (IA) · unido a bibliografía</span></div>
     <div class="lib-grid">`+files.map((f,i)=>{
     const reg=regOf(f);
-    const indexed=(()=>{ try{ return !!localStorage.getItem('fh_doctext_'+f.id); }catch(e){ return false; } })();
-    const usedHtml=(reg && docUsedInFicha(reg, refset)) ? ' · <span title="Este documento se cita en una ficha" style="color:var(--ok)">🔗 en ficha</span>' : '';
+    const indexado=!!reg;
+    const enBib=!!(reg && docUsedInFicha(reg, refset));
+    const esRag=!!ragDocs[f.id] || !!(reg&&reg.rag);
+    const descTip=(reg&&reg.descripcion)?(' <span class="hastip dx-meta" style="color:var(--accent)">ⓘ<span class="tooltip">'+escHtml(reg.titulo||f.name)+(reg.descripcion?'<br><span class=dx-meta>'+escHtml(reg.descripcion)+'</span>':'')+'</span></span>'):'';
     return `<div class="lib-card">
-      <div class="nm">${f.name}</div>
-      <div class="meta">${(f.modifiedTime||'').slice(0,10)}${indexed?' · <span title="Texto extraído e indexado (cacheado · sin coste)" style="color:var(--ok)">✓ indexado</span>':''}${usedHtml}</div>
+      <div class="nm">${escHtml(f.name)}${descTip}</div>
+      <div class="meta">${(f.modifiedTime||'').slice(0,10)} · ${flag(esRag,'RAG','¿Se usa para RAG (la IA lo lee al generar fichas)?')} · ${flag(indexado,'indexado','¿Analizado por IA y guardado en tu repositorio (docs/index.json) con nombre+descripción?')} · ${flag(enBib,'bibliografía','¿Citado por alguna referencia/ficha?')}</div>
       <div class="acts">
         ${f.webViewLink?`<a class="btn" href="${f.webViewLink}" target="_blank" rel="noopener">Abrir</a>`:''}
-        ${reg ? `<button class="btn" data-unreg="${reg.id}" title="Quitar del registro">✓ Registrado ✕</button>` : `<button class="btn" data-reg="${i}">+ Registrar</button>`}
-        <label class="q-opt" style="font-size:11px"><input type="checkbox" data-rag="${i}" ${ragDocs[f.id]?'checked':''}> RAG</label>
+        ${indexado ? `<button class="btn" data-reindex="${i}" title="Re-analizar con IA (nombre+descripción)">↻ IA</button><button class="btn ghost" data-unreg="${reg.id}" title="Quitar del índice">Quitar del índice</button>` : `<button class="btn primary" data-index="${i}" title="La IA lo analiza una vez y lo guarda en tu repositorio">✨ Indexar (IA)</button>`}
+        <label class="q-opt" style="font-size:11px"><input type="checkbox" data-rag="${i}" ${esRag?'checked':''}> RAG</label>
       </div>
     </div>`;
   }).join('')+'</div>';
-  list.querySelectorAll('[data-reg]').forEach(b=>b.addEventListener('click', async ()=>{
-    const f=files[+b.dataset.reg];
-    try{ await registrarDoc({titulo:f.name, url:f.webViewLink||('drive:'+f.id), enlace:f.webViewLink||('https://drive.google.com/file/d/'+f.id), driveId:f.id, anio:(f.modifiedTime||'').slice(0,4)}); showToast('Registrado'); renderDriveList(files); }
-    catch(e){ showToast('Error al registrar: '+e.message); }
-  }));
+  const idx=async(i,reanalyze)=>{ const f=files[i]; const reg=regOf(f);
+    if(reg && !reanalyze) return;
+    showToast('Indexando con IA…');
+    try{ await indexarDriveDoc(f, {rag: !!(reg&&reg.rag) || !!ragDocs[f.id]}); _fichaRefSet=null; showToast('Indexado'); renderDriveList(files); }
+    catch(e){ showToast('Error al indexar: '+e.message); }
+  };
+  list.querySelectorAll('[data-index]').forEach(b=>b.addEventListener('click', ()=>idx(+b.dataset.index,false)));
+  list.querySelectorAll('[data-reindex]').forEach(b=>b.addEventListener('click', ()=>idx(+b.dataset.reindex,true)));
   list.querySelectorAll('[data-unreg]').forEach(b=>b.addEventListener('click', async ()=>{
-    try{ await desregistrarDoc(b.dataset.unreg); showToast('Quitado del registro'); renderDriveList(files); }
+    try{ await desregistrarDoc(b.dataset.unreg); showToast('Quitado del índice'); renderDriveList(files); }
     catch(e){ showToast('Error: '+e.message); }
   }));
-  list.querySelectorAll('[data-rag]').forEach(cb=>cb.addEventListener('change', ()=>{
-    const f=files[+cb.dataset.rag];
-    if(cb.checked) ragDocs[f.id]={name:f.name, mt:f.modifiedTime}; else delete ragDocs[f.id];
-    saveRag(); showToast(Object.keys(ragDocs).length+' documento(s) para RAG');
+  list.querySelectorAll('[data-rag]').forEach(cb=>cb.addEventListener('change', async ()=>{
+    const f=files[+cb.dataset.rag]; let reg=regOf(f);
+    if(cb.checked){
+      ragDocs[f.id]={name:f.name, mt:f.modifiedTime}; saveRag();
+      if(!reg){ showToast('Marcado RAG → indexando con IA…'); try{ await indexarDriveDoc(f, {rag:true}); }catch(e){ showToast('Error: '+e.message); } }   // RAG ⇒ auto-indexa
+      else { reg.rag=true; try{ await registrarDoc(reg); }catch(e){} }
+    } else {
+      delete ragDocs[f.id]; saveRag();
+      if(reg){ reg.rag=false; try{ await registrarDoc(reg); }catch(e){} }
+    }
+    renderDriveList(files);
   }));
+}
+/* Indexa un PDF de Drive: la IA lo analiza una vez (nombre+descripción) y se guarda en docs/index.json. */
+async function indexarDriveDoc(f, opts){
+  opts=opts||{};
+  const j = anyProvider() ? await analizarDocIA({titulo:f.name, url:f.webViewLink}).catch(()=>null) : null;
+  const doc={ titulo:(j&&j.nombre)||f.name, descripcion:(j&&j.descripcion)||'', tipo:(j&&j.tipo)||'', anio:(j&&j.anio)||(f.modifiedTime||'').slice(0,4),
+    url:f.webViewLink||('drive:'+f.id), enlace:f.webViewLink||('https://drive.google.com/file/d/'+f.id), driveId:f.id, iaAnalizado:!!j, rag:!!opts.rag };
+  await registrarDoc(doc);
+  return doc;
 }
 
 /* Modal opcional: aportar una guía (URL o PDF) como fuente principal antes de generar. */
