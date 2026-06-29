@@ -2368,8 +2368,61 @@ async function driveDownloadText(fileId, mt){
   return text;
 }
 /* Texto de los documentos marcados para RAG (usa caché; no requiere reconexión si ya indexado). */
-async function ragContext(maxDocs){
+/* ---------- RAG VECTORIAL (embeddings + recuperación por similitud) ----------
+   Embeddings vía OpenAI (text-embedding-3-small). Si no hay clave OpenAI, se cae al modo "stuffing". */
+const EMBED_MODEL='text-embedding-3-small';
+function chunkText(text, size, overlap){ size=size||1100; overlap=overlap||150; const t=(text||'').replace(/\s+/g,' ').trim(); const out=[];
+  for(let i=0;i<t.length && out.length<60;i+=(size-overlap)){ out.push(t.slice(i,i+size)); } return out; }
+function cosine(a,b){ let d=0,na=0,nb=0; for(let i=0;i<a.length;i++){ d+=a[i]*b[i]; na+=a[i]*a[i]; nb+=b[i]*b[i]; } return d/((Math.sqrt(na)*Math.sqrt(nb))||1); }
+async function embedTexts(texts){
+  const c=loadCfg(); if(!c.openaiKey) return null;   // Anthropic no ofrece API de embeddings; se requiere OpenAI
+  const r=await fetch('https://api.openai.com/v1/embeddings',{ method:'POST', headers:{Authorization:'Bearer '+c.openaiKey,'Content-Type':'application/json'},
+    body:JSON.stringify({model:EMBED_MODEL, input:texts}) });
+  if(!r.ok) throw new Error('embeddings '+r.status+' '+await r.text());
+  const d=await r.json(); return (d.data||[]).map(x=>x.embedding);
+}
+function cachedEmb(id){ try{ return JSON.parse(localStorage.getItem('fh_emb_'+id)); }catch(e){ return null; } }
+/* Calcula (una vez) y cachea los embeddings de un documento; persiste en localStorage + GitHub (docs/emb/{id}.json). */
+async function ensureDocEmbeddings(id, name, text){
+  if(cachedEmb(id)) return cachedEmb(id);
+  if(loadCfg().openaiKey===''||!text) return null;
+  if(ghConfigured()){ try{ const r=await ghGetFile('docs/emb/'+id+'.json'); if(r.json && r.json.chunks){ localStorage.setItem('fh_emb_'+id, JSON.stringify(r.json)); return r.json; } }catch(e){} }
+  const chunks=chunkText(text); if(!chunks.length) return null;
+  const vecs=await embedTexts(chunks); if(!vecs) return null;
+  const rec={id, name:name||id, chunks:chunks.map((t,i)=>({t, v:vecs[i]}))};
+  try{ localStorage.setItem('fh_emb_'+id, JSON.stringify(rec)); }catch(e){}
+  if(ghConfigured()){ try{ let sha=null; try{ const ci=await ghGetFile('docs/emb/'+id+'.json'); sha=ci.sha; }catch(e){} await ghPutFile('docs/emb/'+id+'.json', rec, 'rag: embeddings '+(name||id), sha); }catch(e){} }
+  return rec;
+}
+/* Recupera los fragmentos más relevantes para una consulta entre los documentos marcados RAG. */
+async function ragRetrieve(query, k){
+  const ids=Object.keys(ragDocs); if(!ids.length || !loadCfg().openaiKey) return null;
+  const recs=[];
+  for(const id of ids){ let rec=cachedEmb(id); if(!rec){ try{ const t=await driveDownloadText(id, ragDocs[id].mt); rec=await ensureDocEmbeddings(id, ragDocs[id].name, t); }catch(e){} } if(rec&&rec.chunks) recs.push(rec); }
+  if(!recs.length) return null;
+  const qv=(await embedTexts([query]))?.[0]; if(!qv) return null;
+  const scored=[];
+  recs.forEach(rec=>rec.chunks.forEach(ch=>scored.push({doc:rec.name, t:ch.t, s:cosine(qv, ch.v)})));
+  scored.sort((a,b)=>b.s-a.s);
+  return scored.slice(0, k||6);
+}
+async function buscarDocsRAG(query){
+  const out=document.getElementById('docSearchOut'); if(!out) return;
+  query=(query||'').trim(); if(!query){ out.innerHTML=''; return; }
+  if(!loadCfg().openaiKey){ out.innerHTML='<div class="study-flag">La búsqueda vectorial necesita una clave de <b>OpenAI</b> (para los embeddings) en ⚙ Ajustes. Anthropic no ofrece API de embeddings.</div>'; return; }
+  if(!Object.keys(ragDocs).length){ out.innerHTML='<div class="study-flag">Marca algún documento como <b>RAG</b> para poder buscarlo.</div>'; return; }
+  out.innerHTML='<div class="loading">Buscando en tus documentos…</div>';
+  try{ const hits=await ragRetrieve(query, 6);
+    if(!hits||!hits.length){ out.innerHTML='<div class="empty">Sin coincidencias (¿están calculados los embeddings? marca/re-marca RAG).</div>'; return; }
+    out.innerHTML='<div class="cart-group-title">Fragmentos más relevantes</div>'+hits.map(h=>`<div class="study" style="margin:6px 0"><div class="dx-meta"><b>${escHtml(h.doc||'doc')}</b> · relevancia ${h.s.toFixed(2)}</div><div style="font-size:12.5px;line-height:1.5">${escHtml(h.t.slice(0,420))}…</div></div>`).join('');
+  }catch(e){ out.innerHTML='<div class="err">Error: '+e.message+'</div>'; }
+}
+async function ragContext(maxDocs, query){
   const ids=Object.keys(ragDocs); if(!ids.length) return '';
+  // Vectorial si hay consulta + clave OpenAI: recupera solo lo relevante (mejor y más barato).
+  if(query && loadCfg().openaiKey){ try{ const hits=await ragRetrieve(query, 8); if(hits&&hits.length)
+    return hits.map(h=>'\n--- '+(h.doc||'doc')+' (relevancia '+h.s.toFixed(2)+') ---\n'+h.t).join('\n'); }catch(e){} }
+  // Respaldo: "stuffing" (primeros caracteres de cada documento).
   let out=''; let n=0;
   for(const id of ids){ if(n>=(maxDocs||4)) break; try{ const t=await driveDownloadText(id, ragDocs[id].mt); if(t){ out += '\n--- '+(ragDocs[id].name||id)+' ---\n'+t.slice(0,7000); n++; } }catch(e){} }
   return out;
@@ -2387,11 +2440,19 @@ function renderDocumentos(){
       <button class="btn" id="docRefresh">↻ Refrescar</button>
       <button class="btn primary" id="docConnect">Conectar</button>
     </div>
-    <div class="sec-note">Marca ☑ <b>RAG</b> en los documentos que la IA debe tener en cuenta al crear fichas (<b>complementan</b> la búsqueda web, no la sustituyen). "Registrar" los añade a tu biblioteca de documentos para marcar referencias en las fichas.</div>
+    <div class="sec-note">Flags por documento: <b>RAG</b> (la IA lo lee al crear fichas) · <b>indexado</b> (analizado por IA → docs/index.json) · <b>unido a bibliografía</b> (citado por una ficha). Marcar RAG <b>auto-indexa</b>.</div>
+    <div style="display:flex;gap:8px;margin:6px 0 12px">
+      <input id="docSearch" type="text" placeholder="🔎 Buscar en tus documentos en lenguaje natural (RAG vectorial)…" autocomplete="off" style="flex:1;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
+      <button class="btn" id="docSearchBtn">Buscar</button>
+    </div>
+    <div id="docSearchOut"></div>
     <div id="docList">${_driveFilesCache.length?'':'<div class="placeholder">Pulsa "Conectar" para listar tus PDFs.</div>'}</div>`;
   document.getElementById('docConnect').addEventListener('click', cargarDriveDocs);
   document.getElementById('docRefresh').addEventListener('click', cargarDriveDocs);
   document.getElementById('docToAjustes').addEventListener('click', openSettings);
+  const ds=document.getElementById('docSearch'), dsb=document.getElementById('docSearchBtn');
+  if(dsb) dsb.addEventListener('click', ()=>buscarDocsRAG(ds.value));
+  if(ds) ds.addEventListener('keydown', e=>{ if(e.key==='Enter') buscarDocsRAG(ds.value); });
   if(_driveFilesCache.length) renderDriveList(_driveFilesCache);
 }
 function cargarDriveDocs(){
@@ -2446,6 +2507,8 @@ async function renderDriveList(files){
       ragDocs[f.id]={name:f.name, mt:f.modifiedTime}; saveRag();
       if(!reg){ showToast('Marcado RAG → indexando con IA…'); try{ await indexarDriveDoc(f, {rag:true}); }catch(e){ showToast('Error: '+e.message); } }   // RAG ⇒ auto-indexa
       else { reg.rag=true; try{ await registrarDoc(reg); }catch(e){} }
+      // RAG vectorial: calcula y cachea los embeddings del documento (una sola vez)
+      if(loadCfg().openaiKey && !cachedEmb(f.id)){ showToast('Generando embeddings (RAG vectorial)…'); try{ const t=await driveDownloadText(f.id, f.modifiedTime); await ensureDocEmbeddings(f.id, f.name, t); showToast('Embeddings listos'); }catch(e){} }
     } else {
       delete ragDocs[f.id]; saveRag();
       if(reg){ reg.rag=false; try{ await registrarDoc(reg); }catch(e){} }
@@ -2472,7 +2535,7 @@ async function generarFichaIA(motivo, guiaContext){
   try{
     let user='Motivo de consulta: "'+(motivo||'')+'". Genera la ficha JSON más completa y vigente para esta entidad o grupo nosológico, con sus criterios diagnósticos actuales.';
     if(guiaContext){ user += '\n\nGUÍA APORTADA POR EL CLÍNICO (úsala como FUENTE PRINCIPAL y cítala en "fuentes"):\n'+guiaContext; }
-    if(Object.keys(ragDocs).length){ if(box) box.innerHTML='<div class="loading">Leyendo tus documentos del repositorio para la ficha…</div>'; const rag=await ragContext(); if(rag) user += '\n\nDOCUMENTOS DE MI REPOSITORIO (tenlos en cuenta ADEMÁS de la búsqueda web — la COMPLEMENTAN, no la sustituyen — y cítalos en "fuentes"):\n'+rag; }
+    if(Object.keys(ragDocs).length){ if(box) box.innerHTML='<div class="loading">Recuperando lo relevante de tus documentos (RAG)…</div>'; const rag=await ragContext(4, motivo); if(rag) user += '\n\nDOCUMENTOS DE MI REPOSITORIO (tenlos en cuenta ADEMÁS de la búsqueda web — la COMPLEMENTAN, no la sustituyen — y cítalos en "fuentes"):\n'+rag; }
     const resp=await callLLM({system:FICHA_SYSTEM_PROMPT, user, webSearch:true, maxTokens:8000, task:'author'});
     const f=extractJSON(resp);
     if(!f){ if(box) box.innerHTML='<div class="err">La IA no devolvió un JSON válido. Reintenta.</div>'; return; }
