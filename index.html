@@ -2016,7 +2016,8 @@ function countFichaStats(f){
   return {dom, preg, ent, genes, hpo};
 }
 
-function openFichaReview(f){
+function openFichaReview(f, opts){
+  opts=opts||{};
   const ov=document.createElement('div'); ov.className='overlay'; ov.id='fichaReviewOverlay';
   ov.innerHTML=`
   <div class="modal" role="dialog" aria-label="Revisar ficha generada" style="max-width:760px">
@@ -2094,10 +2095,17 @@ function openFichaReview(f){
     try{
       const mode=await persistFicha(j);
       close();
-      renderInicio();
-      const idx=await getIndex();
-      setActiveFicha(j, {via:'manual', confianza:1}, idx.fichas||[]);
-      showToast('Ficha guardada'+(mode==='commit'?' y commiteada a GitHub':' (caché local · GitHub sin configurar)'));
+      const savedMsg='Ficha guardada'+(mode==='commit'?' y commiteada a GitHub':' (caché local · GitHub sin configurar)');
+      if(opts.origin==='biblioteca'){
+        showSection('biblioteca');
+        await renderFichaView(j);
+        showToast(savedMsg);
+      } else {
+        renderInicio();
+        const idx=await getIndex();
+        setActiveFicha(j, {via:'manual', confianza:1}, idx.fichas||[]);
+        showToast(savedMsg);
+      }
     }catch(e){ out.className='test-out bad'; out.textContent='Error al guardar: '+e.message; }
   });
 }
@@ -2515,7 +2523,7 @@ function libCardHtml(f){
 async function abrirFichaBiblioteca(id, edit){
   const ficha=await getFicha(id);
   if(!ficha){ showToast('No se pudo cargar la ficha'); return; }
-  if(edit) openFichaReview(ficha); else await renderFichaView(ficha);
+  if(edit) openFichaReview(ficha, {origin:'biblioteca'}); else await renderFichaView(ficha);
 }
 async function renderFichaView(f){
   const box=document.getElementById('bibliotecaView'); if(!box) return;
@@ -2552,7 +2560,7 @@ async function renderFichaView(f){
     </div>`;
   box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
   document.getElementById('fvBack').addEventListener('click', ()=>renderBiblioteca());
-  document.getElementById('fvEdit').addEventListener('click', ()=>openFichaReview(f));
+  document.getElementById('fvEdit').addEventListener('click', ()=>openFichaReview(f, {origin:'biblioteca'}));
   document.getElementById('fvPrint').addEventListener('click', ()=>window.print());
   box.querySelectorAll('.doc-reg').forEach(b=>b.addEventListener('click', ()=>openRegistrarDoc(fuentesArr[+b.dataset.fi], ()=>renderFichaView(f))));
   box.querySelectorAll('.doc-link').forEach(sel=>sel.addEventListener('change', async ()=>{
