@@ -374,6 +374,7 @@
   <button class="section-btn" data-section="biblioteca">📚 Protocolos</button>
   <button class="section-btn" data-section="dismorfologia">🧑 Dismorfología</button>
   <button class="section-btn" data-section="antropometria">📏 Antropometría</button>
+  <button class="section-btn" data-section="prenatal">🤰 Prenatal</button>
   <button class="section-btn" data-section="documentos">📁 Documentos</button>
 </nav>
 
@@ -405,6 +406,7 @@
 <div id="bibliotecaView" class="section-view" style="display:none"></div>
 <div id="dismorfologiaView" class="section-view" style="display:none"></div>
 <div id="antropometriaView" class="section-view" style="display:none"></div>
+<div id="prenatalView" class="section-view" style="display:none"></div>
 <div id="documentosView" class="section-view" style="display:none"></div>
 
 <div id="toast"></div>
@@ -3065,6 +3067,123 @@ function renderDismorfologia(){
     syncSelections();
   }));
 }
+/* ===========================================================================
+   Prenatal — subconjunto fenotípico fetal (hallazgos ecográficos, HPO verificados
+   contra JAX) + indicación de estudio genético prenatal (regla transparente).
+   =========================================================================== */
+const PRENATAL_FINDINGS=[
+  {system:'Biometría y líquido amniótico', terms:[
+    {id:'HP:0001511', es:'CIR (crecimiento intrauterino restringido)', tipo:'mayor'},
+    {id:'HP:0001561', es:'Polihidramnios', tipo:'marcador'},
+    {id:'HP:0001562', es:'Oligohidramnios', tipo:'marcador'},
+    {id:'HP:0001195', es:'Arteria umbilical única', tipo:'marcador'}]},
+  {system:'Marcadores (1.º/2.º trimestre)', terms:[
+    {id:'HP:0010880', es:'Translucencia nucal aumentada', tipo:'nucal'},
+    {id:'HP:0000476', es:'Higroma quístico', tipo:'nucal'},
+    {id:'HP:0001789', es:'Hidropesía fetal', tipo:'nucal'},
+    {id:'HP:0025706', es:'Ausencia de hueso nasal fetal', tipo:'marcador'},
+    {id:'HP:0002190', es:'Quiste de plexos coroideos', tipo:'marcador'},
+    {id:'HP:0010942', es:'Foco ecogénico intracardiaco', tipo:'marcador'},
+    {id:'HP:0010943', es:'Intestino hiperecogénico', tipo:'marcador'},
+    {id:'HP:0004719', es:'Riñones hiperecogénicos', tipo:'marcador'}]},
+  {system:'Sistema nervioso central', terms:[
+    {id:'HP:0002119', es:'Ventriculomegalia', tipo:'mayor'},
+    {id:'HP:0001274', es:'Agenesia del cuerpo calloso', tipo:'mayor'},
+    {id:'HP:0001305', es:'Malformación de Dandy-Walker', tipo:'mayor'},
+    {id:'HP:0001360', es:'Holoprosencefalia', tipo:'mayor'},
+    {id:'HP:0002414', es:'Espina bífida', tipo:'mayor'},
+    {id:'HP:0002084', es:'Encefalocele', tipo:'mayor'},
+    {id:'HP:0002323', es:'Anencefalia', tipo:'mayor'},
+    {id:'HP:0000252', es:'Microcefalia', tipo:'mayor'}]},
+  {system:'Cara', terms:[
+    {id:'HP:0410030', es:'Labio leporino', tipo:'mayor'},
+    {id:'HP:0000175', es:'Fisura palatina', tipo:'mayor'},
+    {id:'HP:0000347', es:'Micrognatia', tipo:'mayor'}]},
+  {system:'Tórax y corazón', terms:[
+    {id:'HP:0001627', es:'Anomalía cardiaca (morfología)', tipo:'mayor'},
+    {id:'HP:0001629', es:'Comunicación interventricular', tipo:'mayor'},
+    {id:'HP:0000776', es:'Hernia diafragmática congénita', tipo:'mayor'}]},
+  {system:'Abdomen y digestivo', terms:[
+    {id:'HP:0001539', es:'Onfalocele', tipo:'mayor'},
+    {id:'HP:0001543', es:'Gastrosquisis', tipo:'mayor'},
+    {id:'HP:0002247', es:'Atresia duodenal (doble burbuja)', tipo:'mayor'}]},
+  {system:'Aparato urinario', terms:[
+    {id:'HP:0000126', es:'Hidronefrosis', tipo:'marcador'},
+    {id:'HP:0000104', es:'Agenesia renal', tipo:'mayor'},
+    {id:'HP:0000107', es:'Quiste renal', tipo:'mayor'},
+    {id:'HP:0010956', es:'Megacistis fetal', tipo:'mayor'}]},
+  {system:'Esqueleto y extremidades', terms:[
+    {id:'HP:0003026', es:'Acortamiento de huesos largos', tipo:'marcador'},
+    {id:'HP:0001762', es:'Pie equinovaro', tipo:'mayor'},
+    {id:'HP:0010442', es:'Polidactilia', tipo:'mayor'}]}
+];
+const PRENATAL_TIPO={}; PRENATAL_FINDINGS.forEach(s=>s.terms.forEach(t=>PRENATAL_TIPO[t.id]=t.tipo));
+function prenatalIndicacion(){
+  const sel=Object.keys(selections).filter(id=>PRENATAL_TIPO[id]);
+  const nucal=sel.filter(id=>PRENATAL_TIPO[id]==='nucal').length;
+  const mayores=sel.filter(id=>PRENATAL_TIPO[id]==='mayor').length;
+  const marcadores=sel.filter(id=>PRENATAL_TIPO[id]==='marcador').length;
+  if(!sel.length) return null;
+  const lines=[];
+  if(nucal) lines.push('<b>TN aumentada / higroma / hidrops</b> → estudio invasivo con <b>cariotipo + QF-PCR</b> y <b>microarray (CMA)</b>. Si normal y persiste, valorar <b>panel de RASopatías</b> (Noonan).');
+  if(mayores>=2) lines.push(`<b>${mayores} anomalías estructurales</b> (multisistémico) → <b>microarray (CMA)</b>; si normal, considerar <b>exoma fetal (WES)</b>.`);
+  else if(mayores===1) lines.push('<b>Anomalía estructural mayor</b> → <b>microarray cromosómico (CMA)</b> de 1.ª línea (± cariotipo/QF-PCR).');
+  if(!nucal && !mayores && marcadores) lines.push(`<b>${marcadores} marcador(es) blando(s) aislado(s)</b> → ajustar riesgo de aneuploidía / cribado; estudio invasivo no indicado de rutina si es realmente aislado.`);
+  return {lines, nucal, mayores, marcadores};
+}
+function renderPrenatalInd(){
+  const box=document.getElementById('prenatalInd'); if(!box) return;
+  const r=prenatalIndicacion();
+  if(!r){ box.innerHTML='<div class="empty">Marca hallazgos fetales para sugerir la indicación.</div>'; return; }
+  box.innerHTML=`<div class="cart-group-title">Indicación de estudio prenatal sugerida</div>`
+    +`<div class="dx-meta" style="margin-bottom:6px">${r.mayores} anomalía(s) mayor(es) · ${r.marcadores} marcador(es) · ${r.nucal} nucal/hidrops</div>`
+    +r.lines.map(l=>`<div class="study" style="margin:6px 0">${l}</div>`).join('')
+    +`<button class="btn" id="btnPrenatalIA" style="margin-top:8px">Evaluar según guías vigentes (web · IA · usa tokens)</button><div id="prenatalIAout"></div>`
+    +`<div class="am-note">Regla orientativa (ISUOG/ACMG/SEGO): no sustituye el juicio clínico ni el consejo prenatal. El diferencial por fenotipo (Fenotipo) usa estos mismos HPO.</div>`;
+  const b=box.querySelector('#btnPrenatalIA'); if(b) b.addEventListener('click', evalPrenatalGuias);
+}
+async function evalPrenatalGuias(){
+  const out=document.getElementById('prenatalIAout'); if(!out) return;
+  if(!anyProvider()){ out.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
+  const sel=Object.keys(selections).filter(id=>PRENATAL_TIPO[id]).map(id=>selections[id].es||id);
+  if(!sel.length){ out.innerHTML='<div class="empty">Marca hallazgos primero.</div>'; return; }
+  out.innerHTML='<div class="loading">Consultando guías de diagnóstico prenatal…</div>';
+  try{
+    const ga=patient.gestacion?`${patient.gestSemanas||'?'}+${patient.gestDias||'0'} semanas`:'no indicada';
+    const system='Eres especialista en medicina materno-fetal y genética prenatal. Según las GUÍAS VIGENTES (ISUOG, ACMG, SEGO; búscalas y CÍTALAS), indica qué estudio genético prenatal procede para estos hallazgos ecográficos. '+SOURCE_PRIORITY+' Devuelve SOLO JSON {"recomendacion":"texto breve","estudios":["..."],"guia":{"titulo":"...","url":"https://...","anio":"AAAA"}}.';
+    const user=JSON.stringify({edad_gestacional:ga, hallazgos:sel});
+    const resp=await callLLM({system, user, webSearch:true, maxTokens:700, task:'eval'});
+    const j=extractJSON(resp);
+    if(!j){ out.innerHTML='<div class="err">La IA no devolvió un veredicto válido.</div>'; return; }
+    const g=j.guia||{};
+    out.innerHTML=`<div class="eval on"><b>Recomendación:</b> ${escHtml(j.recomendacion||'')}${(j.estudios&&j.estudios.length)?'<ul style="margin:4px 0 0 16px">'+j.estudios.map(e=>`<li>${escHtml(e)}</li>`).join('')+'</ul>':''}${g.url?`<div class="study-src">Según: <a href="${g.url}" target="_blank" rel="noopener">${escHtml(g.titulo||g.url)}${g.anio?' ('+g.anio+')':''}</a></div>`:''}</div>`;
+  }catch(e){ out.innerHTML='<div class="err">Error: '+e.message+'</div>'; }
+}
+function renderPrenatal(){
+  const box=document.getElementById('prenatalView'); if(!box) return;
+  const ga=patient.gestacion ? `${patient.gestSemanas||'?'}+${patient.gestDias||'0'} semanas` : null;
+  const gaNote = ga
+    ? `<div class="dx-meta">Edad gestacional: <b>${ga}</b> · ${patientLabel()||'feto'}</div>`
+    : `<div class="study-flag">Marca <b>«Gestación»</b> en la barra superior e indica semanas+días para el contexto prenatal.</div>`;
+  box.innerHTML=`<div class="step-title">Estudio genético prenatal</div>
+    <div class="step-sub">Subconjunto fenotípico fetal (hallazgos ecográficos). Pulsa los presentes → se añaden al fenotipo y sugieren la indicación. La ⓘ explica cada término.</div>
+    ${gaNote}
+    <div id="prenatalInd" style="margin:14px 0 18px"></div>`
+    + PRENATAL_FINDINGS.map(s=>`<details class="morfo-region" open><summary>${s.system} <span style="color:var(--ink3);font-weight:400">· ${s.terms.length}</span></summary><div class="morfo-terms">${s.terms.map(t=>{
+        const on=!!selections[t.id];
+        return `<button class="morfo-term${on?' on':''}" data-pid="${t.id}" data-pes="${t.es.replace(/"/g,'&quot;')}">${t.es} <span class="hp">${t.id}</span>${infoDotHtml(t.id)}</button>`;
+      }).join('')}</div></details>`).join('');
+  renderPrenatalInd();
+  box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
+  box.querySelectorAll('.morfo-term').forEach(btn=>btn.addEventListener('click', (e)=>{
+    if(e.target.closest('.info-dot')) return;
+    const id=btn.dataset.pid, es=btn.dataset.pes;
+    if(selections[id]){ delete selections[id]; }
+    else { selections[id]={hpo:id, es, en:es, region:'prenatal', origen:'prenatal', verified:true}; }
+    btn.classList.toggle('on', !!selections[id]);
+    syncSelections(); renderPrenatalInd();
+  }));
+}
 function showSection(s){
   currentSection=s;
   document.querySelectorAll('#sectionNav .section-btn').forEach(b=>b.classList.toggle('on', b.dataset.section===s));
@@ -3074,8 +3193,9 @@ function showSection(s){
   const doc=document.getElementById('documentosView');
   const dis=document.getElementById('dismorfologiaView');
   const ant=document.getElementById('antropometriaView');
+  const pv0=document.getElementById('prenatalView');
   const panel=document.getElementById('phenoPanel');
-  [fen,feno,bib,doc,dis,ant].forEach(v=>{ if(v) v.style.display='none'; });
+  [fen,feno,bib,doc,dis,ant,pv0].forEach(v=>{ if(v) v.style.display='none'; });
   // El panel de fenotipo (búsqueda + carrito + diferencial + Monarch + export) es ÚNICO:
   // en "fenotipo" va a pantalla completa; en el resto vuelve al aside del protocolo.
   if(s==='fenotipo'){
@@ -3088,6 +3208,7 @@ function showSection(s){
   else if(s==='documentos'){ if(doc){ doc.style.display='block'; renderDocumentos(); } }
   else if(s==='dismorfologia'){ if(dis){ dis.style.display='block'; renderDismorfologia(); } }
   else if(s==='antropometria'){ if(ant){ ant.style.display='block'; renderAntropometria(); } }
+  else if(s==='prenatal'){ const pv=document.getElementById('prenatalView'); if(pv){ pv.style.display='block'; renderPrenatal(); } }
   else if(fen) fen.style.display='';
 }
 
