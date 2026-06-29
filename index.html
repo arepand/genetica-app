@@ -289,6 +289,8 @@
   .morfo-chip{display:inline-flex; align-items:center; gap:6px; background:var(--panel2); border:1px solid var(--line); border-radius:14px; padding:4px 9px; font-size:12px; margin:0 4px 4px 0;}
   #morfoSelected{margin-bottom:14px; padding-bottom:12px; border-bottom:2px solid var(--line);}
   .tip-ai{display:inline-block; margin-top:5px; color:var(--accent); cursor:pointer; font-size:11px; text-decoration:underline; font-weight:600;}
+  .morfo-sub{margin:2px 0 4px;}
+  .morfo-sub-h{font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; color:var(--ink3); margin:10px 0 5px; padding-left:2px;}
   .morfo-atlas{display:inline-block; font-size:11.5px; color:var(--accent); text-decoration:none; margin:0 0 6px;}
   .morfo-atlas:hover{text-decoration:underline;}
 
@@ -2644,14 +2646,19 @@ function applyMorfoFilter(q){
   const box=document.getElementById('dismorfologiaView'); if(!box) return;
   q=(q||'').trim().toLowerCase();
   box.querySelectorAll('.morfo-region').forEach(det=>{
-    let any=false;
-    det.querySelectorAll('.morfo-term').forEach(btn=>{
-      const hay = !q || ((btn.dataset.mes||'')+' '+(btn.dataset.mid||'')).toLowerCase().includes(q);
-      btn.style.display = hay ? '' : 'none';
-      if(hay) any=true;
+    let anyR=false;
+    det.querySelectorAll('.morfo-sub').forEach(sub=>{
+      let anyS=false;
+      sub.querySelectorAll('.morfo-term').forEach(btn=>{
+        const hay = !q || ((btn.dataset.mes||'')+' '+(btn.dataset.mid||'')).toLowerCase().includes(q);
+        btn.style.display = hay ? '' : 'none';
+        if(hay) anyS=true;
+      });
+      sub.style.display = anyS ? '' : 'none';
+      if(anyS) anyR=true;
     });
-    det.style.display = any ? '' : 'none';
-    det.open = !!q && any;
+    det.style.display = anyR ? '' : 'none';
+    det.open = !!q && anyR;
   });
 }
 function renderMorfoSelected(){
@@ -2669,7 +2676,12 @@ function renderDismorfologia(){
     <div class="step-sub">Recorrido región por región con términos estandarizados (<i>Elements of Morphology</i>). Pulsa un rasgo para añadirlo al fenotipo (se verifica contra JAX y se reetiqueta en español). La ⓘ explica el significado y permite mejorar la traducción con IA.</div>
     <div id="morfoSelected"></div>
     <input id="morfoFilter" type="text" placeholder="🔎 Filtrar rasgos en todas las regiones (nombre o HP:…)" autocomplete="off" style="width:100%;padding:9px 12px;margin-bottom:12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">`
-    + MORFO_REGIONS.map(r=>`<details class="morfo-region"><summary>${r.region} <span style="color:var(--ink3);font-weight:400">· ${r.terms.length}</span></summary>${r.ref?`<a class="morfo-atlas" href="${r.ref}" target="_blank" rel="noopener">🖼 Atlas con figuras (NIH · Elements of Morphology)</a>`:''}<div class="morfo-terms">${r.terms.map(morfoTermHtml).join('')}</div></details>`).join('');
+    + MORFO_REGIONS.map(r=>{
+        const groups = r.groups || [{name:'', terms:r.terms||[]}];
+        const count = groups.reduce((a,g)=>a+g.terms.length,0);
+        const inner = groups.map(g=>`<div class="morfo-sub">${g.name?`<div class="morfo-sub-h">${g.name} <span style="opacity:.6;font-weight:400">· ${g.terms.length}</span></div>`:''}<div class="morfo-terms">${g.terms.map(morfoTermHtml).join('')}</div></div>`).join('');
+        return `<details class="morfo-region"><summary>${r.region} <span style="color:var(--ink3);font-weight:400">· ${count}</span></summary>${r.ref?`<a class="morfo-atlas" href="${r.ref}" target="_blank" rel="noopener">🖼 Atlas con figuras (NIH · Elements of Morphology)</a>`:''}${inner}</details>`;
+      }).join('');
   renderMorfoSelected();
   const fil=box.querySelector('#morfoFilter'); if(fil) fil.addEventListener('input', e=>applyMorfoFilter(e.target.value));
   box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
