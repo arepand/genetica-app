@@ -435,8 +435,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.4.0';
+const APP_VERSION='1.5.0';
 const CHANGELOG=[
+  {v:'1.5.0', d:'2026-06-29', c:['Google Drive: el acceso se recuerda (≈1 h) — no hay que reautorizar en cada refresco; al abrir «Documentos» se recargan solos si el acceso sigue vigente.','Flag «unido a bibliografía» ahora se enciende también cuando ligas un PDF por referencia (alias) y cuenta las referencias de síndromes prenatales.']},
   {v:'1.4.0', d:'2026-06-29', c:['Los síndromes prenatales aparecen también en «Protocolos» con la etiqueta «prenatal» (ver hallazgos / ir a Prenatal).','La pestaña pasa a llamarse «Protocolos» (antes «Biblioteca de fichas»).']},
   {v:'1.3.0', d:'2026-06-29', c:['Asignar PDF: si eliges de «Mis documentos» un PDF ya indexado, se LIGA (botón «Guardar (ligar)») sin volver a indexar ni gastar tokens.','El botón «Informe (PDF)» ahora abre el PDF en otra pestaña (no lo descarga); lo descargas tú si quieres.']},
   {v:'1.2.0', d:'2026-06-29', c:['«Informes» pasa de botón a pestaña propia.','Reordenadas las pestañas: Protocolos y Documentos al final.']},
@@ -1063,13 +1064,18 @@ async function fichaRefSet(){
       ((f&&f.fuentes)||[]).forEach(s=>{ const u=normUrl(s.url); if(u) urls.add(u); const t=normTxt(s.titulo||''); if(t) titles.add(t); });
     }
   }catch(e){}
+  // También las referencias de los síndromes PRENATALES (cuentan como bibliografía citada).
+  try{ allPrenatalSyndromes().forEach(sd=>{ if(sd.ref){ const u=normUrl(sd.ref.url); if(u) urls.add(u); const t=normTxt(sd.ref.titulo||''); if(t) titles.add(t); } }); }catch(e){}
   _fichaRefSet={urls, titles};
   return _fichaRefSet;
 }
 function docUsedInFicha(d, refset){
   if(!d||!refset) return false;
   const u1=normUrl(d.url), u2=normUrl(d.enlace), t=normTxt(d.titulo||'');
-  return (u1&&refset.urls.has(u1)) || (u2&&refset.urls.has(u2)) || (t&&refset.titles.has(t));
+  if((u1&&refset.urls.has(u1)) || (u2&&refset.urls.has(u2)) || (t&&refset.titles.has(t))) return true;
+  // alias creados al LIGAR una referencia a este documento ('normUrl' o 't:normTxt')
+  for(const a of (d.aliases||[])){ if(typeof a!=='string') continue; if(a.slice(0,2)==='t:'){ if(refset.titles.has(a.slice(2))) return true; } else if(refset.urls.has(a)) return true; }
+  return false;
 }
 async function registrarDoc(doc){
   let idx, sha=null;
@@ -2354,10 +2360,15 @@ async function extractPdfText(file){ return extractPdfTextFromBuffer(await file.
 /* ===========================================================================
    Repositorio documental — Google Drive (listar PDFs, registrar, RAG)
    =========================================================================== */
-let _driveToken=null;
+// Token de Drive PERSISTIDO (válido ~1h) → no re-autorizar en cada refresco.
+let _driveTokExp=0;
+let _driveToken=(()=>{ try{ const t=JSON.parse(localStorage.getItem('fh_drive_tok')); if(t&&t.token&&t.exp>Date.now()+30000){ _driveTokExp=t.exp; return t.token; } }catch(e){} return null; })();
+function saveDriveTok(token, expiresIn){ _driveToken=token; _driveTokExp=Date.now()+((expiresIn||3600)*1000); try{ localStorage.setItem('fh_drive_tok', JSON.stringify({token, exp:_driveTokExp})); }catch(e){} }
+function driveTokenValid(){ return !!_driveToken && _driveTokExp>Date.now()+30000; }
 let _driveTokenClient=null;
 let _onDriveToken=null;
-let _driveFilesCache=[];
+let _driveFilesCache=(()=>{ try{ return JSON.parse(localStorage.getItem('fh_drive_files'))||[]; }catch(e){ return []; } })();
+function saveDriveFiles(files){ _driveFilesCache=files||[]; try{ localStorage.setItem('fh_drive_files', JSON.stringify(_driveFilesCache)); }catch(e){} }
 let ragDocs=(()=>{ try{ return JSON.parse(localStorage.getItem('fh_rag'))||{}; }catch(e){ return {}; } })();  // fileId -> {name, mt}
 function saveRag(){ try{ localStorage.setItem('fh_rag', JSON.stringify(ragDocs)); }catch(e){} }
 function driveClientId(){ return loadCfg().driveClientId || ''; }
@@ -2371,7 +2382,7 @@ function ensureDriveTokenClient(){
     scope:'https://www.googleapis.com/auth/drive.readonly',
     callback:(resp)=>{
       const list=document.getElementById('docList');
-      if(resp && resp.access_token){ _driveToken=resp.access_token; if(_onDriveToken) _onDriveToken(); }
+      if(resp && resp.access_token){ saveDriveTok(resp.access_token, resp.expires_in); if(_onDriveToken) _onDriveToken(); }
       else if(list){ list.innerHTML='<div class="err">Autorización cancelada o sin token'+(resp&&resp.error?(' ('+resp.error+')'):'')+'.</div>'; }
     }
   });
@@ -2487,7 +2498,7 @@ function renderDocumentos(){
       <button class="btn" id="docSearchBtn">Buscar</button>
     </div>
     <div id="docSearchOut"></div>
-    <div id="docList">${_driveFilesCache.length?'':'<div class="placeholder">Pulsa "Conectar" para listar tus PDFs.</div>'}</div>`;
+    <div id="docList">${_driveFilesCache.length?'':'<div class="placeholder">'+(driveTokenValid()?'Cargando tus PDFs…':'Pulsa "Conectar" para listar tus PDFs.')+'</div>'}</div>`;
   document.getElementById('docConnect').addEventListener('click', cargarDriveDocs);
   document.getElementById('docRefresh').addEventListener('click', cargarDriveDocs);
   document.getElementById('docToAjustes').addEventListener('click', openSettings);
@@ -2495,6 +2506,7 @@ function renderDocumentos(){
   if(dsb) dsb.addEventListener('click', ()=>buscarDocsRAG(ds.value));
   if(ds) ds.addEventListener('keydown', e=>{ if(e.key==='Enter') buscarDocsRAG(ds.value); });
   if(_driveFilesCache.length) renderDriveList(_driveFilesCache);
+  else if(driveTokenValid()) cargarDriveDocs();   // token aún válido → recarga sin re-autorizar
 }
 function cargarDriveDocs(){
   const list=document.getElementById('docList'); if(!list) return;
@@ -2502,9 +2514,9 @@ function cargarDriveDocs(){
   const tc=ensureDriveTokenClient(); if(!tc){ list.innerHTML='<div class="err">Falta el Client ID de Google Drive en ⚙ Ajustes.</div>'; return; }
   const c=loadCfg();
   list.innerHTML='<div class="loading">Consultando Google Drive…</div>';
-  _onDriveToken=async()=>{ try{ const files=await driveListPdfs(c.driveFolder, c.driveSubfolders); _driveFilesCache=files; await renderDriveList(files); }catch(e){ list.innerHTML='<div class="err">'+e.message+'</div>'; } };
+  _onDriveToken=async()=>{ try{ const files=await driveListPdfs(c.driveFolder, c.driveSubfolders); saveDriveFiles(files); await renderDriveList(files); }catch(e){ list.innerHTML='<div class="err">'+e.message+'</div>'; } };
   // IMPORTANTE: abrir el popup SÍNCRONAMENTE dentro del clic (Safari bloquea popups tras await)
-  if(_driveToken) _onDriveToken(); else tc.requestAccessToken();
+  if(driveTokenValid()) _onDriveToken(); else tc.requestAccessToken();
 }
 async function renderDriveList(files){
   const list=document.getElementById('docList'); if(!list) return;
@@ -3478,6 +3490,7 @@ function prenatalSindromes(){
 }
 function grLink(name){ return 'https://www.ncbi.nlm.nih.gov/books/?term='+encodeURIComponent(name+' GeneReviews'); }
 async function persistPrenatalCustom(msg){
+  _fichaRefSet=null;   // las refs prenatales cuentan como bibliografía → recalcular el flag
   try{ let sha=null; try{ const ci=await ghGetFile('prenatal-syndromes.json'); sha=ci.sha; }catch(e){} await ghPutFile('prenatal-syndromes.json', PRENATAL_CUSTOM, msg||'prenatal: actualizar síndromes IA', sha); }catch(e){}
   try{ localStorage.setItem('fh_prenatal_custom', JSON.stringify(PRENATAL_CUSTOM)); }catch(e){}
 }
