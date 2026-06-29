@@ -435,8 +435,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.6.3';
+const APP_VERSION='1.6.4';
 const CHANGELOG=[
+  {v:'1.6.4', d:'2026-06-30', c:['Búsqueda RAG vectorial: diagnóstico claro de por qué no funciona (falta clave OpenAI · sin documentos RAG · sin texto/Drive sin conectar · error de OpenAI) en vez de un genérico «sin coincidencias».']},
   {v:'1.6.3', d:'2026-06-30', c:['Logotipo definitivo del usuario (ariadna-logo.png): icono en la cabecera (recortado por CSS) y favicon.']},
   {v:'1.6.2', d:'2026-06-30', c:['Nuevo logotipo (laberinto + hilo + doble hélice de ADN) en la cabecera y como favicon. Subtítulo: «El hilo del diagnóstico · guía · ordena · descubre».']},
   {v:'1.6.1', d:'2026-06-29', c:['Eslogan corto: «El hilo que guía de la sospecha al diagnóstico».']},
@@ -2472,13 +2473,39 @@ async function ragRetrieve(query, k){
 async function buscarDocsRAG(query){
   const out=document.getElementById('docSearchOut'); if(!out) return;
   query=(query||'').trim(); if(!query){ out.innerHTML=''; return; }
-  if(!loadCfg().openaiKey){ out.innerHTML='<div class="study-flag">La búsqueda vectorial necesita una clave de <b>OpenAI</b> (para los embeddings) en ⚙ Ajustes. Anthropic no ofrece API de embeddings.</div>'; return; }
-  if(!Object.keys(ragDocs).length){ out.innerHTML='<div class="study-flag">Marca algún documento como <b>RAG</b> para poder buscarlo.</div>'; return; }
-  out.innerHTML='<div class="loading">Buscando en tus documentos…</div>';
-  try{ const hits=await ragRetrieve(query, 6);
-    if(!hits||!hits.length){ out.innerHTML='<div class="empty">Sin coincidencias (¿están calculados los embeddings? marca/re-marca RAG).</div>'; return; }
-    out.innerHTML='<div class="cart-group-title">Fragmentos más relevantes</div>'+hits.map(h=>`<div class="study" style="margin:6px 0"><div class="dx-meta"><b>${escHtml(h.doc||'doc')}</b> · relevancia ${h.s.toFixed(2)}</div><div style="font-size:12.5px;line-height:1.5">${escHtml(h.t.slice(0,420))}…</div></div>`).join('');
-  }catch(e){ out.innerHTML='<div class="err">Error: '+e.message+'</div>'; }
+  const c=loadCfg();
+  if(!c.openaiKey){ out.innerHTML='<div class="study-flag">⚠ La búsqueda vectorial necesita una clave de <b>OpenAI</b> (para los embeddings) en ⚙ Ajustes. <b>Anthropic/Claude no ofrece API de embeddings</b>, así que con solo la clave de Claude esto no funciona.</div>'; return; }
+  const ids=Object.keys(ragDocs);
+  if(!ids.length){ out.innerHTML='<div class="study-flag">⚠ No tienes documentos marcados como <b>RAG</b>. Ve a «Documentos», conéctate a Drive y marca la casilla <b>RAG</b> de los PDF que quieras buscar.</div>'; return; }
+  out.innerHTML='<div class="loading">Preparando la búsqueda (embeddings)…</div>';
+  // 1) Embedding de la consulta → detecta problemas de clave/cuota/modelo de OpenAI.
+  let qv;
+  try{ qv=(await embedTexts([query]))?.[0]; }
+  catch(e){ out.innerHTML='<div class="err">OpenAI rechazó los embeddings: '+escHtml(e.message)+'<br><span class="dx-meta">Revisa que la clave de OpenAI sea válida, tenga saldo y acceso al modelo '+EMBED_MODEL+'.</span></div>'; return; }
+  if(!qv){ out.innerHTML='<div class="err">No se pudo generar el embedding de la consulta.</div>'; return; }
+  // 2) Reunir embeddings de cada documento RAG, registrando POR QUÉ falla cada uno.
+  const recs=[]; const sinTexto=[]; const errs=[];
+  for(const id of ids){
+    let rec=cachedEmb(id);
+    if(!rec){
+      let t=null; try{ t=await driveDownloadText(id, ragDocs[id].mt); }catch(e){}
+      if(!t){ sinTexto.push(ragDocs[id].name||id); continue; }
+      try{ rec=await ensureDocEmbeddings(id, ragDocs[id].name, t); }catch(e){ errs.push((ragDocs[id].name||id)+': '+e.message); continue; }
+    }
+    if(rec&&rec.chunks&&rec.chunks.length) recs.push(rec);
+  }
+  if(!recs.length){
+    out.innerHTML='<div class="study-flag">No hay embeddings calculados todavía.'
+      +(sinTexto.length?('<br>· '+sinTexto.length+' documento(s) sin texto extraído. Pulsa <b>Conectar</b> en «Documentos» (el acceso a Drive caduca a la hora) para que pueda leer el PDF una vez.'):'')
+      +(errs.length?('<br>· Errores de OpenAI: '+escHtml(errs.join(' · '))):'')
+      +'</div>'; return;
+  }
+  // 3) Similitud coseno → fragmentos más relevantes.
+  const scored=[]; recs.forEach(rec=>rec.chunks.forEach(ch=>scored.push({doc:rec.name, t:ch.t, s:cosine(qv, ch.v)})));
+  scored.sort((a,b)=>b.s-a.s);
+  const hits=scored.slice(0,6);
+  out.innerHTML='<div class="cart-group-title">Fragmentos más relevantes <span class="dx-meta">('+recs.length+'/'+ids.length+' doc con embeddings'+(sinTexto.length?(' · '+sinTexto.length+' sin texto, conecta Drive'):'')+')</span></div>'
+    + hits.map(h=>`<div class="study" style="margin:6px 0"><div class="dx-meta"><b>${escHtml(h.doc||'doc')}</b> · relevancia ${h.s.toFixed(2)}</div><div style="font-size:12.5px;line-height:1.5">${escHtml(h.t.slice(0,420))}…</div></div>`).join('');
 }
 async function ragContext(maxDocs, query){
   const ids=Object.keys(ragDocs); if(!ids.length) return '';
