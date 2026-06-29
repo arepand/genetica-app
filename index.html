@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>fenotipHAC · Fenotipado dirigido por criterios</title>
+<title>Ariadna · Genética clínica, de la sospecha al diagnóstico</title>
 <!--
   ============================================================================
   fenotipHAC · motor genérico dirigido por fichas (familia fenotipHAC)
@@ -371,10 +371,10 @@
 
 <header class="top">
   <div class="brand">
-    <div class="logo">fH</div>
+    <div class="logo" title="Ariadna — el hilo que guía el diagnóstico genético">A</div>
     <div>
-      <h1>fenotipHAC · Fenotipado dirigido por criterios</h1>
-      <div class="sub">Anamnesis dirigida por fichas · HPO trilingüe en vivo · diferencial por umbrales · panel génico</div>
+      <h1>Ariadna <span style="font-weight:400;color:var(--ink3);font-size:14px">· genética clínica</span></h1>
+      <div class="sub">De la sospecha al diagnóstico genético: fenotipo HPO · diferencial · prenatal · dismorfología · documentos y conocimiento</div>
     </div>
   </div>
   <div class="spacer"></div>
@@ -435,8 +435,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.5.4';
+const APP_VERSION='1.6.0';
 const CHANGELOG=[
+  {v:'1.6.0', d:'2026-06-29', c:['Nueva identidad: la herramienta se llama ahora «Ariadna» — el hilo que guía el diagnóstico genético (antes fenotipHAC).']},
   {v:'1.5.4', d:'2026-06-29', c:['Búsquedas insensibles a tildes en toda la app: «fistula» encuentra «fístula» (HPO, dismorfología, prenatal, protocolos).']},
   {v:'1.5.3', d:'2026-06-29', c:['«Mis documentos»: botón ✏ Editar para corregir nombre y descripción a mano, y ↻ IA ahora REGENERA leyendo el TEXTO REAL del PDF (no el nombre del fichero) → títulos correctos.']},
   {v:'1.5.2', d:'2026-06-29', c:['Asignar PDF desde una referencia: ya NO analiza con IA (evita títulos erróneos); el nombre se toma de la referencia y solo se LIGA el PDF que elijas de tus documentos. La IA (✨, opcional) sigue disponible y el análisis automático se mantiene al indexar desde «Documentos».']},
@@ -3136,7 +3137,7 @@ function generatePdf(){
     doc.setFont('helvetica', o.bold?'bold':'normal'); doc.setFontSize(o.size||10);
     doc.splitTextToSize(String(txt), W).forEach(t=>{ if(y>800){ doc.addPage(); y=46; } doc.text(t, L, y); y+=(o.lh||14); });
   };
-  write('fenotipHAC — Informe de fenotipado', {size:15, bold:true});
+  write('Ariadna — Informe de fenotipado', {size:15, bold:true});
   write(new Date().toLocaleString('es-ES'), {size:8}); y+=4;
   write('Motivo: '+(patient.motivo||'—')+'    Edad: '+(patient.edad||'—')+'    Sexo: '+(patient.sexo||'—'));
   if(activeFicha) write('Ficha: '+(activeFicha.nombre_es||activeFicha.id));
@@ -3156,8 +3157,8 @@ function generatePdf(){
   }
   write('— Orientativo; no sustituye el juicio clínico ni la confirmación molecular.', {size:8, lh:12});
   // Abrir en otra pestaña (no descargar): el usuario descarga desde el visor si quiere.
-  try{ const url=doc.output('bloburl'); const w=window.open(url, '_blank'); if(!w) doc.save('fenotiphac-informe.pdf'); }
-  catch(e){ doc.save('fenotiphac-informe.pdf'); }
+  try{ const url=doc.output('bloburl'); const w=window.open(url, '_blank'); if(!w) doc.save('ariadna-informe.pdf'); }
+  catch(e){ doc.save('ariadna-informe.pdf'); }
 }
 
 /* ===========================================================================
