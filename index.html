@@ -2134,6 +2134,87 @@ function validateFicha(f){
   if(!f.id) f.id = slugify(f.nombre_es || patient.motivo || 'ficha');
   return errs;
 }
+/* ===== Validación + autocorrección de códigos HPO de una ficha ===== */
+function collectFichaHpoRefs(f){
+  const refs=[];
+  (f.dominios||[]).forEach(d=>(d.preguntas||[]).forEach(q=>(q.opciones||[]).forEach(o=>(o.hpo||[]).forEach(h=>{
+    if(h&&h.id) refs.push({id:h.id, label:(h.nombre||o.etiqueta||q.texto||'').trim()});
+  }))));
+  (f.entidades||[]).forEach(e=>{ (e.mayores||[]).concat(e.menores||[]).forEach(x=>{ if(x) refs.push({id:x, label:''}); }); });
+  return refs;
+}
+function fichaHpoFormatErrors(f){ return [...new Set(collectFichaHpoRefs(f).map(r=>r.id))].filter(id=>!/^HP:\d{7}$/.test(id)); }
+function morfoAllTerms(){ const out=[]; (MORFO_REGIONS||[]).forEach(r=>{ if(r.terms) out.push(...r.terms); if(r.groups) r.groups.forEach(g=>out.push(...(g.terms||[]))); }); return out; }
+function findHpoLocal(text){
+  const n=normTxt(text); if(!n||n.length<3) return null;
+  for(const t of morfoAllTerms()){ if(normTxt(t.es)===n) return {id:t.id, es:t.es}; }
+  const es=window.__esLabels||{};
+  for(const id in es){ if(normTxt(es[id])===n) return {id, es:es[id]}; }
+  return null;
+}
+async function findHpoByText(text){
+  const loc=findHpoLocal(text);
+  if(loc){ const t=await verifyHpo(loc.id); if(t) return {id:t.id, es:loc.es||((window.__esLabels||{})[t.id])||t.name, en:t.name}; }
+  const tries=[text]; const en=await translateFree(text); if(en && en.toLowerCase()!==text.toLowerCase()) tries.push(en);
+  for(const q of tries){
+    try{ const r=await fetch(HPO_API+'/search?q='+encodeURIComponent(q)+'&limit=1'); const d=await r.json();
+      const term=(d.terms&&d.terms[0]); if(term&&term.id) return {id:term.id, es:((window.__esLabels||{})[term.id])||term.name, en:term.name};
+    }catch(e){}
+  }
+  return null;
+}
+async function validarFichaHpo(f){
+  const refs=collectFichaHpoRefs(f);
+  const byId={};
+  refs.forEach(r=>{ (byId[r.id]=byId[r.id]||{id:r.id, labels:[]}); if(r.label && !byId[r.id].labels.includes(r.label)) byId[r.id].labels.push(r.label); });
+  const issues=[];
+  for(const id of Object.keys(byId)){
+    const t=await verifyHpo(id);
+    if(!t){
+      const label=byId[id].labels[0]||'';
+      const fix=label ? await findHpoByText(label) : null;
+      issues.push({id, label, fix});
+    }
+  }
+  return issues;
+}
+function applyHpoFixes(f, fixes){
+  (f.dominios||[]).forEach(d=>(d.preguntas||[]).forEach(q=>(q.opciones||[]).forEach(o=>(o.hpo||[]).forEach(h=>{
+    const fx=fixes[h.id]; if(fx){ h.id=fx.to; if(fx.es) h.nombre=fx.es; }
+  }))));
+  (f.entidades||[]).forEach(e=>{ ['mayores','menores'].forEach(k=>{ if(Array.isArray(e[k])) e[k]=e[k].map(x=>fixes[x]?fixes[x].to:x); }); });
+}
+async function openValidarHpo(f){
+  const ov=document.createElement('div'); ov.className='overlay'; ov.id='validarHpoOverlay';
+  ov.innerHTML=`<div class="modal" role="dialog" aria-label="Validar HPO" style="max-width:680px">
+    <h2>🔧 Validar y corregir HPO</h2>
+    <div class="msub">Comprueba cada código HPO de la ficha contra HPO/JAX y propone correcciones para los inválidos (re-busca por la etiqueta).</div>
+    <div id="valOut"><div class="loading">Validando códigos HPO…</div></div>
+    <div class="modal-actions"><button class="btn ghost" id="valClose">Cerrar</button><button class="btn primary" id="valApply" style="display:none">Aplicar correcciones y guardar</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('#valClose').addEventListener('click',()=>ov.remove());
+  ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); });
+  const out=ov.querySelector('#valOut');
+  let issues;
+  try{ issues=await validarFichaHpo(f); }catch(e){ out.innerHTML='<div class="err">Error: '+e.message+'</div>'; return; }
+  if(!issues.length){ out.innerHTML='<div style="color:var(--ok);font-weight:600;padding:6px 0">✓ Todos los códigos HPO de la ficha son válidos.</div>'; return; }
+  out.innerHTML='<div style="margin-bottom:6px"><b>'+issues.length+'</b> código(s) HPO inválido(s):</div>'+issues.map((it,i)=>`
+    <div style="padding:8px 0;border-top:1px solid var(--line)">
+      <div><span class="hp" style="color:#f2b3a6">${escHtml(it.id)}</span> ${it.label?'· '+escHtml(it.label):'<span style="color:var(--ink3)">(sin etiqueta para autocorregir)</span>'}</div>
+      ${it.fix?`<label style="display:flex;gap:7px;align-items:center;margin-top:4px;font-size:13px"><input type="checkbox" data-fix="${i}" checked> Corregir → <b>${escHtml(it.fix.es||it.fix.id)}</b> <span class="hp">${it.fix.id}</span></label>`:'<div style="color:#b8860b;font-size:12px;margin-top:4px">Sin corrección automática — edita la ficha manualmente.</div>'}
+    </div>`).join('');
+  const applyBtn=ov.querySelector('#valApply'); applyBtn.style.display='';
+  applyBtn.addEventListener('click', async ()=>{
+    const fixes={};
+    ov.querySelectorAll('[data-fix]:checked').forEach(cb=>{ const it=issues[+cb.dataset.fix]; if(it.fix) fixes[it.id]={to:it.fix.id, es:it.fix.es}; });
+    if(!Object.keys(fixes).length){ ov.remove(); return; }
+    applyBtn.disabled=true; applyBtn.textContent='Guardando…';
+    applyHpoFixes(f, fixes);
+    try{ await saveFicha(f); _fichaRefSet=null; showToast('HPO corregidos y guardados ('+Object.keys(fixes).length+')'); ov.remove(); if(currentSection==='biblioteca') renderFichaView(f); }
+    catch(e){ applyBtn.disabled=false; applyBtn.textContent='Aplicar correcciones y guardar'; showToast('Error al guardar: '+e.message); }
+  });
+}
 /* Persiste: commit a GitHub si está configurado; si no, solo caché local. */
 async function persistFicha(f){
   if(ghConfigured()){ await saveFicha(f); return 'commit'; }
@@ -2400,6 +2481,8 @@ function openFichaReview(f, opts){
     const j=parse(); if(!j) return;
     const errs=validateFicha(j);
     if(errs.length){ out.className='test-out bad'; out.textContent='No se puede guardar: '+errs.join(' · '); return; }
+    const badHpo=fichaHpoFormatErrors(j);
+    if(badHpo.length){ out.className='test-out bad'; out.textContent='Códigos HPO con formato inválido: '+badHpo.join(', ')+'. Corrígelos (formato HP:0000000) o usa "🔧 Validar HPO" en la vista de ficha.'; return; }
     out.className='test-out'; out.textContent='Guardando…';
     try{
       const mode=await persistFicha(j);
@@ -3056,6 +3139,7 @@ async function renderFichaView(f){
     <div class="fview-bar">
       <button class="btn" id="fvBack">‹ Volver a la biblioteca</button>
       <button class="btn" id="fvEdit">✎ Editar</button>
+      <button class="btn" id="fvValidate">🔧 Validar HPO</button>
       <button class="btn primary" id="fvPrint">🖨 Imprimir / PDF</button>
     </div>
     <div class="fview" id="fviewDoc">
@@ -3070,6 +3154,7 @@ async function renderFichaView(f){
   box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
   document.getElementById('fvBack').addEventListener('click', ()=>renderBiblioteca());
   document.getElementById('fvEdit').addEventListener('click', ()=>openFichaReview(f, {origin:'biblioteca'}));
+  document.getElementById('fvValidate').addEventListener('click', ()=>openValidarHpo(f));
   document.getElementById('fvPrint').addEventListener('click', ()=>window.print());
   box.querySelectorAll('.doc-reg').forEach(b=>b.addEventListener('click', ()=>openRegistrarDoc(fuentesArr[+b.dataset.fi], ()=>renderFichaView(f))));
   box.querySelectorAll('.doc-link').forEach(sel=>sel.addEventListener('change', async ()=>{
