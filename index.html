@@ -2176,6 +2176,18 @@ async function findHpoByText(text){
   }
   return null;
 }
+function nmMatch(a,b){ a=normTxt(a); b=normTxt(b); if(!a||!b||a.length<3||b.length<3) return false; return a===b || a.includes(b) || b.includes(a); }
+/* Resuelve el HPO COMPROBANDO que el código corresponde al concepto (no solo que exista).
+   1) id propuesto + su nombre oficial JAX coincide con la etiqueta inglesa → válido.
+   2) re-busca la etiqueta INGLESA en JAX (independiente de traducción).
+   3) último recurso: por etiqueta española. Devuelve id válido o null. */
+async function resolveHpoConcept(hpoGuess, labelEn, labelEs){
+  if(/^HP:\d{7}$/.test(hpoGuess||'')){ const t=await verifyHpo(hpoGuess); if(t && labelEn && nmMatch(t.name, labelEn)) return t.id; }
+  if(labelEn){ try{ const r=await fetch(HPO_API+'/search?q='+encodeURIComponent(labelEn)+'&limit=5'); const d=await r.json();
+    const hit=(d.terms||[]).find(x=>nmMatch(x.name, labelEn)); if(hit) return hit.id; }catch(e){} }
+  if(labelEs){ const fx=await findHpoByText(labelEs); if(fx) return fx.id; }
+  return null;
+}
 async function validarFichaHpo(f){
   const refs=collectFichaHpoRefs(f);
   const byId={};
@@ -3295,12 +3307,13 @@ async function addPrenatalCands(cands, minF){
     const proposed=(c.findings||[]).length;
     const findings=[];
     for(const f of (c.findings||[])){
-      let id=f.hpo, t=await verifyHpo(id);
-      if(!t && f.label){ const fx=await findHpoByText(f.label); if(fx){ id=fx.id; t={id:fx.id}; } }
-      if(!t) continue;
+      const id=await resolveHpoConcept(f.hpo, f.label_en, f.label);  // DOBLE comprobación: el código debe COINCIDIR con el concepto
+      if(!id) continue;
+      if(findings.some(x=>x.id===id)) continue;                       // sin duplicados dentro del síndrome
       const tipo=(['mayor','marcador','nucal'].includes(f.tipo)?f.tipo:'mayor');
-      const sistema=(f.sistema && validSys.has(f.sistema))?f.sistema:null;
-      findings.push({id, es:(f.label||id), tipo, sistema});
+      const sistema=(f.sistema||'').trim()||null;                     // acepta categoría nueva si la IA la propone
+      const offEs=(window.__esLabels&&window.__esLabels[id])||f.label||id;
+      findings.push({id, es:offEs, tipo, sistema});
     }
     if(findings.length<need){ log.push('✗ '+c.name+': '+findings.length+'/'+proposed+' HPO verificados contra JAX (mínimo '+need+') → NO añadido.'); continue; }
     PRENATAL_CUSTOM.syndromes.push({name:c.name, test:c.test||'', min:Math.max(1,Math.min(3,parseInt(c.min)||2)), findings:findings.map(x=>x.id), ref:(c.ref&&c.ref.url)?c.ref:null, ia:true});
@@ -3318,7 +3331,7 @@ async function actualizarSindromesIA(){
   out.innerHTML='<div class="loading">Buscando síndromes prenatales nuevos con IA (búsqueda web)…</div>';
   try{
     const existing=allPrenatalSyndromes().map(s=>s.name);
-    const system='Eres genetista clínico experto en DIAGNÓSTICO PRENATAL. Propón síndromes/entidades con diagnóstico prenatal relevante que NO estén ya en la lista del usuario. Para cada uno: nombre en español (sin prefijos como "Síndrome de"), "test" (estudio genético dirigido), "min" (1-3), "ref" {titulo,url} (GeneReviews/OMIM/guía), y 3-6 "findings": hallazgos ECOGRÁFICOS FETALES característicos, cada uno con "hpo" (código HPO REAL y VIGENTE, formato HP:0000000), "label" (etiqueta en español), "tipo" (mayor|marcador|nucal) y "sistema" (EXACTAMENTE uno de: '+PRENATAL_SYSTEMS.join(' | ')+'). '+SOURCE_PRIORITY+' Devuelve SOLO JSON {"sindromes":[{"name":"","test":"","min":2,"ref":{"titulo":"","url":""},"findings":[{"hpo":"HP:0000000","label":"","tipo":"mayor","sistema":""}]}]}.';
+    const system='Eres genetista clínico experto en DIAGNÓSTICO PRENATAL. Propón síndromes/entidades con diagnóstico prenatal relevante que NO estén ya en la lista del usuario. Para cada uno: nombre en español (sin prefijos como "Síndrome de"), "test" (estudio genético dirigido), "min" (1-3), "ref" {titulo,url} (GeneReviews/OMIM/guía), y 3-6 "findings": hallazgos ECOGRÁFICOS FETALES característicos, cada uno con "hpo" (código HPO REAL y VIGENTE, formato HP:0000000), "label" (etiqueta en español), "label_en" (EL NOMBRE EXACTO del término HPO en inglés, tal cual figura en HPO), "tipo" (mayor|marcador|nucal) y "sistema" (uno de: '+PRENATAL_SYSTEMS.join(' | ')+', o una categoría nueva si ninguna encaja). El "hpo" y "label_en" DEBEN ser el mismo término HPO. '+SOURCE_PRIORITY+' Devuelve SOLO JSON {"sindromes":[{"name":"","test":"","min":2,"ref":{"titulo":"","url":""},"findings":[{"hpo":"HP:0000000","label":"","label_en":"","tipo":"mayor","sistema":""}]}]}.';
     const resp=await callLLM({system, user:'Síndromes ya incluidos (NO los repitas): '+existing.join('; '), webSearch:true, maxTokens:4000, task:'author'});
     const j=extractJSON(resp); const cands=(j&&j.sindromes)||[];
     if(!cands.length){ out.innerHTML='<div class="empty">La IA no devolvió síndromes nuevos.</div>'; return; }
@@ -3336,7 +3349,7 @@ async function añadirSindromePorNombre(name){
   if(!anyProvider()){ out.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
   out.innerHTML='<div class="loading">Generando «'+escHtml(name)+'» con IA y verificando HPO contra JAX…</div>';
   try{
-    const system='Eres genetista clínico experto en diagnóstico prenatal. Para el síndrome/enfermedad indicado, devuelve sus hallazgos ECOGRÁFICOS FETALES característicos (cada uno con "hpo" código HPO REAL/vigente formato HP:0000000, "label" en español, "tipo" mayor|marcador|nucal y "sistema" EXACTAMENTE uno de: '+PRENATAL_SYSTEMS.join(' | ')+'), el "name" (sin prefijo "Síndrome de"), "test" (estudio genético dirigido), "min" (1-3), "ref"{titulo,url}, y "prenatal" (true si tiene hallazgos prenatales reconocibles; false si no los tiene). '+SOURCE_PRIORITY+' Devuelve SOLO JSON {"name":"","prenatal":true,"test":"","min":1,"ref":{"titulo":"","url":""},"findings":[{"hpo":"HP:0000000","label":"","tipo":"mayor","sistema":""}]}.';
+    const system='Eres genetista clínico experto en diagnóstico prenatal. Para el síndrome/enfermedad indicado, devuelve sus hallazgos ECOGRÁFICOS FETALES característicos (cada uno con "hpo" código HPO REAL/vigente formato HP:0000000, "label" en español, "label_en" EL NOMBRE EXACTO del término HPO en inglés, "tipo" mayor|marcador|nucal y "sistema" uno de: '+PRENATAL_SYSTEMS.join(' | ')+', o una categoría nueva si ninguna encaja; "hpo" y "label_en" DEBEN ser el mismo término HPO), el "name" (sin prefijo "Síndrome de"), "test" (estudio genético dirigido), "min" (1-3), "ref"{titulo,url}, y "prenatal" (true si tiene hallazgos prenatales reconocibles; false si no los tiene). '+SOURCE_PRIORITY+' Devuelve SOLO JSON {"name":"","prenatal":true,"test":"","min":1,"ref":{"titulo":"","url":""},"findings":[{"hpo":"HP:0000000","label":"","label_en":"","tipo":"mayor","sistema":""}]}.';
     const resp=await callLLM({system, user:'Síndrome/enfermedad: '+name, webSearch:true, maxTokens:1500, task:'author'});
     const j=extractJSON(resp);
     if(!j){ out.innerHTML='<div class="err">La IA no devolvió datos válidos.</div>'; return; }
@@ -3354,6 +3367,61 @@ function quitarSindromeIA(name){
   PRENATAL_CUSTOM.syndromes=(PRENATAL_CUSTOM.syndromes||[]).filter(s=>s.name!==name);
   persistPrenatalCustom('prenatal: quitar '+name);
   renderPrenatal();
+}
+function quitarHallazgoIA(id){
+  delete selections[id];
+  PRENATAL_CUSTOM.findings=(PRENATAL_CUSTOM.findings||[]).filter(t=>t.id!==id);
+  (PRENATAL_CUSTOM.syndromes||[]).forEach(s=>{ s.findings=(s.findings||[]).filter(i=>i!==id); });
+  persistPrenatalCustom('prenatal: quitar hallazgo '+id);
+  syncSelections(); renderPrenatal();
+}
+function corregirHallazgoIA(oldId, newId, newEs){
+  if(oldId===newId){ const f=(PRENATAL_CUSTOM.findings||[]).find(x=>x.id===oldId); if(f){ f.verified=true; if(newEs) f.es=newEs; } return; }
+  const dup=(PRENATAL_CUSTOM.findings||[]).some(x=>x.id===newId) || PRENATAL_FINDINGS.some(s=>s.terms.some(t=>t.id===newId));
+  PRENATAL_CUSTOM.findings=(PRENATAL_CUSTOM.findings||[])
+    .map(x=> x.id===oldId ? {id:newId, es:newEs||x.es, tipo:x.tipo, sistema:x.sistema, ia:true, verified:true} : x)
+    .filter((x,i,arr)=> arr.findIndex(y=>y.id===x.id)===i);   // sin duplicados
+  (PRENATAL_CUSTOM.syndromes||[]).forEach(s=>{ s.findings=[...new Set((s.findings||[]).map(i=>i===oldId?newId:i))]; });
+  PRENATAL_TIPO[newId]=PRENATAL_TIPO[oldId]||'mayor';
+}
+/* Verifica un hallazgo IA: comprueba que el código corresponde al concepto; si no, lo corrige por la etiqueta. */
+async function verificarHallazgoIA(id){
+  const out=document.getElementById('prenatalIAupd');
+  const f=(PRENATAL_CUSTOM.findings||[]).find(x=>x.id===id); if(!f){ return; }
+  if(out) out.innerHTML='<div class="loading">Verificando «'+escHtml(f.es)+'» ('+id+')…</div>';
+  const t=await verifyHpo(f.id);
+  const offEs=t?((window.__esLabels&&window.__esLabels[f.id])||t.name):null;
+  // ¿la etiqueta apunta a OTRO código? (el actual sería incorrecto)
+  const fx=await findHpoByText(f.es);
+  if(fx && fx.id!==f.id){
+    corregirHallazgoIA(f.id, fx.id, fx.es||fx.en);
+    if(out) out.innerHTML='<div style="color:var(--ok);font-weight:600">✓ Corregido «'+escHtml(f.es)+'»: '+id+' → '+fx.id+' («'+escHtml(fx.es||fx.en||'')+'»). Marcado verificado.</div>';
+  } else if(t){
+    f.verified=true; if(offEs) f.es=offEs;
+    if(out) out.innerHTML='<div style="color:var(--ok);font-weight:600">✓ Verificado: '+id+' = «'+escHtml(offEs||t.name)+'» (HPO oficial). Etiqueta IA retirada.</div>';
+  } else {
+    if(out) out.innerHTML='<div class="err">'+id+' no existe en HPO. Conviene quitarlo (✕).</div>';
+    return;
+  }
+  await persistPrenatalCustom('prenatal: verificar hallazgo'); renderPrenatal();
+}
+async function revisarHallazgosIA(){
+  const out=document.getElementById('prenatalIAupd'); if(!out) return;
+  if(!(PRENATAL_CUSTOM.findings||[]).some(t=>!t.verified)){ out.innerHTML='<div style="color:var(--ok)">✓ No hay hallazgos IA pendientes de verificar.</div>'; return; }
+  let n=0, guard=0; const logs=[];
+  while(guard++<80){
+    const f=(PRENATAL_CUSTOM.findings||[]).find(t=>!t.verified); if(!f) break;
+    out.innerHTML='<div class="loading">Revisando «'+escHtml(f.es)+'» ('+f.id+')… ('+(n+1)+')</div>';
+    const t=await verifyHpo(f.id);
+    const offEs=t?((window.__esLabels&&window.__esLabels[f.id])||t.name):null;
+    const fx=await findHpoByText(f.es);
+    if(fx && fx.id!==f.id){ logs.push('🔧 «'+f.es+'»: '+f.id+' → '+fx.id+' ('+(fx.es||fx.en||'')+')'); corregirHallazgoIA(f.id, fx.id, fx.es||fx.en); }
+    else if(t){ f.verified=true; if(offEs) f.es=offEs; logs.push('✓ '+f.id+' = '+(offEs||t.name)); }
+    else { f.verified=true; logs.push('⚠ '+f.id+' no existe en HPO — conviene quitarlo'); }
+    n++;
+  }
+  await persistPrenatalCustom('prenatal: revisar hallazgos IA'); renderPrenatal();
+  document.getElementById('prenatalIAupd').innerHTML='<div style="color:var(--ok);font-weight:600">✓ Revisión completa ('+n+').</div><div class="dx-meta" style="margin-top:4px">'+logs.map(escHtml).join('<br>')+'</div>';
 }
 
 const PRENATAL_REFS={
@@ -3421,15 +3489,20 @@ function renderPrenatal(){
   const gaNote = ga
     ? `<div class="dx-meta">Edad gestacional: <b>${ga}</b> · ${patientLabel()||'feto'}</div>`
     : `<div class="study-flag">Marca <b>«Gestación»</b> en la barra superior e indica semanas+días para el contexto prenatal.</div>`;
-  // Distribuye los hallazgos añadidos por IA en su categoría (sistema); si no tienen una válida → "Otros (IA)".
+  // Distribuye los hallazgos en su categoría (sistema); los de IA pueden crear categoría nueva; resto → "Otros (IA)".
   const systems = PRENATAL_FINDINGS.map(s=>({system:s.system, terms:s.terms.slice()}));
   const byName={}; systems.forEach(s=>byName[s.system]=s);
   const otros={system:'Otros (añadidos por IA)', terms:[]};
-  (PRENATAL_CUSTOM.findings||[]).forEach(t=>{ const tgt=(t.sistema && byName[t.sistema])?byName[t.sistema]:otros; tgt.terms.push(t); });
+  (PRENATAL_CUSTOM.findings||[]).forEach(t=>{
+    t.ia=true;
+    let tgt = t.sistema ? (byName[t.sistema] || (byName[t.sistema]={system:t.sistema, terms:[], nuevo:true}, systems.push(byName[t.sistema]), byName[t.sistema])) : otros;
+    tgt.terms.push(t);
+  });
   if(otros.terms.length) systems.push(otros);
-  const findings = systems.map(s=>`<details class="morfo-region" open><summary>${escHtml(s.system)} <span style="color:var(--ink3);font-weight:400">· ${s.terms.length}</span></summary><div class="morfo-terms">${s.terms.map(t=>{
+  const findings = systems.map(s=>`<details class="morfo-region" open><summary>${escHtml(s.system)}${s.nuevo?' <span class="dx-meta" style="color:var(--accent)">nueva</span>':''} <span style="color:var(--ink3);font-weight:400">· ${s.terms.length}</span></summary><div class="morfo-terms">${s.terms.map(t=>{
         const on=!!selections[t.id];
-        return `<button class="morfo-term${on?' on':''}" data-pid="${t.id}" data-pes="${(t.es||'').replace(/"/g,'&quot;')}">${escHtml(t.es)} <span class="hp">${t.id}</span>${infoDotHtml(t.id)}</button>`;
+        const iaTag = (t.ia && !t.verified) ? ` <span class="dx-meta" style="color:var(--accent)" title="Añadido por IA, sin verificar el concepto">IA</span> <span class="tip-ai" data-vfy="${t.id}" title="Verificar que el código HPO corresponde al concepto">verificar</span> <span class="x" data-rmf="${t.id}" title="Quitar hallazgo" role="button">✕</span>` : '';
+        return `<button class="morfo-term${on?' on':''}" data-pid="${t.id}" data-pes="${(t.es||'').replace(/"/g,'&quot;')}">${escHtml(t.es)} <span class="hp">${t.id}</span>${infoDotHtml(t.id)}${iaTag}</button>`;
       }).join('')}</div></details>`).join('');
   box.innerHTML=`<div class="prenatal-layout">
     <div class="prenatal-main">
@@ -3445,6 +3518,7 @@ function renderPrenatal(){
         <input id="addSyndName" type="text" placeholder="Añadir síndrome por nombre (p. ej. Fibrosis quística)" autocomplete="off" style="flex:1;min-width:220px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
         <button class="btn" id="btnAddSynd" title="La IA genera ese síndrome; sus HPO se verifican contra JAX y se guarda en tu GitHub">+ Añadir (IA)</button>
         <button class="btn" id="btnSindIA" title="La IA propone varios síndromes nuevos; HPO verificados contra JAX y guardados en tu GitHub">✨ Buscar nuevos (IA)</button>
+        ${(PRENATAL_CUSTOM.findings||[]).some(t=>!t.verified)?'<button class="btn" id="btnRevisarIA" title="Comprueba que cada HPO añadido por IA corresponde realmente al concepto; corrige los erróneos">🔧 Revisar hallazgos IA</button>':''}
       </div>
       <div id="prenatalIAupd" style="margin-bottom:10px"></div>
       ${findings}
@@ -3454,13 +3528,16 @@ function renderPrenatal(){
   renderPrenatalInd();
   const fil=document.getElementById('prenatalFilter'); if(fil) fil.addEventListener('input', e=>applyPrenatalFilter(e.target.value));
   const bIA=document.getElementById('btnSindIA'); if(bIA) bIA.addEventListener('click', actualizarSindromesIA);
+  const bRev=document.getElementById('btnRevisarIA'); if(bRev) bRev.addEventListener('click', revisarHallazgosIA);
   const addInp=document.getElementById('addSyndName'); const addBtn=document.getElementById('btnAddSynd');
   if(addBtn) addBtn.addEventListener('click', ()=>añadirSindromePorNombre(addInp.value));
   if(addInp) addInp.addEventListener('keydown', e=>{ if(e.key==='Enter') añadirSindromePorNombre(addInp.value); });
   box.querySelectorAll('[data-rmsyn]').forEach(a=>a.addEventListener('click', ()=>quitarSindromeIA(a.dataset.rmsyn)));
+  box.querySelectorAll('[data-vfy]').forEach(a=>a.addEventListener('click', (e)=>{ e.stopPropagation(); verificarHallazgoIA(a.dataset.vfy); }));
+  box.querySelectorAll('[data-rmf]').forEach(a=>a.addEventListener('click', (e)=>{ e.stopPropagation(); quitarHallazgoIA(a.dataset.rmf); }));
   box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
   box.querySelectorAll('.morfo-term').forEach(btn=>btn.addEventListener('click', (e)=>{
-    if(e.target.closest('.info-dot')) return;
+    if(e.target.closest('.info-dot') || e.target.closest('.tip-ai') || e.target.closest('.x')) return;
     const id=btn.dataset.pid, es=btn.dataset.pes;
     if(selections[id]){ delete selections[id]; }
     else { selections[id]={hpo:id, es, en:es, region:'prenatal', origen:'prenatal', verified:true}; }
