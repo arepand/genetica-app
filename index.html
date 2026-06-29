@@ -805,6 +805,8 @@ function afterPatientChange(){
   const lab=document.getElementById('pbLabel'); if(lab) lab.textContent=patientLabel();
   renderPatientLine();
   if(currentSection==='antropometria') renderAnthroResult();
+  // El diferencial por solapamiento (JAX) se reajusta por edad/sexo → recalcula su ponderación.
+  try{ jaxForIds=''; renderMonarch(); }catch(e){}
 }
 function renderPatientBar(){
   const bar=document.getElementById('patientBar'); if(!bar) return;
@@ -2581,6 +2583,26 @@ function jaxRowHtml(r){
     <div class="dx-meta">${diseaseLinks(r.id).join(' · ')}</div>
   </div>`;
 }
+// Categoría del paciente para el ajuste del diferencial (gestación → prenatal).
+function patientCatForDx(){
+  if(patient.gestacion) return 'prenatal';
+  const y=patientAgeYears(); if(y==null) return null;
+  if(y < 0.0833) return 'neonatal';     // < ~1 mes
+  if(y >= PED_MAX_AGE) return 'adulto';
+  return 'pediatrico';
+}
+// Ajuste heurístico por edad/sexo (verbatim del motor de referencia): X-linked en mujer,
+// formas infantiles/neonatales/congénitas en adulto, formas de inicio adulto en neonato/prenatal.
+function applyPatientWeighting(ranked){
+  const cat=patientCatForDx();
+  return ranked.map(d=>{
+    let w=d.count; const n=(d.name||'').toLowerCase();
+    if(patient.sexo==='Femenino' && /x-linked/.test(n) && !/dominant/.test(n)) w-=0.5;
+    if(cat==='adulto' && /(infantile|neonatal|congenital)/.test(n)) w-=0.3;
+    if((cat==='neonatal'||cat==='prenatal') && /adult[- ]onset/.test(n)) w-=0.3;
+    return Object.assign({}, d, {weight:w});
+  }).sort((a,b)=> (b.weight-a.weight) || (b.count-a.count));
+}
 async function runJaxDx(){
   const ids=Object.keys(selections); if(ids.length<3){ jaxResults=null; return; }
   const forIds=ids.join(','); if(jaxForIds===forIds && (jaxResults||jaxError) && !jaxLoading) return;
@@ -2591,8 +2613,8 @@ async function runJaxDx(){
     if(jaxForIds!==Object.keys(selections).join(',')){ jaxLoading=false; return; } // cambió mientras
     const counts={}, names={};
     lists.forEach(list=> list.forEach(x=>{ counts[x.id]=(counts[x.id]||0)+1; names[x.id]=x.name; }));
-    jaxResults=Object.keys(counts).map(id=>({id, name:names[id], count:counts[id], total:subset.length}))
-      .filter(d=>d.count>=2).sort((a,b)=>b.count-a.count).slice(0,DX_TOP);
+    const ranked=Object.keys(counts).map(id=>({id, name:names[id], count:counts[id], total:subset.length})).filter(d=>d.count>=2);
+    jaxResults=applyPatientWeighting(ranked).slice(0,DX_TOP);
   }catch(e){ jaxError='No se pudo consultar JAX ('+e.message+').'; }
   jaxLoading=false; renderMonarch();
 }
@@ -2694,7 +2716,7 @@ function renderMonarch(){
   const ext=`<div class="dx-meta" style="margin-top:10px">También: <a href="https://pubcasefinder.dbcls.jp/?hpo_id=${cur}" target="_blank" rel="noopener">PubCaseFinder web</a>. (El clásico <b>Phenomizer/Orphamizer</b> de Charité está descontinuado; su algoritmo lo provee hoy Monarch.)</div>`;
   box.innerHTML=`<div class="cart-group-title">Diferencial por fenotipo (fenotipo → enfermedad)</div>`
     +`<div class="dx-meta" style="margin:-2px 0 8px">Las cifras son <b>solapamiento/similitud/ranking</b> de cada herramienta — <b>no</b> son probabilidad ni grado de evidencia clínica. Orientativo, máx. ${DX_TOP} por fuente.</div>`
-    +`<div class="dx-src">Solapamiento HPO · JAX (OMIM/Orphanet)</div>`+jBody
+    +`<div class="dx-src">Solapamiento HPO · JAX (OMIM/Orphanet)${patientLabel()?` <span style="color:var(--ink3);font-weight:400">· ajustado: ${patientLabel()}</span>`:''}</div>`+jBody
     +`<div class="dx-src" style="margin-top:12px">Similitud semántica · Monarch (MONDO)</div>`+mBody
     +`<div class="dx-src" style="margin-top:12px">PubCaseFinder · OMIM</div>`+pBody+pBtn
     +ext;
