@@ -291,6 +291,7 @@
   .morfo-chip{display:inline-flex; align-items:center; gap:6px; background:var(--panel2); border:1px solid var(--line); border-radius:14px; padding:4px 9px; font-size:12px; margin:0 4px 4px 0;}
   #morfoSelected{margin-bottom:14px; padding-bottom:12px; border-bottom:2px solid var(--line);}
   .tip-ai{display:inline-block; margin-top:5px; color:var(--accent); cursor:pointer; font-size:11px; text-decoration:underline; font-weight:600;}
+  .dx-src{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--accent); margin:4px 0 5px;}
   .cart.cart-full{position:static; top:auto; border-left:none; width:auto; max-width:1080px; margin:0 auto; padding:24px 30px 90px;}
   .patient-bar{display:flex; align-items:center; flex-wrap:wrap; gap:14px; padding:9px 30px; border-bottom:1px solid var(--line); background:var(--panel2); font-size:12.5px;}
   .patient-bar .pb-group{display:flex; align-items:center; gap:6px;}
@@ -2553,7 +2554,10 @@ function renderDifferential(){
    activa ni usa LLM (coste 0). CORS abierto al origen arepand.github.io.
    =========================================================================== */
 const MONARCH_SEMSIM='https://api-v3.monarchinitiative.org/v3/api/semsim/search';
+const PCF_API='https://pubcasefinder.dbcls.jp/api/pcf_get_ranked_list?target=omim&format=json&hpo_id=';
+const DX_TOP=5;   // mostrar solo las 5 mejores de cada fuente
 let monarchResults=null, monarchLoading=false, monarchError=null, monarchForIds='', monarchTimer=null;
+let pcfResults=null, pcfLoading=false, pcfError=null, pcfForIds='';
 
 function monarchXrefLinks(xref){
   const out=[];
@@ -2568,7 +2572,7 @@ function monarchXrefLinks(xref){
 function monarchRowHtml(r){
   const links=[`<a href="https://monarchinitiative.org/${r.id}" target="_blank" rel="noopener">Monarch</a>`, ...monarchXrefLinks(r.xref)];
   return `<div class="dx">
-    <div class="dx-hd"><span class="dx-nm">${(r.name||r.id).replace(/</g,'&lt;')}</span><span class="pill sug">≈ ${r.score!=null?(+r.score).toFixed(1):'—'}</span></div>
+    <div class="dx-hd"><span class="dx-nm">${escHtml(r.name||r.id)}</span><span class="pill sug" title="Similitud semántica de fenotipos (IC de ancestros comunes). NO es probabilidad ni grado de evidencia.">≈ ${r.score!=null?(+r.score).toFixed(1):'—'}</span></div>
     <div class="dx-meta">${r.id} · ${r.phenos} fenotipos · ${links.join(' · ')}</div>
   </div>`;
 }
@@ -2580,11 +2584,11 @@ async function runMonarchDx(){
   try{
     const resp=await fetch(MONARCH_SEMSIM, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({termset:ids, group:'Human Diseases', metric:'ancestor_information_content', limit:15})
+      body:JSON.stringify({termset:ids, group:'Human Diseases', metric:'ancestor_information_content', limit:DX_TOP})
     });
     if(!resp.ok) throw new Error('HTTP '+resp.status);
     const data=await resp.json();
-    monarchResults=(Array.isArray(data)?data:[]).map(r=>({
+    monarchResults=(Array.isArray(data)?data:[]).slice(0,DX_TOP).map(r=>({
       id:r.subject&&r.subject.id, name:(r.subject&&r.subject.name)||'',
       score:r.score, xref:(r.subject&&r.subject.xref)||[],
       phenos:(r.subject&&r.subject.has_phenotype_count)||0
@@ -2592,25 +2596,59 @@ async function runMonarchDx(){
   }catch(e){ monarchError='No se pudo consultar Monarch ('+e.message+'). Posible bloqueo del proxy del hospital.'; }
   monarchLoading=false; renderMonarch();
 }
+function pcfRowHtml(r){
+  const links=[];
+  if(r.omim) links.push(`<a href="https://omim.org/entry/${r.omim}" target="_blank" rel="noopener">OMIM:${r.omim}</a>`);
+  if(r.mondo) links.push(`<a href="https://monarchinitiative.org/${r.mondo}" target="_blank" rel="noopener">${r.mondo}</a>`);
+  return `<div class="dx">
+    <div class="dx-hd"><span class="dx-nm">${escHtml(r.name||r.id)}</span><span class="pill sug" title="Puntuación de ranking de PubCaseFinder. NO es probabilidad ni grado de evidencia.">${r.score!=null?(+r.score).toFixed(2):('#'+(r.rank||'?'))}</span></div>
+    <div class="dx-meta">${r.gene?'gen '+escHtml(r.gene)+' · ':''}${r.inh?escHtml(r.inh)+' · ':''}${links.join(' · ')}</div>
+  </div>`;
+}
+async function runPcfDx(){
+  const ids=Object.keys(selections); if(ids.length<2) return;
+  pcfLoading=true; pcfError=null; pcfForIds=ids.join(','); renderMonarch();
+  try{
+    const resp=await fetch(PCF_API+ids.join(','));
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    const data=await resp.json();
+    pcfResults=(Array.isArray(data)?data:[]).slice(0,DX_TOP).map(r=>({
+      name:r.omim_disease_name_en||r.id, omim:(r.id||'').replace('OMIM:',''),
+      mondo:(r.mondo_id&&r.mondo_id[0])||'',
+      gene:(r.hgnc_gene_symbol&&r.hgnc_gene_symbol.join(', '))||'',
+      inh:(r.inheritance_en?Object.values(r.inheritance_en).join(', '):''),
+      score:r.score, rank:r.rank
+    }));
+  }catch(e){ pcfError='No se pudo consultar PubCaseFinder ('+e.message+').'; }
+  pcfLoading=false; renderMonarch();
+}
 function renderMonarch(){
   const box=document.getElementById('monarchBox'); if(!box) return;
   const ids=Object.keys(selections);
   if(ids.length<2){ box.style.display='none'; monarchTimer&&clearTimeout(monarchTimer); return; }
   box.style.display='block';
   const cur=ids.join(',');
-  // Auto en vivo: si los HPO cambiaron y no estamos ya consultándolos, relanza (con retardo)
-  if(!monarchLoading && monarchForIds!==cur){
-    monarchTimer&&clearTimeout(monarchTimer);
-    monarchTimer=setTimeout(runMonarchDx, 600);
-  }
-  let body;
-  if(monarchError) body='<div class="err">'+monarchError+'</div>';
-  else if(monarchResults && monarchResults.length) body=monarchResults.map(monarchRowHtml).join('');
-  else if(monarchLoading || monarchForIds!==cur) body='<div class="loading">Buscando enfermedades que encajan con el fenotipo…</div>';
-  else body='<div class="empty">Sin coincidencias para este conjunto de HPO.</div>';
-  const updating=(monarchLoading||monarchForIds!==cur) && monarchResults && monarchResults.length
-    ? ' <span class="dx-meta" style="font-weight:400">· actualizando…</span>' : '';
-  box.innerHTML='<div class="cart-group-title">Diferencial por fenotipo (Orphanet/Monarch)'+updating+'</div>'+body;
+  // Monarch en vivo (debounce); PubCaseFinder a demanda (payload grande)
+  if(!monarchLoading && monarchForIds!==cur){ monarchTimer&&clearTimeout(monarchTimer); monarchTimer=setTimeout(runMonarchDx, 600); }
+  let mBody;
+  if(monarchError) mBody='<div class="err">'+monarchError+'</div>';
+  else if(monarchResults && monarchResults.length) mBody=monarchResults.map(monarchRowHtml).join('');
+  else if(monarchLoading || monarchForIds!==cur) mBody='<div class="loading">Buscando en Monarch…</div>';
+  else mBody='<div class="empty">Sin coincidencias.</div>';
+  const mUpd=(monarchLoading||monarchForIds!==cur)&&monarchResults&&monarchResults.length?' · actualizando…':'';
+  const pStale=pcfForIds && pcfForIds!==cur;
+  let pBody='';
+  if(pcfLoading) pBody='<div class="loading">Consultando PubCaseFinder… (puede tardar)</div>';
+  else if(pcfError) pBody='<div class="err">'+pcfError+'</div>';
+  else if(pcfResults&&pcfResults.length) pBody=pcfResults.map(pcfRowHtml).join('')+(pStale?'<div class="dx-meta" style="color:#b8860b">Rasgos cambiados — recalcula.</div>':'');
+  const pBtn=`<button class="btn" id="btnPcf" style="margin-top:6px">${pcfResults?'↻ Recalcular':'🔎 Buscar en PubCaseFinder (OMIM)'}</button>`;
+  const ext=`<div class="dx-meta" style="margin-top:10px">También: <a href="https://pubcasefinder.dbcls.jp/?hpo_id=${cur}" target="_blank" rel="noopener">PubCaseFinder web</a>. (El clásico <b>Phenomizer/Orphamizer</b> de Charité está descontinuado; su algoritmo lo provee hoy Monarch.)</div>`;
+  box.innerHTML=`<div class="cart-group-title">Diferencial por fenotipo (fenotipo → enfermedad)</div>`
+    +`<div class="dx-meta" style="margin:-2px 0 8px">Las cifras son <b>similitud/ranking</b> de cada herramienta — <b>no</b> son probabilidad ni grado de evidencia clínica. Orientativo, máx. ${DX_TOP} por fuente.</div>`
+    +`<div class="dx-src">Monarch · MONDO${mUpd}</div>`+mBody
+    +`<div class="dx-src" style="margin-top:12px">PubCaseFinder · OMIM</div>`+pBody+pBtn
+    +ext;
+  const b=box.querySelector('#btnPcf'); if(b) b.addEventListener('click', runPcfDx);
 }
 
 /* ===========================================================================
