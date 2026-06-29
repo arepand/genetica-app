@@ -288,6 +288,8 @@
   .morfo-term .hp{font-size:10px; opacity:.65;}
   .morfo-chip{display:inline-flex; align-items:center; gap:6px; background:var(--panel2); border:1px solid var(--line); border-radius:14px; padding:4px 9px; font-size:12px; margin:0 4px 4px 0;}
   #morfoSelected{margin-bottom:14px; padding-bottom:12px; border-bottom:2px solid var(--line);}
+  .morfo-atlas{display:inline-block; font-size:11.5px; color:var(--accent); text-decoration:none; margin:0 0 6px;}
+  .morfo-atlas:hover{text-decoration:underline;}
 
   /* Biblioteca de fichas */
   .lib-head{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:16px;}
@@ -2491,33 +2493,42 @@ let currentSection='fenotipado';
    Términos HPO estandarizados; al pulsar se verifican contra JAX y se añaden
    al fenotipo. Coste 0 en runtime. Imágenes de los PDFs → v2.
    =========================================================================== */
+// Atlas oficial NIH "Elements of Morphology" (definiciones CON figuras), por región.
+const EOM = {
+  caraCraneo:'https://elementsofmorphology.nih.gov/index.cgi?lid=2cdf1af83bac307d514927d4feacf687',
+  periorbital:'https://elementsofmorphology.nih.gov/index.cgi?lid=bfa12ec17a68819c9f5de79c8c8f6129',
+  oreja:'https://elementsofmorphology.nih.gov/index.cgi?lid=ea200edc84b2773f8eaa0564dd3c2420',
+  nariz:'https://elementsofmorphology.nih.gov/index.cgi?lid=0eefffaf2306e0b12ed39a448f70978c',
+  boca:'https://elementsofmorphology.nih.gov/index.cgi?lid=04d04370865fb08d1a7bac6cf4405649',
+  manosPies:'https://elementsofmorphology.nih.gov/index.cgi?lid=b9877cf69e014177342f9e70fae9210e'
+};
 const MORFO_REGIONS = [
-  {region:'Cráneo y forma craneal', terms:[
+  {region:'Cráneo y forma craneal', ref:EOM.caraCraneo, terms:[
     {id:'HP:0000256', es:'Macrocefalia'}, {id:'HP:0000252', es:'Microcefalia'},
     {id:'HP:0000248', es:'Braquicefalia'}, {id:'HP:0000268', es:'Dolicocefalia'},
     {id:'HP:0001357', es:'Plagiocefalia'}, {id:'HP:0000243', es:'Trigonocefalia'},
     {id:'HP:0002007', es:'Prominencia frontal'}, {id:'HP:0005280', es:'Puente nasal deprimido'}
   ]},
-  {region:'Cara (general)', terms:[
+  {region:'Cara (general)', ref:EOM.caraCraneo, terms:[
     {id:'HP:0000280', es:'Facies tosca'}, {id:'HP:0000276', es:'Cara alargada'},
     {id:'HP:0000325', es:'Cara triangular'}, {id:'HP:0000311', es:'Cara redonda'},
     {id:'HP:0011800', es:'Hipoplasia mediofacial'}, {id:'HP:0000324', es:'Asimetría facial'},
     {id:'HP:0011220', es:'Perfil facial plano'}
   ]},
-  {region:'Ojos y región periorbital', terms:[
+  {region:'Ojos y región periorbital', ref:EOM.periorbital, terms:[
     {id:'HP:0000316', es:'Hipertelorismo'}, {id:'HP:0000601', es:'Hipotelorismo'},
     {id:'HP:0000506', es:'Telecanto'}, {id:'HP:0000582', es:'Fisuras palpebrales ascendentes'},
     {id:'HP:0000494', es:'Fisuras palpebrales descendentes'}, {id:'HP:0000286', es:'Epicanto'},
     {id:'HP:0000508', es:'Ptosis palpebral'}, {id:'HP:0000581', es:'Blefarofimosis'},
     {id:'HP:0000520', es:'Proptosis'}, {id:'HP:0000664', es:'Sinofris'}, {id:'HP:0000527', es:'Pestañas largas'}
   ]},
-  {region:'Nariz y filtrum', terms:[
+  {region:'Nariz y filtrum', ref:EOM.nariz, terms:[
     {id:'HP:0000431', es:'Puente nasal ancho'}, {id:'HP:0000426', es:'Puente nasal alto'},
     {id:'HP:0000463', es:'Narinas antevertidas'}, {id:'HP:0000414', es:'Nariz bulbosa'},
     {id:'HP:0003196', es:'Nariz corta'}, {id:'HP:0000455', es:'Punta nasal ancha'},
     {id:'HP:0000343', es:'Filtrum largo'}, {id:'HP:0000322', es:'Filtrum corto'}, {id:'HP:0000319', es:'Filtrum liso'}
   ]},
-  {region:'Labios, boca y mandíbula', terms:[
+  {region:'Labios, boca y mandíbula', ref:EOM.boca, terms:[
     {id:'HP:0000219', es:'Labio superior fino'}, {id:'HP:0000215', es:'Labio superior grueso'},
     {id:'HP:0000154', es:'Boca ancha'}, {id:'HP:0000160', es:'Boca estrecha'},
     {id:'HP:0002714', es:'Comisuras bucales hacia abajo'}, {id:'HP:0000218', es:'Paladar ojival'},
@@ -2525,13 +2536,21 @@ const MORFO_REGIONS = [
     {id:'HP:0000347', es:'Micrognatia'}, {id:'HP:0000278', es:'Retrognatia'},
     {id:'HP:0000303', es:'Prognatismo mandibular'}, {id:'HP:0000158', es:'Macroglosia'}
   ]},
-  {region:'Orejas', terms:[
+  {region:'Dientes', ref:EOM.boca, terms:[
+    {id:'HP:0000668', es:'Hipodoncia'}, {id:'HP:0000677', es:'Oligodoncia'},
+    {id:'HP:0000691', es:'Microdoncia'}, {id:'HP:0001572', es:'Macrodoncia'},
+    {id:'HP:0000687', es:'Dientes muy separados'}, {id:'HP:0000678', es:'Apiñamiento dental'},
+    {id:'HP:0000684', es:'Erupción dental retrasada'}, {id:'HP:0000695', es:'Diente natal'},
+    {id:'HP:0000698', es:'Diente cónico'}, {id:'HP:0006297', es:'Hipoplasia del esmalte'},
+    {id:'HP:0000679', es:'Taurodontismo'}
+  ]},
+  {region:'Orejas', ref:EOM.oreja, terms:[
     {id:'HP:0000369', es:'Implantación baja de las orejas'}, {id:'HP:0000358', es:'Orejas rotadas posteriormente'},
     {id:'HP:0000400', es:'Macrotia'}, {id:'HP:0008551', es:'Microtia'},
     {id:'HP:0000384', es:'Apéndice preauricular'}, {id:'HP:0004467', es:'Fosita preauricular'},
     {id:'HP:0000378', es:'Oreja en copa'}, {id:'HP:0000396', es:'Hélix sobreplegado'}
   ]},
-  {region:'Manos y pies', terms:[
+  {region:'Manos y pies', ref:EOM.manosPies, terms:[
     {id:'HP:0001156', es:'Braquidactilia'}, {id:'HP:0001166', es:'Aracnodactilia'},
     {id:'HP:0004209', es:'Clinodactilia del 5º dedo'}, {id:'HP:0001159', es:'Sindactilia'},
     {id:'HP:0010442', es:'Polidactilia'}, {id:'HP:0012385', es:'Camptodactilia'},
@@ -2566,7 +2585,7 @@ function renderDismorfologia(){
   box.innerHTML = `<div class="step-title">Dismorfología</div>
     <div class="step-sub">Recorrido región por región con términos estandarizados (<i>Elements of Morphology</i>). Pulsa un rasgo para añadirlo al fenotipo (se verifica contra JAX y se reetiqueta en español). La ⓘ explica el significado. Imágenes de referencia: próxima versión.</div>
     <div id="morfoSelected"></div>`
-    + MORFO_REGIONS.map(r=>`<details class="morfo-region" open><summary>${r.region} <span style="color:var(--ink3);font-weight:400">· ${r.terms.length}</span></summary><div class="morfo-terms">${r.terms.map(morfoTermHtml).join('')}</div></details>`).join('');
+    + MORFO_REGIONS.map(r=>`<details class="morfo-region" open><summary>${r.region} <span style="color:var(--ink3);font-weight:400">· ${r.terms.length}</span></summary>${r.ref?`<a class="morfo-atlas" href="${r.ref}" target="_blank" rel="noopener">🖼 Atlas con figuras (NIH · Elements of Morphology)</a>`:''}<div class="morfo-terms">${r.terms.map(morfoTermHtml).join('')}</div></details>`).join('');
   renderMorfoSelected();
   box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
   box.querySelectorAll('.morfo-term').forEach(btn=>btn.addEventListener('click', async (e)=>{
