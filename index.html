@@ -3102,16 +3102,38 @@ async function renderBiblioteca(filter){
       <h2>📚 Biblioteca de fichas <span style="font-size:12px;color:var(--ink3)">(${_libCache.length})</span></h2>
       <input class="lib-search" id="libSearch" placeholder="Buscar por nombre, id o sinónimo…" value="${(filter||'').replace(/"/g,'&quot;')}">
       <button class="btn" id="libRefresh">↻ Refrescar</button>
+      <button class="btn" id="libValidate">🔧 Validar HPO de todos</button>
       <button class="btn primary" id="libNueva">✨ Nueva ficha</button>
     </div>
+    <div id="libValidateOut" style="margin:0 0 12px"></div>
     ${fichas.length? `<div class="lib-grid">${fichas.map(libCardHtml).join('')}</div>`
        : `<div class="placeholder">${_libCache.length?'Sin resultados para el filtro.':'Tu biblioteca está vacía. Crea fichas desde Fenotipado.'}</div>`}`;
   const si=document.getElementById('libSearch');
   si.addEventListener('input', ()=>renderBiblioteca(si.value));
   document.getElementById('libRefresh').addEventListener('click', ()=>renderBiblioteca());
+  document.getElementById('libValidate').addEventListener('click', validarTodosProtocolos);
   document.getElementById('libNueva').addEventListener('click', ()=>{ showSection('fenotipado'); const m=document.getElementById('inMotivo'); if(m) m.focus(); });
   box.querySelectorAll('[data-ver]').forEach(b=>b.addEventListener('click', ()=>abrirFichaBiblioteca(b.dataset.ver, false)));
   box.querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click', ()=>abrirFichaBiblioteca(b.dataset.edit, true)));
+}
+async function validarTodosProtocolos(){
+  const out=document.getElementById('libValidateOut'); if(!out) return;
+  const fichas=_libCache.slice();
+  if(!fichas.length){ out.innerHTML='<div class="empty">No hay protocolos que validar.</div>'; return; }
+  const report=[];
+  for(let i=0;i<fichas.length;i++){
+    out.innerHTML='<div class="loading">Validando '+(i+1)+'/'+fichas.length+' contra JAX: '+escHtml(fichas[i].nombre||fichas[i].id)+'…</div>';
+    let f=null; try{ f=await getFicha(fichas[i].id); }catch(e){}
+    if(!f){ report.push({id:fichas[i].id, nombre:fichas[i].nombre||fichas[i].id, issues:[{id:'(no se pudo cargar)'}]}); continue; }
+    let issues=[]; try{ issues=await validarFichaHpo(f); }catch(e){ issues=[{id:'error: '+e.message}]; }
+    report.push({id:fichas[i].id, nombre:fichas[i].nombre||f.nombre_es||fichas[i].id, issues});
+  }
+  const bad=report.filter(r=>r.issues && r.issues.length);
+  out.innerHTML = bad.length
+    ? `<div style="color:#f2b3a6;font-weight:600;margin:6px 0">${bad.length} de ${fichas.length} protocolo(s) con HPO inválidos:</div>`
+      + bad.map(r=>`<div style="padding:6px 0;border-top:1px solid var(--line)"><b>${escHtml(r.nombre)}</b> <span class="hp">${r.id}</span> — ${r.issues.length} inválido(s): ${r.issues.map(it=>escHtml(it.id)).join(', ')} <button class="btn" data-fixficha="${r.id}" style="padding:2px 9px;font-size:11px;margin-left:6px">Corregir</button></div>`).join('')
+    : `<div style="color:var(--ok);font-weight:600;margin:6px 0">✓ Los ${fichas.length} protocolos tienen todos sus HPO válidos.</div>`;
+  out.querySelectorAll('[data-fixficha]').forEach(b=>b.addEventListener('click', async ()=>{ let f=null; try{ f=await getFicha(b.dataset.fixficha); }catch(e){} if(f) openValidarHpo(f); }));
 }
 function libCardHtml(f){
   const pob = f.poblacion && f.poblacion!=='unica' ? `<span class="pop-badge">${f.poblacion==='pediatrica'?'pediátrica':'adulta'}</span>` : '';
