@@ -543,11 +543,56 @@ async function llmTranslateDef(enDef){
 const defEnglish = {};   // id -> definición inglesa cruda (para mejora IA bajo demanda)
 function loadDefCache(id){ try{ return localStorage.getItem('fh_hpodef_'+id); }catch(e){ return null; } }
 function saveDefCache(id, v){ try{ localStorage.setItem('fh_hpodef_'+id, v); }catch(e){} }
+
+/* Definiciones IA traducidas, persistidas en GitHub (defs/es.json) → permanentes
+   y compartidas entre dispositivos; el token se gasta una sola vez en la vida. */
+let ghDefs=null, ghDefsPromise=null, ghDefsMigrated=false;
+function cachedGhDefs(){ try{ return JSON.parse(localStorage.getItem('fh_ghdefs'))||{}; }catch(e){ return {}; } }
+async function loadGhDefs(){
+  let defs=null;
+  if(ghConfigured()){
+    try{ const r=await ghGetFile('defs/es.json'); if(r.json) defs=r.json; else if(r.missing) defs={}; }catch(e){}
+  }
+  if(!defs) defs=cachedGhDefs();
+  ghDefs=defs;
+  try{ localStorage.setItem('fh_ghdefs', JSON.stringify(defs)); }catch(e){}
+  if(!ghDefsMigrated){ ghDefsMigrated=true; migrateLocalIaDefs(); }
+  return ghDefs;
+}
+function ensureGhDefs(){ if(ghDefs) return Promise.resolve(ghDefs); if(!ghDefsPromise) ghDefsPromise=loadGhDefs(); return ghDefsPromise; }
+// Sube en UN commit las traducciones IA que ya tienes en el navegador y aún no están en GitHub.
+async function migrateLocalIaDefs(){
+  if(!ghConfigured()) return;
+  const pending={};
+  try{ for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(!k || k.indexOf('fh_hpodef_')!==0) continue;
+    const id=k.slice(10); const v=localStorage.getItem(k);
+    if(v && /\(traducci[oó]n IA\)/.test(v) && !(ghDefs&&ghDefs[id])) pending[id]=v;
+  } }catch(e){}
+  const ids=Object.keys(pending); if(!ids.length) return;
+  let idx, sha=null;
+  try{ const ci=await ghGetFile('defs/es.json'); idx=ci.json||{}; sha=ci.sha; }catch(e){ idx=Object.assign({}, ghDefs||{}); }
+  ids.forEach(id=> idx[id]=pending[id]);
+  try{ await ghPutFile('defs/es.json', idx, 'defs: migrar '+ids.length+' traducción(es) IA', sha); ghDefs=idx; localStorage.setItem('fh_ghdefs', JSON.stringify(idx)); }catch(e){}
+}
+async function saveGhDef(id, text){
+  if(!ghConfigured()) return;
+  await ensureGhDefs();
+  let idx, sha=null;
+  try{ const ci=await ghGetFile('defs/es.json'); idx=ci.json||{}; sha=ci.sha; }catch(e){ idx=Object.assign({}, ghDefs||{}); }
+  idx[id]=text;
+  try{ await ghPutFile('defs/es.json', idx, 'defs: traducción IA '+id, sha); ghDefs=idx; localStorage.setItem('fh_ghdefs', JSON.stringify(idx)); }catch(e){}
+}
+
 async function fetchLiveDefinition(id){
   if(STATIC_DEFINITIONS[id]) return STATIC_DEFINITIONS[id];
   if(liveDefinitionCache[id] !== undefined) return liveDefinitionCache[id];
+  // 1) GitHub (traducciones IA compartidas, autoritativas) → gratis en cualquier dispositivo
+  const g = await ensureGhDefs();
+  if(g && g[id]){ liveDefinitionCache[id]=g[id]; saveDefCache(id, g[id]); return g[id]; }
+  // 2) caché local del navegador (incluye traducciones libres)
   const cached = loadDefCache(id);
   if(cached){ liveDefinitionCache[id]=cached; return cached; }
+  // 3) obtener definición y traducir libre; IA solo bajo demanda (al abrir)
   let result='';
   try{
     const r = await fetch(HPO_API + '/terms/' + id);
@@ -564,7 +609,7 @@ async function fetchLiveDefinition(id){
   liveDefinitionCache[id]=result;
   return result;
 }
-// Mejora con IA un tooltip sin traducción válida (al abrirlo). Cachea el resultado.
+// Mejora con IA un tooltip sin traducción válida (al abrirlo). Cachea y SUBE a GitHub.
 async function upgradeDefinitionAi(id, dot){
   const en=defEnglish[id]; if(!en || !anyProvider()) return;
   const tip=dot && dot.querySelector('.tooltip');
@@ -573,6 +618,7 @@ async function upgradeDefinitionAi(id, dot){
   const result = ai ? (ai+' (traducción IA)') : (en+' (EN · sin traducción)');
   liveDefinitionCache[id]=result; saveDefCache(id, result);
   if(tip) tip.textContent=result;
+  if(ai) saveGhDef(id, result);   // permanente y compartida entre dispositivos
 }
 function prefetchDefinitions(box){
   if(!box) return;
