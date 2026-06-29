@@ -435,9 +435,10 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.6.4';
+const APP_VERSION='1.7.0';
 const CHANGELOG=[
-  {v:'1.6.4', d:'2026-06-30', c:['Búsqueda RAG vectorial: diagnóstico claro de por qué no funciona (falta clave OpenAI · sin documentos RAG · sin texto/Drive sin conectar · error de OpenAI) en vez de un genérico «sin coincidencias».']},
+  {v:'1.7.0', d:'2026-06-30', c:['RAG ahora funciona SOLO con Claude (sin OpenAI): la búsqueda en tus documentos pasa de embeddings (que requerían OpenAI) a recuperación léxica BM25 en el navegador — gratis, instantánea y sin API externa. Solo necesita el texto del PDF (Drive).']},
+  {v:'1.6.4', d:'2026-06-30', c:['Búsqueda RAG: diagnóstico claro de por qué no funciona en vez de un genérico «sin coincidencias».']},
   {v:'1.6.3', d:'2026-06-30', c:['Logotipo definitivo del usuario (ariadna-logo.png): icono en la cabecera (recortado por CSS) y favicon.']},
   {v:'1.6.2', d:'2026-06-30', c:['Nuevo logotipo (laberinto + hilo + doble hélice de ADN) en la cabecera y como favicon. Subtítulo: «El hilo del diagnóstico · guía · ordena · descubre».']},
   {v:'1.6.1', d:'2026-06-29', c:['Eslogan corto: «El hilo que guía de la sospecha al diagnóstico».']},
@@ -2473,45 +2474,49 @@ async function ragRetrieve(query, k){
 async function buscarDocsRAG(query){
   const out=document.getElementById('docSearchOut'); if(!out) return;
   query=(query||'').trim(); if(!query){ out.innerHTML=''; return; }
-  const c=loadCfg();
-  if(!c.openaiKey){ out.innerHTML='<div class="study-flag">⚠ La búsqueda vectorial necesita una clave de <b>OpenAI</b> (para los embeddings) en ⚙ Ajustes. <b>Anthropic/Claude no ofrece API de embeddings</b>, así que con solo la clave de Claude esto no funciona.</div>'; return; }
   const ids=Object.keys(ragDocs);
   if(!ids.length){ out.innerHTML='<div class="study-flag">⚠ No tienes documentos marcados como <b>RAG</b>. Ve a «Documentos», conéctate a Drive y marca la casilla <b>RAG</b> de los PDF que quieras buscar.</div>'; return; }
-  out.innerHTML='<div class="loading">Preparando la búsqueda (embeddings)…</div>';
-  // 1) Embedding de la consulta → detecta problemas de clave/cuota/modelo de OpenAI.
-  let qv;
-  try{ qv=(await embedTexts([query]))?.[0]; }
-  catch(e){ out.innerHTML='<div class="err">OpenAI rechazó los embeddings: '+escHtml(e.message)+'<br><span class="dx-meta">Revisa que la clave de OpenAI sea válida, tenga saldo y acceso al modelo '+EMBED_MODEL+'.</span></div>'; return; }
-  if(!qv){ out.innerHTML='<div class="err">No se pudo generar el embedding de la consulta.</div>'; return; }
-  // 2) Reunir embeddings de cada documento RAG, registrando POR QUÉ falla cada uno.
-  const recs=[]; const sinTexto=[]; const errs=[];
-  for(const id of ids){
-    let rec=cachedEmb(id);
-    if(!rec){
-      let t=null; try{ t=await driveDownloadText(id, ragDocs[id].mt); }catch(e){}
-      if(!t){ sinTexto.push(ragDocs[id].name||id); continue; }
-      try{ rec=await ensureDocEmbeddings(id, ragDocs[id].name, t); }catch(e){ errs.push((ragDocs[id].name||id)+': '+e.message); continue; }
-    }
-    if(rec&&rec.chunks&&rec.chunks.length) recs.push(rec);
+  out.innerHTML='<div class="loading">Buscando en tus documentos…</div>';
+  let res; try{ res=await ragRetrieveLocal(query, 6); }
+  catch(e){ out.innerHTML='<div class="err">Error: '+escHtml(e.message)+'</div>'; return; }
+  const {hits, sinTexto}=res;
+  if(!hits.length){
+    if(sinTexto.length===ids.length){ out.innerHTML='<div class="study-flag">No pude leer el texto de tus documentos. Pulsa <b>Conectar</b> en «Documentos» (el acceso a Drive caduca a la hora) y vuelve a buscar — necesito extraer el texto del PDF una vez.</div>'; return; }
+    out.innerHTML='<div class="empty">Sin coincidencias para «'+escHtml(query)+'».'+(sinTexto.length?(' ('+sinTexto.length+' doc sin texto: conecta Drive)'):'')+'</div>'; return;
   }
-  if(!recs.length){
-    out.innerHTML='<div class="study-flag">No hay embeddings calculados todavía.'
-      +(sinTexto.length?('<br>· '+sinTexto.length+' documento(s) sin texto extraído. Pulsa <b>Conectar</b> en «Documentos» (el acceso a Drive caduca a la hora) para que pueda leer el PDF una vez.'):'')
-      +(errs.length?('<br>· Errores de OpenAI: '+escHtml(errs.join(' · '))):'')
-      +'</div>'; return;
-  }
-  // 3) Similitud coseno → fragmentos más relevantes.
-  const scored=[]; recs.forEach(rec=>rec.chunks.forEach(ch=>scored.push({doc:rec.name, t:ch.t, s:cosine(qv, ch.v)})));
-  scored.sort((a,b)=>b.s-a.s);
-  const hits=scored.slice(0,6);
-  out.innerHTML='<div class="cart-group-title">Fragmentos más relevantes <span class="dx-meta">('+recs.length+'/'+ids.length+' doc con embeddings'+(sinTexto.length?(' · '+sinTexto.length+' sin texto, conecta Drive'):'')+')</span></div>'
-    + hits.map(h=>`<div class="study" style="margin:6px 0"><div class="dx-meta"><b>${escHtml(h.doc||'doc')}</b> · relevancia ${h.s.toFixed(2)}</div><div style="font-size:12.5px;line-height:1.5">${escHtml(h.t.slice(0,420))}…</div></div>`).join('');
+  out.innerHTML='<div class="cart-group-title">Fragmentos más relevantes <span class="dx-meta">(en '+(ids.length-sinTexto.length)+'/'+ids.length+' documento(s)'+(sinTexto.length?' · '+sinTexto.length+' sin texto':'')+')</span></div>'
+    + hits.map(h=>`<div class="study" style="margin:6px 0"><div class="dx-meta"><b>${escHtml(h.doc||'doc')}</b> · relevancia ${h.s.toFixed(1)}</div><div style="font-size:12.5px;line-height:1.5">${escHtml(h.t.slice(0,420))}…</div></div>`).join('');
+}
+/* ---- RAG LOCAL (BM25, sin API externa: funciona solo con Claude) ----
+   Trocea el texto de cada documento marcado RAG y rankea por relevancia léxica. */
+function ragTokens(s){ return accLower(s||'').replace(/[^a-z0-9ñ ]/g,' ').split(/\s+/).filter(t=>t.length>=3 && !NL_STOP.has(t)); }
+async function docChunkTexts(id, mt){
+  let text=null;
+  try{ const c=JSON.parse(localStorage.getItem('fh_doctext_'+id)); if(c&&c.text) text=c.text; }catch(e){}
+  if(!text){ try{ text=await driveDownloadText(id, mt); }catch(e){} }
+  if(!text) return null;
+  return chunkText(text);
+}
+async function ragRetrieveLocal(query, k){
+  const ids=Object.keys(ragDocs); if(!ids.length) return {hits:[], sinTexto:[]};
+  const all=[]; const sinTexto=[];
+  for(const id of ids){ const chs=await docChunkTexts(id, ragDocs[id].mt); if(!chs||!chs.length){ sinTexto.push(ragDocs[id].name||id); continue; }
+    chs.forEach(t=>all.push({doc:ragDocs[id].name||id, t, toks:ragTokens(t)})); }
+  if(!all.length) return {hits:[], sinTexto};
+  const N=all.length, df={}; all.forEach(c=>{ new Set(c.toks).forEach(w=>df[w]=(df[w]||0)+1); });
+  const qset=[...new Set(ragTokens(query))]; const k1=1.5, b=0.75;
+  const avgdl=all.reduce((a,c)=>a+c.toks.length,0)/(N||1) || 1;
+  all.forEach(c=>{ const tf={}; c.toks.forEach(w=>tf[w]=(tf[w]||0)+1); let s=0;
+    qset.forEach(w=>{ const f=tf[w]; if(!f) return; const idf=Math.log(1+(N-(df[w]||0)+0.5)/((df[w]||0)+0.5)); s+=idf*(f*(k1+1))/(f+k1*(1-b+b*c.toks.length/avgdl)); });
+    c.s=s; });
+  const hits=all.filter(c=>c.s>0).sort((a,b)=>b.s-a.s).slice(0, k||6);
+  return {hits, sinTexto};
 }
 async function ragContext(maxDocs, query){
   const ids=Object.keys(ragDocs); if(!ids.length) return '';
-  // Vectorial si hay consulta + clave OpenAI: recupera solo lo relevante (mejor y más barato).
-  if(query && loadCfg().openaiKey){ try{ const hits=await ragRetrieve(query, 8); if(hits&&hits.length)
-    return hits.map(h=>'\n--- '+(h.doc||'doc')+' (relevancia '+h.s.toFixed(2)+') ---\n'+h.t).join('\n'); }catch(e){} }
+  // Recuperación LOCAL por relevancia (BM25) — sin OpenAI; solo necesita el texto del PDF.
+  if(query){ try{ const {hits}=await ragRetrieveLocal(query, 8); if(hits&&hits.length)
+    return hits.map(h=>'\n--- '+(h.doc||'doc')+' ---\n'+h.t).join('\n'); }catch(e){} }
   // Respaldo: "stuffing" (primeros caracteres de cada documento).
   let out=''; let n=0;
   for(const id of ids){ if(n>=(maxDocs||4)) break; try{ const t=await driveDownloadText(id, ragDocs[id].mt); if(t){ out += '\n--- '+(ragDocs[id].name||id)+' ---\n'+t.slice(0,7000); n++; } }catch(e){} }
@@ -2532,7 +2537,7 @@ function renderDocumentos(){
     </div>
     <div class="sec-note">Flags por documento: <b>RAG</b> (la IA lo lee al crear fichas) · <b>indexado</b> (analizado por IA → docs/index.json) · <b>unido a bibliografía</b> (citado por una ficha). Marcar RAG <b>auto-indexa</b>.</div>
     <div style="display:flex;gap:8px;margin:6px 0 12px">
-      <input id="docSearch" type="text" placeholder="🔎 Buscar en tus documentos en lenguaje natural (RAG vectorial)…" autocomplete="off" style="flex:1;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
+      <input id="docSearch" type="text" placeholder="🔎 Buscar en el texto de tus documentos RAG (relevancia, sin coste)…" autocomplete="off" style="flex:1;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
       <button class="btn" id="docSearchBtn">Buscar</button>
     </div>
     <div id="docSearchOut"></div>
@@ -2599,8 +2604,8 @@ async function renderDriveList(files){
       ragDocs[f.id]={name:f.name, mt:f.modifiedTime}; saveRag();
       if(!reg){ showToast('Marcado RAG → indexando con IA…'); try{ await indexarDriveDoc(f, {rag:true}); }catch(e){ showToast('Error: '+e.message); } }   // RAG ⇒ auto-indexa
       else { reg.rag=true; try{ await registrarDoc(reg); }catch(e){} }
-      // RAG vectorial: calcula y cachea los embeddings del documento (una sola vez)
-      if(loadCfg().openaiKey && !cachedEmb(f.id)){ showToast('Generando embeddings (RAG vectorial)…'); try{ const t=await driveDownloadText(f.id, f.modifiedTime); await ensureDocEmbeddings(f.id, f.name, t); showToast('Embeddings listos'); }catch(e){} }
+      // RAG: asegura el TEXTO del PDF en caché (lo usa la búsqueda local por relevancia; sin API externa)
+      try{ const c=JSON.parse(localStorage.getItem('fh_doctext_'+f.id)); if(!(c&&c.text)){ showToast('Leyendo el texto del PDF para RAG…'); await driveDownloadText(f.id, f.modifiedTime); } }catch(e){ try{ await driveDownloadText(f.id, f.modifiedTime); }catch(_){} }
     } else {
       delete ragDocs[f.id]; saveRag();
       if(reg){ reg.rag=false; try{ await registrarDoc(reg); }catch(e){} }
