@@ -506,7 +506,12 @@ function hpoCodeInfo(id){ return /^HP:\d+$/.test(id||'') ? id+infoDotHtml(id) : 
 function wireInfoDot(dot){
   if(dot.dataset.bound) return;
   dot.dataset.bound = '1';
-  dot.addEventListener('click', (e)=>{ e.stopPropagation(); dot.classList.toggle('open'); });
+  dot.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    dot.classList.toggle('open');
+    // Al abrir un tooltip sin traducción válida, traducir con IA (una vez, cacheado).
+    if(dot.classList.contains('open') && dot.dataset.ai==='1'){ dot.dataset.ai=''; upgradeDefinitionAi(dot.dataset.id, dot); }
+  });
 }
 async function translateFree(text){
   try{
@@ -517,18 +522,57 @@ async function translateFree(text){
   }catch(e){}
   return '';
 }
+// ¿La traducción libre es válida (no vacía, no warning, distinta del inglés)?
+function looksTranslated(es, en){
+  if(!es) return false;
+  const a=es.toLowerCase().replace(/\s+/g,' ').trim();
+  const b=(en||'').toLowerCase().replace(/\s+/g,' ').trim();
+  if(!a || a===b) return false;
+  if(/mymemory|warning|invalid|quota/i.test(es)) return false;
+  return a.length>=3;
+}
+// Traducción de definición con IA (español clínico) — solo bajo demanda, cacheada.
+async function llmTranslateDef(enDef){
+  if(!anyProvider()) return '';
+  try{
+    const system='Traduce al español clínico, de forma fiel y con terminología médica/genética correcta, esta definición de un término del Human Phenotype Ontology. Devuelve SOLO la traducción, sin comillas ni notas.';
+    const out=await callLLM({system, user:enDef, webSearch:false, maxTokens:300, task:'assign'});
+    return (out||'').trim();
+  }catch(e){ return ''; }
+}
+const defEnglish = {};   // id -> definición inglesa cruda (para mejora IA bajo demanda)
+function loadDefCache(id){ try{ return localStorage.getItem('fh_hpodef_'+id); }catch(e){ return null; } }
+function saveDefCache(id, v){ try{ localStorage.setItem('fh_hpodef_'+id, v); }catch(e){} }
 async function fetchLiveDefinition(id){
   if(STATIC_DEFINITIONS[id]) return STATIC_DEFINITIONS[id];
   if(liveDefinitionCache[id] !== undefined) return liveDefinitionCache[id];
+  const cached = loadDefCache(id);
+  if(cached){ liveDefinitionCache[id]=cached; return cached; }
+  let result='';
   try{
     const r = await fetch(HPO_API + '/terms/' + id);
     const d = await r.json();
     const enDef = (d && d.definition) ? d.definition : '';
-    if(!enDef){ liveDefinitionCache[id] = ''; return ''; }
-    const esDef = await translateFree(enDef);
-    liveDefinitionCache[id] = esDef ? `${esDef} (traducción automática)` : `${enDef} (EN, sin traducción)`;
-  }catch(e){ liveDefinitionCache[id] = ''; }
-  return liveDefinitionCache[id];
+    if(enDef){
+      defEnglish[id]=enDef;
+      const es = await translateFree(enDef);
+      if(looksTranslated(es, enDef)){ result = es + ' (traducción automática)'; saveDefCache(id, result); }
+      else if(anyProvider()){ result = enDef + ' · ⓘ pulsa para traducir con IA'; } // se mejora al abrir
+      else { result = enDef + ' (EN · sin traducción)'; saveDefCache(id, result); }
+    }
+  }catch(e){ result=''; }
+  liveDefinitionCache[id]=result;
+  return result;
+}
+// Mejora con IA un tooltip sin traducción válida (al abrirlo). Cachea el resultado.
+async function upgradeDefinitionAi(id, dot){
+  const en=defEnglish[id]; if(!en || !anyProvider()) return;
+  const tip=dot && dot.querySelector('.tooltip');
+  if(tip) tip.textContent='Traduciendo con IA…';
+  const ai=await llmTranslateDef(en);
+  const result = ai ? (ai+' (traducción IA)') : (en+' (EN · sin traducción)');
+  liveDefinitionCache[id]=result; saveDefCache(id, result);
+  if(tip) tip.textContent=result;
 }
 function prefetchDefinitions(box){
   if(!box) return;
@@ -537,6 +581,8 @@ function prefetchDefinitions(box){
     const def = await fetchLiveDefinition(id);
     if(def){
       dot.querySelector('.tooltip').textContent = def;
+      // marca para traducir con IA al abrir si quedó sin traducción válida
+      if(/pulsa para traducir con IA/.test(def)) dot.dataset.ai='1';
       dot.classList.remove('pending'); dot.style.display = '';
       wireInfoDot(dot);
     }
