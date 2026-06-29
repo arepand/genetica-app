@@ -361,6 +361,7 @@
     <div id="cartList"><div class="empty">Aún no hay rasgos marcados</div></div>
     <div id="differentialBox" style="display:none"></div>
     <div id="genePanelBox" style="display:none"></div>
+    <div id="monarchBox" style="display:none"></div>
     <div class="export-row">
       <button class="export-btn primary" id="generatePdfBtn">⬇ Informe (PDF)</button>
       <button class="export-btn secondary" id="copyCodesBtn">⧉ Copiar códigos HPO</button>
@@ -881,7 +882,7 @@ function renderCart(){
   const el=document.getElementById('cartList'); if(!el) return;
   const ids=Object.keys(selections);
   const stat=document.getElementById('statSel'); if(stat) stat.textContent=ids.length;
-  if(!ids.length){ el.innerHTML='<div class="empty">Aún no hay rasgos marcados</div>'; renderDifferential(); return; }
+  if(!ids.length){ el.innerHTML='<div class="empty">Aún no hay rasgos marcados</div>'; renderDifferential(); renderMonarch(); return; }
   el.innerHTML = ids.map(id=>{
     const s=selections[id];
     const warn = s.verified===false ? '<span class="warn" title="No verificado contra JAX"> ⚠</span>' : '';
@@ -892,6 +893,7 @@ function renderCart(){
   el.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d));
   prefetchDefinitions(el);
   renderDifferential();
+  renderMonarch();
 }
 
 /* ---- Indicadores de estado (proveedor / babelon / GitHub) ---- */
@@ -2164,6 +2166,69 @@ function renderDifferential(){
       <details class="gene-links"><summary>Enlaces por gen (PanelApp · GeneReviews · OMIM · ClinGen · HealthInCode)</summary>${genes.map(geneRowHtml).join('')}</details>` : '');
     const eb=gbox.querySelector('#btnEvalGuias'); if(eb) eb.addEventListener('click', evalIndicacionGenetica);
   } else { gbox.style.display='none'; }
+}
+
+/* ===========================================================================
+   Diferencial por fenotipo (Monarch / MONDO · Orphanet/OMIM) — API GRATUITA
+   POST semsim/search con los HPO presentes → enfermedades MONDO rankeadas por
+   similitud semántica, con cruces a Orphanet y OMIM. No depende de la ficha
+   activa ni usa LLM (coste 0). CORS abierto al origen arepand.github.io.
+   =========================================================================== */
+const MONARCH_SEMSIM='https://api-v3.monarchinitiative.org/v3/api/semsim/search';
+let monarchState=null; // null | {loading} | {error} | {results, forIds}
+
+function monarchXrefLinks(xref){
+  const out=[];
+  for(const x of (xref||[])){
+    const m=/^([A-Za-z]+):(.+)$/.exec(x); if(!m) continue;
+    const pre=m[1].toLowerCase(), id=m[2];
+    if(pre==='omim') out.push(`<a href="https://omim.org/entry/${id}" target="_blank" rel="noopener">OMIM:${id}</a>`);
+    else if(pre==='orphanet'||pre==='orpha') out.push(`<a href="https://www.orpha.net/en/disease/detail/${id}" target="_blank" rel="noopener">Orphanet:${id}</a>`);
+  }
+  return out;
+}
+function monarchRowHtml(r){
+  const links=[`<a href="https://monarchinitiative.org/${r.id}" target="_blank" rel="noopener">Monarch</a>`, ...monarchXrefLinks(r.xref)];
+  return `<div class="dx">
+    <div class="dx-hd"><span class="dx-nm">${(r.name||r.id).replace(/</g,'&lt;')}</span><span class="pill sug">≈ ${r.score!=null?(+r.score).toFixed(1):'—'}</span></div>
+    <div class="dx-meta">${r.id} · ${r.phenos} fenotipos · ${links.join(' · ')}</div>
+  </div>`;
+}
+async function runMonarchDx(){
+  const ids=Object.keys(selections);
+  if(ids.length<2){ monarchState={error:'Marca al menos 2 rasgos HPO para buscar.'}; renderMonarch(); return; }
+  monarchState={loading:true}; renderMonarch();
+  try{
+    const resp=await fetch(MONARCH_SEMSIM, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({termset:ids, group:'Human Diseases', metric:'ancestor_information_content', limit:15})
+    });
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    const data=await resp.json();
+    const results=(Array.isArray(data)?data:[]).map(r=>({
+      id:r.subject&&r.subject.id, name:(r.subject&&r.subject.name)||'',
+      score:r.score, xref:(r.subject&&r.subject.xref)||[],
+      phenos:(r.subject&&r.subject.has_phenotype_count)||0
+    })).filter(r=>r.id);
+    monarchState={results, forIds:ids.join(',')};
+  }catch(e){ monarchState={error:'No se pudo consultar Monarch ('+e.message+'). Posible bloqueo del proxy del hospital.'}; }
+  renderMonarch();
+}
+function renderMonarch(){
+  const box=document.getElementById('monarchBox'); if(!box) return;
+  const ids=Object.keys(selections);
+  if(ids.length<2){ box.style.display='none'; return; }
+  box.style.display='block';
+  let body, stale='';
+  if(monarchState&&monarchState.loading) body='<div class="loading">Consultando Orphanet/Monarch por fenotipo…</div>';
+  else if(monarchState&&monarchState.error) body='<div class="err">'+monarchState.error+'</div>';
+  else if(monarchState&&monarchState.results){
+    if(monarchState.forIds!==ids.join(',')) stale='<div class="dx-meta" style="color:var(--warn,#b8860b)">Has cambiado los rasgos — recalcula.</div>';
+    body=(monarchState.results.length? monarchState.results.map(monarchRowHtml).join('') : '<div class="empty">Sin coincidencias para este conjunto de HPO.</div>');
+  } else body='<div class="dx-meta" style="margin:4px 0 8px">Enfermedades (MONDO · Orphanet · OMIM) que mejor encajan con tus '+ids.length+' HPO presentes. Gratis, sin IA.</div>';
+  box.innerHTML='<div class="cart-group-title">Diferencial por fenotipo (Orphanet/Monarch)</div>'+stale+body+
+    '<button class="btn" id="btnMonarch" style="margin-top:8px">'+((monarchState&&monarchState.results)?'↻ Recalcular':'🔎 Buscar por fenotipo')+'</button>';
+  const b=box.querySelector('#btnMonarch'); if(b) b.addEventListener('click', runMonarchDx);
 }
 
 /* ===========================================================================
