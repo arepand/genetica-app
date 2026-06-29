@@ -480,7 +480,7 @@ function showToast(msg){
 }
 
 function panelAppLink(label){
-  return 'https://nhsgms-panelapp.genomicsengland.co.uk/panels/?search='+encodeURIComponent(label);
+  return 'https://panelapp.genomicsengland.co.uk/panels/entities/'+encodeURIComponent(label);
 }
 
 function infoDotHtml(id){
@@ -2082,8 +2082,7 @@ function geneLinks(g){
     PanelApp: panelAppLink(g),
     GeneReviews: 'https://www.ncbi.nlm.nih.gov/books/?term='+encodeURIComponent(g+'[gene] AND GeneReviews[book]'),
     OMIM: 'https://www.omim.org/search?index=entry&search='+e,
-    ClinGen: 'https://search.clinicalgenome.org/kb/genes?page=1&search='+e,
-    HealthInCode: 'https://www.healthincode.com/?s='+e
+    ClinGen: 'https://search.clinicalgenome.org/kb/genes?page=1&search='+e
   };
 }
 function geneRowHtml(g){
@@ -2187,7 +2186,7 @@ function renderDifferential(){
     gbox.innerHTML = studyHtml() + (genes.length ? `
       <div class="cart-group-title">Panel génico ${cumplen.length?'(entidades activas)':'(sugerido)'} · ${genes.length} gen(es)</div>
       <div class="gp-genes">${genes.map(geneChip).join(' ')}</div>
-      <details class="gene-links"><summary>Enlaces por gen (PanelApp · GeneReviews · OMIM · ClinGen · HealthInCode)</summary>${genes.map(geneRowHtml).join('')}</details>` : '');
+      <details class="gene-links"><summary>Enlaces por gen (PanelApp · GeneReviews · OMIM · ClinGen)</summary>${genes.map(geneRowHtml).join('')}</details>` : '');
     const eb=gbox.querySelector('#btnEvalGuias'); if(eb) eb.addEventListener('click', evalIndicacionGenetica);
   } else { gbox.style.display='none'; }
 }
@@ -2207,7 +2206,7 @@ function monarchXrefLinks(xref){
     const m=/^([A-Za-z]+):(.+)$/.exec(x); if(!m) continue;
     const pre=m[1].toLowerCase(), id=m[2];
     if(pre==='omim') out.push(`<a href="https://omim.org/entry/${id}" target="_blank" rel="noopener">OMIM:${id}</a>`);
-    else if(pre==='orphanet'||pre==='orpha') out.push(`<a href="https://www.orpha.net/en/disease/detail/${id}" target="_blank" rel="noopener">Orphanet:${id}</a>`);
+    else if(pre==='orphanet'||pre==='orpha') out.push(`<a href="https://www.orpha.net/es/disease/detail/${id}" target="_blank" rel="noopener">Orphanet:${id}</a>`);
   }
   return out;
 }
