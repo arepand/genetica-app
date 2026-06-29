@@ -3238,15 +3238,69 @@ const PRENATAL_SYNDROMES=[
   {name:'Asociación VACTERL', test:'CMA + descartar anemia de Fanconi; valoración multisistémica', min:3, findings:['HP:0002937','HP:0002023','HP:0001627','HP:0002575','HP:0000104','HP:0003974']},
   {name:'CHARGE', test:'estudio de CHD7', min:2, findings:['HP:0000589','HP:0000453','HP:0001627','HP:0000175']}
 ];
+/* Síndromes/hallazgos AÑADIDOS POR IA (verificados contra JAX), persistidos en
+   prenatal-syndromes.json del repo. Se fusionan con los integrados. */
+let PRENATAL_CUSTOM={syndromes:[], findings:[]};
+function applyPrenatalCustom(c){
+  if(!c) return; PRENATAL_CUSTOM={syndromes:c.syndromes||[], findings:c.findings||[]};
+  (PRENATAL_CUSTOM.findings||[]).forEach(t=>{ if(t&&t.id) PRENATAL_TIPO[t.id]=t.tipo||'mayor'; });
+}
+async function loadPrenatalCustom(){
+  try{ const c=JSON.parse(localStorage.getItem('fh_prenatal_custom')); if(c) applyPrenatalCustom(c); }catch(e){}
+  if(ghConfigured()){
+    try{ const r=await ghGetFile('prenatal-syndromes.json'); if(r.json){ applyPrenatalCustom(r.json); localStorage.setItem('fh_prenatal_custom', JSON.stringify(r.json)); } }catch(e){}
+  }
+}
+function allPrenatalSyndromes(){ return [...PRENATAL_SYNDROMES, ...(PRENATAL_CUSTOM.syndromes||[])]; }
 function prenatalSindromes(){
   const out=[];
-  for(const s of PRENATAL_SYNDROMES){
-    const matched=s.findings.filter(id=>selections[id]);
-    if(matched.length>=s.min) out.push({name:s.name, test:s.test, matched, total:s.findings.length});
+  for(const s of allPrenatalSyndromes()){
+    const matched=(s.findings||[]).filter(id=>selections[id]);
+    if(matched.length>=(s.min||2)) out.push({name:s.name, test:s.test, matched, total:(s.findings||[]).length, ref:s.ref||null, ia:!!s.ia});
   }
   return out.sort((a,b)=>b.matched.length-a.matched.length);
 }
 function grLink(name){ return 'https://www.ncbi.nlm.nih.gov/books/?term='+encodeURIComponent(name+' GeneReviews'); }
+/* Pide a la IA síndromes prenatales nuevos, VERIFICA sus HPO contra JAX y los guarda en GitHub. */
+async function actualizarSindromesIA(){
+  const out=document.getElementById('prenatalIAupd'); if(!out) return;
+  if(!anyProvider()){ out.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
+  out.innerHTML='<div class="loading">Buscando síndromes prenatales nuevos con IA (búsqueda web)…</div>';
+  try{
+    const existing=allPrenatalSyndromes().map(s=>s.name);
+    const system='Eres genetista clínico experto en DIAGNÓSTICO PRENATAL. Propón síndromes/entidades con diagnóstico prenatal relevante que NO estén ya en la lista del usuario. Para cada uno: nombre en español, "test" (estudio genético dirigido), "min" (nº mínimo de hallazgos para sospecharlo, 1-3), "ref" {titulo,url} (GeneReviews/OMIM/guía), y 3-6 "findings": hallazgos ECOGRÁFICOS FETALES característicos, cada uno con "hpo" (código HPO REAL y VIGENTE, formato HP:0000000), "label" (etiqueta en español) y "tipo" (mayor|marcador|nucal). '+SOURCE_PRIORITY+' Devuelve SOLO JSON {"sindromes":[{"name":"","test":"","min":2,"ref":{"titulo":"","url":""},"findings":[{"hpo":"HP:0000000","label":"","tipo":"mayor"}]}]}.';
+    const user='Síndromes ya incluidos (NO los repitas): '+existing.join('; ');
+    const resp=await callLLM({system, user, webSearch:true, maxTokens:4000, task:'author'});
+    const j=extractJSON(resp); const cands=(j&&j.sindromes)||[];
+    if(!cands.length){ out.innerHTML='<div class="empty">La IA no devolvió síndromes nuevos.</div>'; return; }
+    out.innerHTML='<div class="loading">Verificando los HPO propuestos contra JAX ('+cands.length+' síndromes)…</div>';
+    const knownF=new Set([...PRENATAL_FINDINGS.flatMap(s=>s.terms.map(t=>t.id)), ...(PRENATAL_CUSTOM.findings||[]).map(t=>t.id)]);
+    const existingNames=new Set(existing.map(n=>(n||'').toLowerCase()));
+    let addedS=0, addedF=0; const log=[];
+    for(const c of cands){
+      if(!c.name || existingNames.has((c.name||'').toLowerCase())) continue;
+      const findings=[];
+      for(const f of (c.findings||[])){
+        let id=f.hpo, t=await verifyHpo(id);
+        if(!t && f.label){ const fx=await findHpoByText(f.label); if(fx){ id=fx.id; t={id:fx.id}; } }
+        if(!t) continue;
+        findings.push({id, es:(f.label||id), tipo:(['mayor','marcador','nucal'].includes(f.tipo)?f.tipo:'mayor')});
+      }
+      if(findings.length<2){ log.push('· '+(c.name||'?')+': descartado (no se verificaron ≥2 HPO)'); continue; }
+      PRENATAL_CUSTOM.syndromes.push({name:c.name, test:c.test||'', min:Math.max(1,Math.min(3,parseInt(c.min)||2)), findings:findings.map(x=>x.id), ref:(c.ref&&c.ref.url)?c.ref:null, ia:true});
+      addedS++; existingNames.add(c.name.toLowerCase());
+      for(const x of findings){ if(!knownF.has(x.id)){ PRENATAL_CUSTOM.findings.push(x); PRENATAL_TIPO[x.id]=x.tipo; knownF.add(x.id); addedF++; } }
+      log.push('✓ '+c.name+' ('+findings.length+' HPO)');
+    }
+    if(addedS){
+      try{ let sha=null; try{ const ci=await ghGetFile('prenatal-syndromes.json'); sha=ci.sha; }catch(e){} await ghPutFile('prenatal-syndromes.json', PRENATAL_CUSTOM, 'prenatal: +'+addedS+' síndromes IA (HPO verificados)', sha); }catch(e){}
+      try{ localStorage.setItem('fh_prenatal_custom', JSON.stringify(PRENATAL_CUSTOM)); }catch(e){}
+    }
+    out.innerHTML = `<div style="color:${addedS?'var(--ok)':'var(--ink3)'};font-weight:600">${addedS?('✓ Añadidos '+addedS+' síndromes ('+addedF+' hallazgos nuevos), HPO verificados contra JAX y guardados en tu GitHub.'):'No se añadieron síndromes (no superaron la verificación HPO).'}</div>`
+      + (log.length?`<div class="dx-meta" style="margin-top:4px">${log.map(escHtml).join('<br>')}</div>`:'');
+    renderPrenatal();
+  }catch(e){ out.innerHTML='<div class="err">Error: '+e.message+'</div>'; }
+}
 
 const PRENATAL_REFS={
   acmgExome:{t:'ACMG · Secuenciación de exoma fetal, Points to Consider (Genet Med 2021)', u:'https://www.gimjournal.org/article/S1098-3600(21)01166-7/fulltext', a:'2021'},
@@ -3279,7 +3333,8 @@ function renderPrenatalInd(){
   const sinds=prenatalSindromes();
   const sindHtml = sinds.length
     ? `<div class="cart-group-title" style="margin-top:12px">Síndromes a considerar</div>`
-      + sinds.map(s=>`<div class="study" style="margin:6px 0"><b>${escHtml(s.name)}</b> <span class="dx-meta">(${s.matched.length}/${s.total} hallazgos: ${s.matched.map(id=>escHtml((selections[id]&&selections[id].es)||id)).join(', ')})</span><br>→ Estudio dirigido: <b>${escHtml(s.test)}</b> · <a href="${grLink(s.name)}" target="_blank" rel="noopener">GeneReviews</a></div>`).join('')
+      + sinds.map(s=>{ const link=(s.ref&&s.ref.url)?`<a href="${s.ref.url}" target="_blank" rel="noopener">${escHtml(s.ref.titulo||'Fuente')}</a>`:`<a href="${grLink(s.name)}" target="_blank" rel="noopener">GeneReviews</a>`;
+        return `<div class="study" style="margin:6px 0"><b>${escHtml(s.name)}</b>${s.ia?' <span class="dx-meta" style="color:var(--accent)">· IA</span>':''} <span class="dx-meta">(${s.matched.length}/${s.total} hallazgos: ${s.matched.map(id=>escHtml((selections[id]&&selections[id].es)||id)).join(', ')})</span><br>→ Estudio dirigido: <b>${escHtml(s.test)}</b> · ${link}</div>`; }).join('')
     : '';
   box.innerHTML=`<div class="cart-group-title">Indicación de estudio prenatal sugerida</div>`
     +`<div class="dx-meta" style="margin-bottom:6px">${r.mayores} anomalía(s) mayor(es) · ${r.marcadores} marcador(es) · ${r.nucal} nucal/hidrops</div>`
@@ -3312,9 +3367,11 @@ function renderPrenatal(){
   const gaNote = ga
     ? `<div class="dx-meta">Edad gestacional: <b>${ga}</b> · ${patientLabel()||'feto'}</div>`
     : `<div class="study-flag">Marca <b>«Gestación»</b> en la barra superior e indica semanas+días para el contexto prenatal.</div>`;
-  const findings = PRENATAL_FINDINGS.map(s=>`<details class="morfo-region" open><summary>${s.system} <span style="color:var(--ink3);font-weight:400">· ${s.terms.length}</span></summary><div class="morfo-terms">${s.terms.map(t=>{
+  const systems = PRENATAL_FINDINGS.slice();
+  if((PRENATAL_CUSTOM.findings||[]).length) systems.push({system:'Añadidos por IA', terms:PRENATAL_CUSTOM.findings});
+  const findings = systems.map(s=>`<details class="morfo-region" open><summary>${escHtml(s.system)} <span style="color:var(--ink3);font-weight:400">· ${s.terms.length}</span></summary><div class="morfo-terms">${s.terms.map(t=>{
         const on=!!selections[t.id];
-        return `<button class="morfo-term${on?' on':''}" data-pid="${t.id}" data-pes="${t.es.replace(/"/g,'&quot;')}">${t.es} <span class="hp">${t.id}</span>${infoDotHtml(t.id)}</button>`;
+        return `<button class="morfo-term${on?' on':''}" data-pid="${t.id}" data-pes="${(t.es||'').replace(/"/g,'&quot;')}">${escHtml(t.es)} <span class="hp">${t.id}</span>${infoDotHtml(t.id)}</button>`;
       }).join('')}</div></details>`).join('');
   box.innerHTML=`<div class="prenatal-layout">
     <div class="prenatal-main">
@@ -3322,11 +3379,18 @@ function renderPrenatal(){
       <div class="step-sub">Subconjunto fenotípico fetal (hallazgos ecográficos). Pulsa los presentes → se añaden al fenotipo (panel derecho) y sugieren la indicación. La ⓘ explica cada término.</div>
       ${gaNote}
       <div id="prenatalInd" style="margin:14px 0 18px"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+        <input id="prenatalFilter" type="text" placeholder="🔎 Filtrar hallazgos (nombre o HP:…)" autocomplete="off" style="flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
+        <button class="btn" id="btnSindIA" title="La IA propone síndromes prenatales nuevos; sus HPO se verifican contra JAX y se guardan en tu GitHub">✨ Buscar nuevos síndromes (IA · usa tokens)</button>
+      </div>
+      <div id="prenatalIAupd" style="margin-bottom:10px"></div>
       ${findings}
     </div>
     <div id="prenatalPanelSlot" class="prenatal-aside"></div>
   </div>`;
   renderPrenatalInd();
+  const fil=document.getElementById('prenatalFilter'); if(fil) fil.addEventListener('input', e=>applyPrenatalFilter(e.target.value));
+  const bIA=document.getElementById('btnSindIA'); if(bIA) bIA.addEventListener('click', actualizarSindromesIA);
   box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
   box.querySelectorAll('.morfo-term').forEach(btn=>btn.addEventListener('click', (e)=>{
     if(e.target.closest('.info-dot')) return;
@@ -3336,6 +3400,18 @@ function renderPrenatal(){
     btn.classList.toggle('on', !!selections[id]);
     syncSelections(); renderPrenatalInd();
   }));
+}
+function applyPrenatalFilter(q){
+  const box=document.getElementById('prenatalView'); if(!box) return;
+  q=(q||'').trim().toLowerCase();
+  box.querySelectorAll('.morfo-region').forEach(det=>{
+    let any=false;
+    det.querySelectorAll('.morfo-term').forEach(btn=>{
+      const hay = !q || ((btn.dataset.mes||btn.dataset.pes||'')+' '+(btn.dataset.pid||'')).toLowerCase().includes(q);
+      btn.style.display = hay ? '' : 'none'; if(hay) any=true;
+    });
+    det.style.display = any ? '' : 'none'; det.open = !!q && any;
+  });
 }
 function showSection(s){
   currentSection=s;
@@ -3519,6 +3595,8 @@ function init(){
   loadMorfo();
   // Pre-carga del índice de traducciones IA (GitHub) → bestDef las prefiere si existen
   ensureGhDefs();
+  // Pre-carga de los síndromes prenatales añadidos por IA (GitHub)
+  loadPrenatalCustom();
   // Pestaña de inicio: Fenotipo (panel a pantalla completa)
   showSection('fenotipo');
 }
