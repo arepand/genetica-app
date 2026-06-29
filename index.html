@@ -435,8 +435,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.3.0';
+const APP_VERSION='1.4.0';
 const CHANGELOG=[
+  {v:'1.4.0', d:'2026-06-29', c:['Los síndromes prenatales aparecen también en «Protocolos» con la etiqueta «prenatal» (ver hallazgos / ir a Prenatal).','La pestaña pasa a llamarse «Protocolos» (antes «Biblioteca de fichas»).']},
   {v:'1.3.0', d:'2026-06-29', c:['Asignar PDF: si eliges de «Mis documentos» un PDF ya indexado, se LIGA (botón «Guardar (ligar)») sin volver a indexar ni gastar tokens.','El botón «Informe (PDF)» ahora abre el PDF en otra pestaña (no lo descarga); lo descargas tú si quieres.']},
   {v:'1.2.0', d:'2026-06-29', c:['«Informes» pasa de botón a pestaña propia.','Reordenadas las pestañas: Protocolos y Documentos al final.']},
   {v:'1.1.0', d:'2026-06-29', c:['Estado de servicios (Claude/OpenAI/babelon/GitHub) unificado en un solo icono con detalle al pulsar.','Número de versión + changelog (este panel).','Indexar PDF: seleccionar el enlace desde "Mis documentos" (Drive); opción de eliminar un documento asignado desde la propia referencia.']},
@@ -3937,9 +3938,10 @@ async function renderBiblioteca(filter){
   if(filter===undefined){ box.innerHTML='<div class="loading">Cargando biblioteca…</div>'; const idx=await getIndex(); _libCache=idx.fichas||[]; }
   const q=(filter||'').toLowerCase();
   const fichas=_libCache.filter(f=>!q || (f.nombre||'').toLowerCase().includes(q) || (f.id||'').toLowerCase().includes(q) || (f.sinonimos||[]).join(' ').toLowerCase().includes(q));
+  const prenat=allPrenatalSyndromes().filter(s=>!q || (s.name||'').toLowerCase().includes(q) || normSyndName(s.name).includes(normSyndName(q)));
   box.innerHTML=`
     <div class="lib-head">
-      <h2>📚 Biblioteca de fichas <span style="font-size:12px;color:var(--ink3)">(${_libCache.length})</span></h2>
+      <h2>📚 Protocolos <span style="font-size:12px;color:var(--ink3)">(${_libCache.length} fichas · ${allPrenatalSyndromes().length} prenatales)</span></h2>
       <input class="lib-search" id="libSearch" placeholder="Buscar por nombre, id o sinónimo…" value="${(filter||'').replace(/"/g,'&quot;')}">
       <button class="btn" id="libRefresh">↻ Refrescar</button>
       <button class="btn" id="libValidate">🔧 Validar HPO de todos</button>
@@ -3947,7 +3949,8 @@ async function renderBiblioteca(filter){
     </div>
     <div id="libValidateOut" style="margin:0 0 12px"></div>
     ${fichas.length? `<div class="lib-grid">${fichas.map(libCardHtml).join('')}</div>`
-       : `<div class="placeholder">${_libCache.length?'Sin resultados para el filtro.':'Tu biblioteca está vacía. Crea fichas desde Fenotipado.'}</div>`}`;
+       : `<div class="placeholder">${_libCache.length?'Sin fichas para el filtro.':'Aún no tienes fichas. Créalas desde Fenotipado.'}</div>`}
+    ${prenat.length? `<div class="cart-group-title" style="margin:18px 0 8px">🤰 Síndromes prenatales <span class="dx-meta">(${prenat.length})</span></div><div class="lib-grid">${prenat.map(prenatalCardHtml).join('')}</div>`:''}`;
   const si=document.getElementById('libSearch');
   si.addEventListener('input', ()=>renderBiblioteca(si.value));
   document.getElementById('libRefresh').addEventListener('click', ()=>renderBiblioteca());
@@ -3955,6 +3958,32 @@ async function renderBiblioteca(filter){
   document.getElementById('libNueva').addEventListener('click', ()=>{ showSection('fenotipado'); const m=document.getElementById('inMotivo'); if(m) m.focus(); });
   box.querySelectorAll('[data-ver]').forEach(b=>b.addEventListener('click', ()=>abrirFichaBiblioteca(b.dataset.ver, false)));
   box.querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click', ()=>abrirFichaBiblioteca(b.dataset.edit, true)));
+  box.querySelectorAll('[data-prenver]').forEach(b=>b.addEventListener('click', ()=>verSindromePrenatal(b.dataset.prenver)));
+  box.querySelectorAll('[data-prengo]').forEach(b=>b.addEventListener('click', ()=>showSection('prenatal')));
+}
+function prenatalCardHtml(s){
+  return `<div class="lib-card">
+    <div class="nm">${escHtml(s.name)} <span class="pop-badge" style="background:rgba(120,180,255,.15);color:#9cc4ff">prenatal</span>${s.ia?' <span class="dx-meta" style="color:var(--accent)">IA</span>':''}</div>
+    <div class="meta">${(s.findings||[]).length} hallazgos · ${escHtml(s.test||'')}${s.orpha?' · ORPHA:'+escHtml(String(s.orpha)):''}</div>
+    <div class="acts">
+      <button class="btn" data-prenver="${escHtml(s.name)}">👁 Ver hallazgos</button>
+      <button class="btn" data-prengo="1">🤰 Ir a Prenatal</button>
+    </div>
+  </div>`;
+}
+function verSindromePrenatal(name){
+  const s=allPrenatalSyndromes().find(x=>x.name===name); if(!s) return;
+  const ov=document.createElement('div'); ov.className='overlay'; ov.id='prenViewOverlay';
+  const link=(s.ref&&s.ref.url)?`<a href="${escHtml(String(s.ref.url)).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">${escHtml(s.ref.titulo||'Bibliografía')}</a>${bibRefHtml(s.ref)}`:`<a href="${grLink(s.name)}" target="_blank" rel="noopener">GeneReviews</a>`;
+  ov.innerHTML=`<div class="modal" style="max-width:560px"><h2>🤰 ${escHtml(s.name)} <span class="pop-badge" style="background:rgba(120,180,255,.15);color:#9cc4ff">prenatal</span></h2>
+    <div class="msub">Estudio dirigido: <b>${escHtml(s.test||'—')}</b> · mínimo ${s.min||2} hallazgo(s) para sugerirlo${s.orpha?` · <a href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener">ORPHA:${escHtml(String(s.orpha))}</a>`:''}</div>
+    <div style="font-size:13px;line-height:1.7;max-height:50vh;overflow:auto">${(s.findings||[]).map(id=>'· '+escHtml(prenatalFindingLabel(id))+' <span class="hp">'+id+'</span>').join('<br>')||'—'}</div>
+    <div class="study-src" style="margin-top:8px">Bibliografía: ${link}</div>
+    <div class="modal-actions"><button class="btn ghost" id="pvClose">Cerrar</button><button class="btn primary" id="pvGo">🤰 Ir a Prenatal</button></div></div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('#pvClose').addEventListener('click',()=>ov.remove());
+  ov.querySelector('#pvGo').addEventListener('click',()=>{ ov.remove(); showSection('prenatal'); });
+  ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); });
 }
 async function validarTodosProtocolos(){
   const out=document.getElementById('libValidateOut'); if(!out) return;
