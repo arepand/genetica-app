@@ -2128,7 +2128,7 @@ function studyHtml(){
   const src=(s&&s.fuentes||[]).map(f=>`<a href="${f.url}" target="_blank" rel="noopener">${f.titulo}${f.anio?' ('+f.anio+')':''}</a>`).join(' · ');
   return `<div class="study">
     <div class="study-h">🧬 Indicación de estudio genético</div>
-    <div class="study-src">🇪🇸 Cartera del SNS: <a href="https://cgen.sanidad.gob.es/" target="_blank" rel="noopener">Catálogo de Pruebas Genéticas (CGEN)</a> · buscador por gen y patología</div>
+    <div class="study-src">🇪🇸 Cartera del SNS: <a href="https://cgen.sanidad.gob.es/cgen_fe/#/consulta-general" target="_blank" rel="noopener">Catálogo de Pruebas Genéticas (CGEN)</a> · buscador por gen y patología</div>
     ${s ? `
       ${s.indicado===false?'<div class="study-flag">No indicado de rutina</div>':''}
       ${s.tipo?`<div><b>Tipo:</b> ${s.tipo}</div>`:''}
