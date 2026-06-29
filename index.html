@@ -3270,9 +3270,11 @@ async function addPrenatalCands(cands, minF){
   const knownF=new Set([...PRENATAL_FINDINGS.flatMap(s=>s.terms.map(t=>t.id)), ...(PRENATAL_CUSTOM.findings||[]).map(t=>t.id)]);
   const existingNames=new Set(allPrenatalSyndromes().map(s=>(s.name||'').toLowerCase()));
   let addedS=0, addedF=0; const log=[];
+  const need=minF||2;
   for(const c of cands){
     if(!c.name){ continue; }
-    if(existingNames.has((c.name||'').toLowerCase())){ log.push('· '+c.name+': ya estaba'); continue; }
+    if(existingNames.has((c.name||'').toLowerCase())){ log.push('⏭ '+c.name+': ya estaba incorporado, no se duplica.'); continue; }
+    const proposed=(c.findings||[]).length;
     const findings=[];
     for(const f of (c.findings||[])){
       let id=f.hpo, t=await verifyHpo(id);
@@ -3280,11 +3282,11 @@ async function addPrenatalCands(cands, minF){
       if(!t) continue;
       findings.push({id, es:(f.label||id), tipo:(['mayor','marcador','nucal'].includes(f.tipo)?f.tipo:'mayor')});
     }
-    if(findings.length<(minF||2)){ log.push('· '+c.name+': descartado (HPO verificables insuficientes)'); continue; }
+    if(findings.length<need){ log.push('✗ '+c.name+': '+findings.length+'/'+proposed+' HPO verificados contra JAX (mínimo '+need+') → NO añadido.'); continue; }
     PRENATAL_CUSTOM.syndromes.push({name:c.name, test:c.test||'', min:Math.max(1,Math.min(3,parseInt(c.min)||2)), findings:findings.map(x=>x.id), ref:(c.ref&&c.ref.url)?c.ref:null, ia:true});
     addedS++; existingNames.add(c.name.toLowerCase());
     for(const x of findings){ if(!knownF.has(x.id)){ PRENATAL_CUSTOM.findings.push(x); PRENATAL_TIPO[x.id]=x.tipo; knownF.add(x.id); addedF++; } }
-    log.push('✓ '+c.name+' ('+findings.length+' HPO)');
+    log.push('✓ '+c.name+': añadido ('+findings.length+'/'+proposed+' HPO verificados, '+findings.map(x=>x.id).join(', ')+').');
   }
   if(addedS) await persistPrenatalCustom('prenatal: +'+addedS+' síndromes IA (HPO verificados)');
   return {addedS, addedF, log};
@@ -3318,10 +3320,12 @@ async function añadirSindromePorNombre(name){
     const resp=await callLLM({system, user:'Síndrome/enfermedad: '+name, webSearch:true, maxTokens:1500, task:'author'});
     const j=extractJSON(resp);
     if(!j){ out.innerHTML='<div class="err">La IA no devolvió datos válidos.</div>'; return; }
-    if(j.prenatal===false || !(j.findings&&j.findings.length)){ out.innerHTML='<div class="study-flag">«'+escHtml(j.name||name)+'»: la IA no reconoce hallazgos prenatales (o no los tiene). No se añadió.</div>'; return; }
+    if(j.prenatal===false || !(j.findings&&j.findings.length)){ out.innerHTML='<div class="study-flag">⚠ «'+escHtml(j.name||name)+'»: la IA NO reconoce hallazgos ecográficos prenatales característicos para esta entidad → no se añadió (no aporta a un cribado prenatal por imagen).</div>'; return; }
     if(!j.name) j.name=name;
     const res=await addPrenatalCands([j], 1);
-    out.innerHTML = res.addedS ? `<div style="color:var(--ok);font-weight:600">✓ Añadido «${escHtml(j.name)}» (HPO verificados, guardado en tu GitHub).</div>` : `<div class="study-flag">No se añadió «${escHtml(name)}» (ya estaba o sin HPO verificables).</div>`;
+    out.innerHTML = res.addedS
+      ? `<div style="color:var(--ok);font-weight:600">✓ Añadido «${escHtml(j.name)}» — guardado en tu GitHub y ya disponible en el desplegable.</div>`
+      : `<div class="study-flag" style="color:#f2b3a6">✗ NO se añadió «${escHtml(j.name)}». Motivo:</div>`;
     if(res.log.length) out.innerHTML+=`<div class="dx-meta" style="margin-top:4px">${res.log.map(escHtml).join('<br>')}</div>`;
     renderPrenatal();
   }catch(e){ out.innerHTML='<div class="err">Error: '+e.message+'</div>'; }
