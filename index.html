@@ -379,17 +379,17 @@
   </div>
   <div class="spacer"></div>
   <div class="status-row" id="statusRow"></div>
-  <button class="btn ghost" id="openInformes">📄 Informes</button>
   <button class="btn ghost" id="openSettings">⚙ Ajustes</button>
 </header>
 
 <nav class="section-nav" id="sectionNav">
   <button class="section-btn on" data-section="fenotipo">🧬 Fenotipo</button>
   <button class="section-btn" data-section="fenotipado">📋 Fenotipado por protocolo</button>
-  <button class="section-btn" data-section="biblioteca">📚 Protocolos</button>
   <button class="section-btn" data-section="dismorfologia">🧑 Dismorfología</button>
   <button class="section-btn" data-section="antropometria">📏 Antropometría</button>
   <button class="section-btn" data-section="prenatal">🤰 Prenatal</button>
+  <button class="section-btn" data-section="informes">📄 Informes</button>
+  <button class="section-btn" data-section="biblioteca">📚 Protocolos</button>
   <button class="section-btn" data-section="documentos">📁 Documentos</button>
 </nav>
 
@@ -422,6 +422,7 @@
 <div id="dismorfologiaView" class="section-view" style="display:none"></div>
 <div id="antropometriaView" class="section-view" style="display:none"></div>
 <div id="prenatalView" class="section-view" style="display:none"></div>
+<div id="informesView" class="section-view" style="display:none"></div>
 <div id="documentosView" class="section-view" style="display:none"></div>
 
 <div id="toast"></div>
@@ -434,8 +435,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.1.0';
+const APP_VERSION='1.2.0';
 const CHANGELOG=[
+  {v:'1.2.0', d:'2026-06-29', c:['«Informes» pasa de botón a pestaña propia.','Reordenadas las pestañas: Protocolos y Documentos al final.']},
   {v:'1.1.0', d:'2026-06-29', c:['Estado de servicios (Claude/OpenAI/babelon/GitHub) unificado en un solo icono con detalle al pulsar.','Número de versión + changelog (este panel).','Indexar PDF: seleccionar el enlace desde "Mis documentos" (Drive); opción de eliminar un documento asignado desde la propia referencia.']},
   {v:'1.0.0', d:'2026-06-29', c:['Primera versión versionada. Fenotipado dirigido por fichas (HPO trilingüe, diferencial por umbrales, panel génico, informes).','Prenatal: subconjunto fetal, indicación por guías, jerarquía HPO (auto-marca ancestros sin contar doble), propuestas IA con bibliografía obligatoria y verificación doble de HPO, panel diferencial con criterios cumplidos.','Bibliografía con PDF indexado por IA (nombre+descripción automáticos) y RAG vectorial (embeddings + búsqueda en lenguaje natural).','Seguridad: SRI en CDNs, sin secretos en el repo público.']},
 ];
@@ -3045,32 +3047,27 @@ async function extraerInforme(tipo){
     out.querySelectorAll('[data-addone]').forEach(b=> b.addEventListener('click', ()=>{ addOne(verified[+b.dataset.addone]); b.textContent='✓'; b.disabled=true; }));
   }catch(e){ out.innerHTML='<div class="err">Error al extraer: '+e.message+'</div>'; }
 }
-function openInformes(){
-  const ov=document.createElement('div'); ov.className='overlay'; ov.id='informesOverlay';
-  ov.innerHTML=`
-  <div class="modal" role="dialog" aria-label="Informes a HPO" style="max-width:720px">
-    <h2>📄 Informes → HPO</h2>
-    <div class="msub">Pega el informe; la IA extrae <b>solo hallazgos anómalos</b> como HPO (verificados contra JAX). En laboratorio usa edad/sexo del paciente para no marcar valores normales. Revisa cada propuesta antes de añadir.</div>
+function renderInformes(){
+  const box=document.getElementById('informesView'); if(!box) return;
+  const ta='width:100%; min-height:110px; padding:10px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink); font-size:13px';
+  box.innerHTML=`
+    <div class="lib-head"><h2>📄 Informes → HPO</h2></div>
+    <div class="sec-note">Pega el informe; la IA extrae <b>solo hallazgos anómalos</b> como HPO (verificados contra JAX) y los añade a tu fenotipo. En laboratorio usa edad/sexo del paciente para no marcar valores normales. Revisa cada propuesta antes de añadir.</div>
     <h3>Radiología</h3>
-    <textarea id="infRadio" spellcheck="false" placeholder="Pega aquí el informe de radiología…" style="width:100%; min-height:110px; padding:10px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink); font-size:13px"></textarea>
+    <textarea id="infRadio" spellcheck="false" placeholder="Pega aquí el informe de radiología…" style="${ta}"></textarea>
     <button class="btn" id="btnExtractRadio" style="margin-top:8px">Extraer HPO de radiología</button>
     <div id="radioResults" style="margin-top:8px"></div>
     <h3>Laboratorio</h3>
-    <textarea id="infLab" spellcheck="false" placeholder="Pega aquí el informe de laboratorio…" style="width:100%; min-height:110px; padding:10px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink); font-size:13px"></textarea>
+    <textarea id="infLab" spellcheck="false" placeholder="Pega aquí el informe de laboratorio…" style="${ta}"></textarea>
     <button class="btn" id="btnExtractLab" style="margin-top:8px">Extraer HPO de laboratorio</button>
     <div id="labResults" style="margin-top:8px"></div>
     <h3>Pruebas electrofisiológicas</h3>
-    <textarea id="infElectro" spellcheck="false" placeholder="Pega aquí el informe electrofisiológico (EEG, EMG/ENG, ECG/Holter, potenciales evocados, ERG…)…" style="width:100%; min-height:110px; padding:10px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink); font-size:13px"></textarea>
+    <textarea id="infElectro" spellcheck="false" placeholder="Pega aquí el informe electrofisiológico (EEG, EMG/ENG, ECG/Holter, potenciales evocados, ERG…)…" style="${ta}"></textarea>
     <button class="btn" id="btnExtractElectro" style="margin-top:8px">Extraer HPO de electrofisiología</button>
-    <div id="electroResults" style="margin-top:8px"></div>
-    <div class="modal-actions"><button class="btn ghost" id="infClose">Cerrar</button></div>
-  </div>`;
-  document.body.appendChild(ov);
-  ov.querySelector('#infClose').addEventListener('click', ()=>ov.remove());
-  ov.addEventListener('click', e=>{ if(e.target===ov) ov.remove(); });
-  ov.querySelector('#btnExtractRadio').addEventListener('click', ()=>extraerInforme('radio'));
-  ov.querySelector('#btnExtractLab').addEventListener('click', ()=>extraerInforme('lab'));
-  ov.querySelector('#btnExtractElectro').addEventListener('click', ()=>extraerInforme('electro'));
+    <div id="electroResults" style="margin-top:8px"></div>`;
+  box.querySelector('#btnExtractRadio').addEventListener('click', ()=>extraerInforme('radio'));
+  box.querySelector('#btnExtractLab').addEventListener('click', ()=>extraerInforme('lab'));
+  box.querySelector('#btnExtractElectro').addEventListener('click', ()=>extraerInforme('electro'));
 }
 
 /* ===========================================================================
@@ -3911,8 +3908,9 @@ function showSection(s){
   const dis=document.getElementById('dismorfologiaView');
   const ant=document.getElementById('antropometriaView');
   const pv0=document.getElementById('prenatalView');
+  const inf=document.getElementById('informesView');
   const panel=document.getElementById('phenoPanel');
-  [fen,feno,bib,doc,dis,ant,pv0].forEach(v=>{ if(v) v.style.display='none'; });
+  [fen,feno,bib,doc,dis,ant,pv0,inf].forEach(v=>{ if(v) v.style.display='none'; });
   // El panel de fenotipo (búsqueda + carrito + diferencial + Monarch + export) es ÚNICO:
   // en "fenotipo" va a pantalla completa; en el resto vuelve al aside del protocolo.
   if(s==='fenotipo'){
@@ -3925,6 +3923,7 @@ function showSection(s){
   else if(s==='documentos'){ if(doc){ doc.style.display='block'; renderDocumentos(); } }
   else if(s==='dismorfologia'){ if(dis){ dis.style.display='block'; renderDismorfologia(); } }
   else if(s==='antropometria'){ if(ant){ ant.style.display='block'; renderAntropometria(); } }
+  else if(s==='informes'){ if(inf){ inf.style.display='block'; renderInformes(); } }
   else if(s==='prenatal'){ const pv=document.getElementById('prenatalView'); if(pv){ pv.style.display='block'; renderPrenatal(); const slot=document.getElementById('prenatalPanelSlot'); if(slot&&panel){ slot.appendChild(panel); panel.classList.remove('cart-full'); renderCart(); renderDifferential(); renderMonarch(); } } }
   else if(fen) fen.style.display='';
 }
@@ -4114,7 +4113,6 @@ function wireGlobalBib(){
 function init(){
   wireGlobalBib();
   document.getElementById('openSettings').addEventListener('click', openSettings);
-  document.getElementById('openInformes').addEventListener('click', openInformes);
   document.getElementById('copyCodesBtn').addEventListener('click', copyCodes);
   document.getElementById('generatePdfBtn').addEventListener('click', generatePdf);
   document.querySelectorAll('#sectionNav .section-btn').forEach(b=>b.addEventListener('click', ()=>showSection(b.dataset.section)));
