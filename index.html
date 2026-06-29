@@ -288,6 +288,7 @@
   .morfo-term .hp{font-size:10px; opacity:.65;}
   .morfo-chip{display:inline-flex; align-items:center; gap:6px; background:var(--panel2); border:1px solid var(--line); border-radius:14px; padding:4px 9px; font-size:12px; margin:0 4px 4px 0;}
   #morfoSelected{margin-bottom:14px; padding-bottom:12px; border-bottom:2px solid var(--line);}
+  .tip-ai{display:inline-block; margin-top:5px; color:var(--accent); cursor:pointer; font-size:11px; text-decoration:underline; font-weight:600;}
   .morfo-atlas{display:inline-block; font-size:11.5px; color:var(--accent); text-decoration:none; margin:0 0 6px;}
   .morfo-atlas:hover{text-decoration:underline;}
 
@@ -496,9 +497,23 @@ function panelAppLink(label){
   return 'https://panelapp.genomicsengland.co.uk/panels/entities/'+encodeURIComponent(label);
 }
 
+function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+// Mejor definición disponible para un HPO: {text, improvable}. improvable = procede del
+// Excel (Google Translate) → ofrece "mejorar con IA". STATIC y las IA previas son finales.
+function bestDef(id){
+  if(STATIC_DEFINITIONS[id]) return {text:STATIC_DEFINITIONS[id], improvable:false};
+  if(typeof ghDefs!=='undefined' && ghDefs && ghDefs[id]) return {text:ghDefs[id], improvable:false};
+  let lc=null; try{ lc=localStorage.getItem('fh_hpodef_'+id); }catch(e){}
+  if(lc && /traducci[oó]n IA/.test(lc)) return {text:lc, improvable:false};
+  if(typeof MORFO_DEFS!=='undefined' && MORFO_DEFS && MORFO_DEFS[id]) return {text:MORFO_DEFS[id], improvable:true};
+  return null;
+}
 function infoDotHtml(id){
-  const staticDef = STATIC_DEFINITIONS[id];
-  if(staticDef) return `<span class="info-dot" data-id="${id}">i<span class="tooltip">${staticDef}</span></span>`;
+  const b = bestDef(id);
+  if(b){
+    const ai = (b.improvable && anyProvider()) ? ' <a class="tip-ai" data-aiimprove="1">✨ mejorar (IA)</a>' : '';
+    return `<span class="info-dot" data-id="${id}">i<span class="tooltip">${escHtml(b.text)}${ai}</span></span>`;
+  }
   return `<span class="info-dot pending" data-id="${id}" style="display:none;">i<span class="tooltip"></span></span>`;
 }
 // Devuelve el código HPO con su punto de información (tooltip de significado). Para códigos HP: válidos.
@@ -508,6 +523,8 @@ function wireInfoDot(dot){
   dot.dataset.bound = '1';
   dot.addEventListener('click', (e)=>{
     e.stopPropagation();
+    // Clic en "✨ mejorar (IA)" dentro del tooltip → traducir con IA (no cierra el tooltip).
+    if(e.target.closest('.tip-ai')){ upgradeDefinitionAi(dot.dataset.id, dot); return; }
     dot.classList.toggle('open');
     // Al abrir un tooltip sin traducción válida, traducir con IA (una vez, cacheado).
     if(dot.classList.contains('open') && dot.dataset.ai==='1'){ dot.dataset.ai=''; upgradeDefinitionAi(dot.dataset.id, dot); }
@@ -611,9 +628,12 @@ async function fetchLiveDefinition(id){
 }
 // Mejora con IA un tooltip sin traducción válida (al abrirlo). Cachea y SUBE a GitHub.
 async function upgradeDefinitionAi(id, dot){
-  const en=defEnglish[id]; if(!en || !anyProvider()) return;
+  if(!anyProvider()){ showToast('Configura una API key (Claude u OpenAI) para traducir con IA'); return; }
   const tip=dot && dot.querySelector('.tooltip');
   if(tip) tip.textContent='Traduciendo con IA…';
+  let en=defEnglish[id];
+  if(!en){ try{ const r=await fetch(HPO_API+'/terms/'+id); const d=await r.json(); en=(d&&d.definition)||''; defEnglish[id]=en; }catch(e){} }
+  if(!en){ if(tip) tip.textContent='(no hay definición en HPO para traducir)'; return; }
   const ai=await llmTranslateDef(en);
   const result = ai ? (ai+' (traducción IA)') : (en+' (EN · sin traducción)');
   liveDefinitionCache[id]=result; saveDefCache(id, result);
@@ -1003,14 +1023,30 @@ async function verifyAndRelabel(id, fallbackLabel){
 }
 
 /* ---- Fenotipo: añadir/quitar selección ---- */
-function addSelection(id, es, en, origen, toggle){
-  if(toggle && selections[id]){ delete selections[id]; renderCart(); refreshAnamnesisIfShown(); return false; }
-  selections[id] = {hpo:id, es, en, region:origen||'manual', origen:origen||'manual', verified:(selections[id]?selections[id].verified:undefined)};
+// Refresca en el DOM el estado "marcado" de TODAS las vistas que reflejan selections,
+// sin re-renderizar (filas de búsqueda · términos de dismorfología).
+function refreshSelectionStatesInDom(){
+  document.querySelectorAll('.search-row').forEach(row=>{
+    const cw=row.querySelector('.check-wrap'); if(cw) cw.classList.toggle('active', !!selections[row.dataset.id]);
+  });
+  document.querySelectorAll('#dismorfologiaView .morfo-term').forEach(btn=>{
+    btn.classList.toggle('on', !!selections[btn.dataset.mid]);
+  });
+}
+// Punto único tras CUALQUIER alta/baja de HPO: todas las vistas quedan coherentes.
+function syncSelections(){
   renderCart();
   refreshAnamnesisIfShown();
+  refreshSelectionStatesInDom();
+  renderMorfoSelected();
+}
+function addSelection(id, es, en, origen, toggle){
+  if(toggle && selections[id]){ delete selections[id]; syncSelections(); return false; }
+  selections[id] = {hpo:id, es, en, region:origen||'manual', origen:origen||'manual', verified:(selections[id]?selections[id].verified:undefined)};
+  syncSelections();
   return true;
 }
-function removeSelection(id){ delete selections[id]; renderCart(); refreshAnamnesisIfShown(); }
+function removeSelection(id){ delete selections[id]; syncSelections(); }
 
 function renderPatientLine(){
   const el=document.getElementById('patientLine'); if(!el) return;
@@ -1806,12 +1842,12 @@ async function recomputeQuestion(q, dom, el){
   qOwned[q.id]=ids;
   // 3) Añade optimista y verifica contra JAX + reetiqueta babelon
   ids.forEach(id=>{ selections[id]={hpo:id, es:meta[id]||id, en:meta[id]||'', region:'anamnesis: '+dom, origen:'anamnesis', verified:undefined}; });
-  renderCart();
+  renderCart(); refreshSelectionStatesInDom();
   for(const id of ids){
     const r = await verifyAndRelabel(id, meta[id]);
     if(selections[id]){ selections[id].es=r.es; selections[id].en=r.en; selections[id].verified=r.verified; }
   }
-  renderCart();
+  renderCart(); refreshSelectionStatesInDom();
 }
 
 function renderAnamnesis(){
@@ -2450,7 +2486,7 @@ async function extraerInforme(tipo){
     if(!verified.length){ out.innerHTML='<div class="empty">Sin hallazgos HPO verificables en el informe.</div>'; return; }
     out.innerHTML = `<button class="btn" id="addAll_${tipo}" style="margin-bottom:8px">+ Añadir todos (${verified.length})</button>`
       + verified.map((h,i)=>informeRowHtml(h,i)).join('');
-    const addOne=(h)=>{ selections[h.id]={hpo:h.id, es:h.es, en:h.en, region:map.label, origen:map.label, verified:true}; renderCart(); refreshAnamnesisIfShown(); };
+    const addOne=(h)=>{ selections[h.id]={hpo:h.id, es:h.es, en:h.en, region:map.label, origen:map.label, verified:true}; syncSelections(); };
     out.querySelector('#addAll_'+tipo).addEventListener('click', ()=>{ verified.forEach(addOne); showToast('Añadidos '+verified.length+' HPO de '+map.label); });
     out.querySelectorAll('[data-addone]').forEach(b=> b.addEventListener('click', ()=>{ addOne(verified[+b.dataset.addone]); b.textContent='✓'; b.disabled=true; }));
   }catch(e){ out.innerHTML='<div class="err">Error al extraer: '+e.message+'</div>'; }
@@ -2589,8 +2625,9 @@ let currentSection='fenotipado';
    index.html para aligerarlo; cacheado en localStorage (offline) y autoritativo
    desde el archivo al cargar. Las definiciones alimentan STATIC_DEFINITIONS. */
 let MORFO_REGIONS = [];
+let MORFO_DEFS = {};   // definiciones del Excel (Google Translate) → mejorables con IA en el tooltip
 function cachedMorfo(){ try{ return JSON.parse(localStorage.getItem('fh_morfo')); }catch(e){ return null; } }
-function applyMorfo(m){ if(!m||!m.regions) return; MORFO_REGIONS=m.regions; if(m.defs) Object.assign(STATIC_DEFINITIONS, m.defs); }
+function applyMorfo(m){ if(!m||!m.regions) return; MORFO_REGIONS=m.regions; if(m.defs) MORFO_DEFS=m.defs; }
 async function loadMorfo(){
   const c=cachedMorfo(); if(c) applyMorfo(c);
   try{
@@ -2601,6 +2638,21 @@ async function loadMorfo(){
 function morfoTermHtml(t){
   const on = !!selections[t.id];
   return `<button class="morfo-term${on?' on':''}" data-mid="${t.id}" data-mes="${t.es.replace(/"/g,'&quot;')}">${t.es} <span class="hp">${t.id}</span>${infoDotHtml(t.id)}</button>`;
+}
+// Filtra los términos en todas las regiones; abre las que tengan coincidencias.
+function applyMorfoFilter(q){
+  const box=document.getElementById('dismorfologiaView'); if(!box) return;
+  q=(q||'').trim().toLowerCase();
+  box.querySelectorAll('.morfo-region').forEach(det=>{
+    let any=false;
+    det.querySelectorAll('.morfo-term').forEach(btn=>{
+      const hay = !q || ((btn.dataset.mes||'')+' '+(btn.dataset.mid||'')).toLowerCase().includes(q);
+      btn.style.display = hay ? '' : 'none';
+      if(hay) any=true;
+    });
+    det.style.display = any ? '' : 'none';
+    det.open = !!q && any;
+  });
 }
 function renderMorfoSelected(){
   const el=document.getElementById('morfoSelected'); if(!el) return;
@@ -2614,21 +2666,23 @@ function renderDismorfologia(){
   const box=document.getElementById('dismorfologiaView'); if(!box) return;
   if(!MORFO_REGIONS.length){ box.innerHTML='<div class="step-title">Dismorfología</div><div class="loading">Cargando términos…</div>'; loadMorfo(); return; }
   box.innerHTML = `<div class="step-title">Dismorfología</div>
-    <div class="step-sub">Recorrido región por región con términos estandarizados (<i>Elements of Morphology</i>). Pulsa un rasgo para añadirlo al fenotipo (se verifica contra JAX y se reetiqueta en español). La ⓘ explica el significado. Imágenes de referencia: próxima versión.</div>
-    <div id="morfoSelected"></div>`
+    <div class="step-sub">Recorrido región por región con términos estandarizados (<i>Elements of Morphology</i>). Pulsa un rasgo para añadirlo al fenotipo (se verifica contra JAX y se reetiqueta en español). La ⓘ explica el significado y permite mejorar la traducción con IA.</div>
+    <div id="morfoSelected"></div>
+    <input id="morfoFilter" type="text" placeholder="🔎 Filtrar rasgos en todas las regiones (nombre o HP:…)" autocomplete="off" style="width:100%;padding:9px 12px;margin-bottom:12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">`
     + MORFO_REGIONS.map(r=>`<details class="morfo-region"><summary>${r.region} <span style="color:var(--ink3);font-weight:400">· ${r.terms.length}</span></summary>${r.ref?`<a class="morfo-atlas" href="${r.ref}" target="_blank" rel="noopener">🖼 Atlas con figuras (NIH · Elements of Morphology)</a>`:''}<div class="morfo-terms">${r.terms.map(morfoTermHtml).join('')}</div></details>`).join('');
   renderMorfoSelected();
+  const fil=box.querySelector('#morfoFilter'); if(fil) fil.addEventListener('input', e=>applyMorfoFilter(e.target.value));
   box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
   box.querySelectorAll('.morfo-term').forEach(btn=>btn.addEventListener('click', async (e)=>{
     if(e.target.closest('.info-dot')) return;
     const id=btn.dataset.mid, es=btn.dataset.mes;
-    if(selections[id]){ delete selections[id]; renderCart(); refreshAnamnesisIfShown(); renderDismorfologia(); return; }
+    if(selections[id]){ delete selections[id]; syncSelections(); return; }
     btn.classList.add('on');
     let r; try{ r=await verifyAndRelabel(id, es); }catch(err){ r=null; }
     selections[id] = (r&&r.verified)
       ? {hpo:id, es:r.es, en:r.en, region:'dismorfología', origen:'dismorfología', verified:true}
       : {hpo:id, es, en:es, region:'dismorfología', origen:'dismorfología', verified:false};
-    renderCart(); refreshAnamnesisIfShown(); renderDismorfologia();
+    syncSelections();
   }));
 }
 function showSection(s){
@@ -2772,6 +2826,8 @@ function init(){
   loadEsLabels().then(map=>{ babelonReady = !!(map && Object.keys(map).length); renderStatus(); });
   // Pre-carga de los datos de dismorfología (morfo.json) → alimenta tooltips y la sección
   loadMorfo();
+  // Pre-carga del índice de traducciones IA (GitHub) → bestDef las prefiere si existen
+  ensureGhDefs();
 }
 /* ===========================================================================
    Puerta de acceso (login básico de cliente)
