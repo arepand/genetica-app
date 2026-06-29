@@ -291,6 +291,7 @@
   .morfo-chip{display:inline-flex; align-items:center; gap:6px; background:var(--panel2); border:1px solid var(--line); border-radius:14px; padding:4px 9px; font-size:12px; margin:0 4px 4px 0;}
   #morfoSelected{margin-bottom:14px; padding-bottom:12px; border-bottom:2px solid var(--line);}
   .tip-ai{display:inline-block; margin-top:5px; color:var(--accent); cursor:pointer; font-size:11px; text-decoration:underline; font-weight:600;}
+  .cart.cart-full{position:static; top:auto; border-left:none; width:auto; max-width:1080px; margin:0 auto; padding:24px 30px 90px;}
   .patient-bar{display:flex; align-items:center; flex-wrap:wrap; gap:14px; padding:9px 30px; border-bottom:1px solid var(--line); background:var(--panel2); font-size:12.5px;}
   .patient-bar .pb-group{display:flex; align-items:center; gap:6px;}
   .patient-bar .pb-l{color:var(--ink3); font-weight:600;}
@@ -367,8 +368,9 @@
 </header>
 
 <nav class="section-nav" id="sectionNav">
-  <button class="section-btn on" data-section="fenotipado">🧬 Fenotipado</button>
-  <button class="section-btn" data-section="biblioteca">📚 Biblioteca de fichas</button>
+  <button class="section-btn on" data-section="fenotipo">🧬 Fenotipo</button>
+  <button class="section-btn" data-section="fenotipado">📋 Fenotipado por protocolo</button>
+  <button class="section-btn" data-section="biblioteca">📚 Protocolos</button>
   <button class="section-btn" data-section="dismorfologia">🧑 Dismorfología</button>
   <button class="section-btn" data-section="antropometria">📏 Antropometría</button>
   <button class="section-btn" data-section="documentos">📁 Documentos</button>
@@ -378,7 +380,7 @@
 
 <div class="layout" id="fenotipadoView">
   <main id="main"></main>
-  <aside class="cart">
+  <aside class="cart" id="phenoPanel">
     <h2>Fenotipo del paciente <span class="counter" title="Fenotipos seleccionados">HPO <b id="statSel">0</b></span></h2>
     <div class="patient-line" id="patientLine">Sin datos del paciente aún</div>
     <div class="global-search">
@@ -398,6 +400,7 @@
   </aside>
 </div>
 
+<div id="fenotipoView" class="section-view" style="display:none"></div>
 <div id="bibliotecaView" class="section-view" style="display:none"></div>
 <div id="dismorfologiaView" class="section-view" style="display:none"></div>
 <div id="antropometriaView" class="section-view" style="display:none"></div>
@@ -1757,7 +1760,7 @@ function toggleQuickPheno(id, es, region){
 
 function chipBtn(id, label, region){
   const on = !!selections[id];
-  return `<button class="pheno-chip ${on?'on':''}" data-pid="${id}" data-pes="${label.replace(/"/g,'&quot;')}" data-preg="${(region||'Antropometría')}">${on?'✓ ':''}${label} <span class="hp">${id}</span></button>`;
+  return `<button class="pheno-chip ${on?'on':''}" data-pid="${id}" data-pes="${label.replace(/"/g,'&quot;')}" data-preg="${(region||'Antropometría')}">${on?'✓ ':''}${label} <span class="hp">${id}</span>${infoDotHtml(id)}</button>`;
 }
 
 function renderAnthro(){
@@ -1857,8 +1860,9 @@ function renderAnthro(){
     <div class="am-note">${noteHtml}</div>
   `;
   box.querySelectorAll('.pheno-chip').forEach(b=>{
-    b.addEventListener('click', ()=> toggleQuickPheno(b.dataset.pid, b.dataset.pes, b.dataset.preg));
+    b.addEventListener('click', (e)=>{ if(e.target.closest('.info-dot')) return; toggleQuickPheno(b.dataset.pid, b.dataset.pes, b.dataset.preg); });
   });
+  box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
 }
 /* === fin motor antropometría === */
 
@@ -1913,10 +1917,21 @@ function renderAnthroResult(){
     chips += chipBtn('HP:0000098','Talla alta','Antropometría');
     preg = `<div class="am-sub">¿La talla alta es <b>proporcionada</b> o <b>desproporcionada</b>?</div><div class="pheno-chips">${chipBtn('HP:0011407','Proporcionada','Antropometría')}${chipBtn('HP:0001519','Desproporcionada','Antropometría')}</div>`;
   }
-  // Peso / IMC
+  // Peso / IMC (con grados de sobrepeso/obesidad)
   if(bmi && sx){
-    if(ageY!=null&&ageY<=19){ const r=lmsZ('bmi',sx,ageY,bmi); if(r){ if(r.pct<3) chips+=chipBtn('HP:0004325','Bajo peso','Antropometría'); if(r.pct>97) chips+=chipBtn('HP:0001513','Obesidad','Antropometría'); } }
-    else if(ageY!=null&&ageY>19){ if(bmi<18.5) chips+=chipBtn('HP:0004325','Bajo peso','Antropometría'); if(bmi>=30) chips+=chipBtn('HP:0001513','Obesidad','Antropometría'); }
+    if(ageY!=null&&ageY<=19){ const r=lmsZ('bmi',sx,ageY,bmi); if(r){
+      if(r.z<=-2) chips+=chipBtn('HP:0004325','Bajo peso','Antropometría');
+      else if(r.z>=2) chips+=chipBtn('HP:0001513','Obesidad','Antropometría');
+      else if(r.z>=1) chips+=chipBtn('HP:0025502','Sobrepeso','Antropometría');
+    } }
+    else if(ageY!=null&&ageY>19){
+      if(bmi<18.5) chips+=chipBtn('HP:0004325','Bajo peso','Antropometría');
+      else if(bmi<25){} // normopeso
+      else if(bmi<30) chips+=chipBtn('HP:0025502','Sobrepeso','Antropometría');
+      else if(bmi<35) chips+=chipBtn('HP:0001513','Obesidad')+chipBtn('HP:0025499','Obesidad grado I','Antropometría');
+      else if(bmi<40) chips+=chipBtn('HP:0001513','Obesidad')+chipBtn('HP:0025500','Obesidad grado II','Antropometría');
+      else chips+=chipBtn('HP:0001513','Obesidad')+chipBtn('HP:0025501','Obesidad grado III (mórbida)','Antropometría');
+    }
   }
   // Perímetro cefálico
   if(pc>0 && sx && ageY!=null && ageY<=5){ const r=lmsZ('hc',sx,ageY,pc); if(r){ if(r.pct>97) chips+=chipBtn('HP:0000256','Macrocefalia','Antropometría'); if(r.pct<3) chips+=chipBtn('HP:0000252','Microcefalia','Antropometría'); } }
@@ -1925,7 +1940,8 @@ function renderAnthroResult(){
     + (chips?`<div class="am-sub">Sugeridos por las medidas — pulsa para añadir al fenotipo:</div><div class="pheno-chips">${chips}</div>`:'')
     + preg
     + `<div class="am-note">Percentiles <b>OMS</b> (LMS): talla/peso/IMC 0-19 a; <b>perímetro cefálico 0-5 a</b>. Gravedad de la talla baja por z: <b>leve</b> −2 a −3 · <b>moderada</b> −3 a −4 · <b>severa</b> &lt;−4 DE. En &gt;19 a la talla usa referencia poblacional y el IMC la clasificación OMS. Orientativo.</div>`;
-  box.querySelectorAll('.pheno-chip').forEach(b=> b.addEventListener('click', ()=> toggleAnthroPheno(b.dataset.pid, b.dataset.pes)));
+  box.querySelectorAll('.pheno-chip').forEach(b=> b.addEventListener('click', (e)=>{ if(e.target.closest('.info-dot')) return; toggleAnthroPheno(b.dataset.pid, b.dataset.pes); }));
+  box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
 }
 function renderAntropometria(){
   const box=document.getElementById('antropometriaView'); if(!box) return;
@@ -2836,11 +2852,21 @@ function showSection(s){
   currentSection=s;
   document.querySelectorAll('#sectionNav .section-btn').forEach(b=>b.classList.toggle('on', b.dataset.section===s));
   const fen=document.getElementById('fenotipadoView');
+  const feno=document.getElementById('fenotipoView');
   const bib=document.getElementById('bibliotecaView');
   const doc=document.getElementById('documentosView');
   const dis=document.getElementById('dismorfologiaView');
   const ant=document.getElementById('antropometriaView');
-  [fen,bib,doc,dis,ant].forEach(v=>{ if(v) v.style.display='none'; });
+  const panel=document.getElementById('phenoPanel');
+  [fen,feno,bib,doc,dis,ant].forEach(v=>{ if(v) v.style.display='none'; });
+  // El panel de fenotipo (búsqueda + carrito + diferencial + Monarch + export) es ÚNICO:
+  // en "fenotipo" va a pantalla completa; en el resto vuelve al aside del protocolo.
+  if(s==='fenotipo'){
+    if(feno && panel){ feno.appendChild(panel); panel.classList.add('cart-full'); feno.style.display='block'; }
+    renderCart(); renderDifferential(); renderMonarch();
+    return;
+  }
+  if(panel && fen && panel.parentElement!==fen){ fen.appendChild(panel); panel.classList.remove('cart-full'); }
   if(s==='biblioteca'){ if(bib){ bib.style.display='block'; renderBiblioteca(); } }
   else if(s==='documentos'){ if(doc){ doc.style.display='block'; renderDocumentos(); } }
   else if(s==='dismorfologia'){ if(dis){ dis.style.display='block'; renderDismorfologia(); } }
@@ -2978,6 +3004,8 @@ function init(){
   loadMorfo();
   // Pre-carga del índice de traducciones IA (GitHub) → bestDef las prefiere si existen
   ensureGhDefs();
+  // Pestaña de inicio: Fenotipo (panel a pantalla completa)
+  showSection('fenotipo');
 }
 /* ===========================================================================
    Puerta de acceso (login básico de cliente)
