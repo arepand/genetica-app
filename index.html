@@ -3263,29 +3263,39 @@ function normSyndName(n){
 }
 function applyPrenatalCustom(c){
   if(!c) return;
-  let syn=c.syndromes||[]; const find=c.findings||[];
+  let syn=c.syndromes||[]; let find=c.findings||[];
   const builtin=new Set(PRENATAL_SYNDROMES.map(s=>normSyndName(s.name)));
   const seen=new Set();
   syn=syn.filter(s=>{ const n=normSyndName(s.name); if(!n||builtin.has(n)||seen.has(n)) return false; seen.add(n); return true; }); // dedupe vs integrados y entre sí
+  // Poda de hallazgos huérfanos: solo se conservan los referenciados por algún síndrome.
+  const used=new Set([...PRENATAL_SYNDROMES, ...syn].flatMap(s=>s.findings||[]));
+  find=(find||[]).filter(t=>t&&t.id&&used.has(t.id));
   PRENATAL_CUSTOM={syndromes:syn, findings:find};
-  (find||[]).forEach(t=>{ if(t&&t.id) PRENATAL_TIPO[t.id]=t.tipo||'mayor'; });
+  find.forEach(t=>{ if(t&&t.id) PRENATAL_TIPO[t.id]=t.tipo||'mayor'; });
 }
 async function loadPrenatalCustom(){
   try{ const c=JSON.parse(localStorage.getItem('fh_prenatal_custom')); if(c) applyPrenatalCustom(c); }catch(e){}
   if(ghConfigured()){
     try{ const r=await ghGetFile('prenatal-syndromes.json'); if(r.json){
-      const before=(r.json.syndromes||[]).length; applyPrenatalCustom(r.json);
+      const before=(r.json.syndromes||[]).length + (r.json.findings||[]).length; applyPrenatalCustom(r.json);
       try{ localStorage.setItem('fh_prenatal_custom', JSON.stringify(PRENATAL_CUSTOM)); }catch(e){}
-      if(before>PRENATAL_CUSTOM.syndromes.length) persistPrenatalCustom('prenatal: limpiar '+(before-PRENATAL_CUSTOM.syndromes.length)+' duplicado(s)'); // saneo automático
+      const after=PRENATAL_CUSTOM.syndromes.length + PRENATAL_CUSTOM.findings.length;
+      if(before>after) persistPrenatalCustom('prenatal: saneo automático ('+(before-after)+' eliminados: duplicados/huérfanos)');
     } }catch(e){}
   }
 }
 function allPrenatalSyndromes(){ return [...PRENATAL_SYNDROMES, ...(PRENATAL_CUSTOM.syndromes||[])]; }
+function prenatalFindingLabel(id){
+  for(const s of PRENATAL_FINDINGS){ const t=s.terms.find(x=>x.id===id); if(t) return t.es; }
+  const c=(PRENATAL_CUSTOM.findings||[]).find(x=>x.id===id); if(c) return c.es;
+  return (window.__esLabels&&window.__esLabels[id])||id;
+}
+function syndromeFindingsTip(s){ return (s.findings||[]).map(id=>prenatalFindingLabel(id)+' ('+id+')').join('\n'); }
 function prenatalSindromes(){
   const out=[];
   for(const s of allPrenatalSyndromes()){
     const matched=(s.findings||[]).filter(id=>selections[id]);
-    if(matched.length>=(s.min||2)) out.push({name:s.name, test:s.test, matched, total:(s.findings||[]).length, ref:s.ref||null, ia:!!s.ia});
+    if(matched.length>=(s.min||2)) out.push({name:s.name, test:s.test, matched, total:(s.findings||[]).length, ref:s.ref||null, ia:!!s.ia, orpha:s.orpha||null});
   }
   return out.sort((a,b)=>b.matched.length-a.matched.length);
 }
@@ -3316,7 +3326,7 @@ async function addPrenatalCands(cands, minF){
       findings.push({id, es:offEs, tipo, sistema});
     }
     if(findings.length<need){ log.push('✗ '+c.name+': '+findings.length+'/'+proposed+' HPO verificados contra JAX (mínimo '+need+') → NO añadido.'); continue; }
-    PRENATAL_CUSTOM.syndromes.push({name:c.name, test:c.test||'', min:Math.max(1,Math.min(3,parseInt(c.min)||2)), findings:findings.map(x=>x.id), ref:(c.ref&&c.ref.url)?c.ref:null, ia:true});
+    PRENATAL_CUSTOM.syndromes.push({name:c.name, test:c.test||'', min:Math.max(1,Math.min(3,parseInt(c.min)||2)), findings:findings.map(x=>x.id), ref:(c.ref&&c.ref.url)?c.ref:null, orpha:c.orpha||null, ia:true});
     addedS++; existingNames.add(normSyndName(c.name));
     for(const x of findings){ if(!knownF.has(x.id)){ PRENATAL_CUSTOM.findings.push(x); PRENATAL_TIPO[x.id]=x.tipo; knownF.add(x.id); addedF++; } }
     log.push('✓ '+c.name+': añadido ('+findings.length+'/'+proposed+' HPO verificados, '+findings.map(x=>x.id).join(', ')+').');
@@ -3370,7 +3380,7 @@ async function añadirSindromePorNombre(name){
     if(!j){ out.innerHTML='<div class="err">La IA no devolvió datos válidos.</div>'; return; }
     if(j.prenatal===false || !(j.findings&&j.findings.length)){ out.innerHTML='<div class="study-flag">⚠ «'+escHtml(j.name||name)+'»: la IA NO reconoce hallazgos ecográficos prenatales característicos para esta entidad → no se añadió (no aporta a un cribado prenatal por imagen).</div>'; return; }
     j.name=name; // usa el nombre normalizado (Orphanet si lo hubo)
-    if(orpha && orpha.url) j.ref={titulo:'Orphanet: '+name, url:orpha.url};
+    if(orpha){ j.orpha=orpha.orpha; if(orpha.url) j.ref={titulo:'Orphanet: '+name, url:orpha.url}; }
     const res=await addPrenatalCands([j], 1);
     out.innerHTML = res.addedS
       ? `<div style="color:var(--ok);font-weight:600">✓ Añadido «${escHtml(j.name)}» — guardado en tu GitHub y ya disponible en el desplegable.</div>`
@@ -3405,18 +3415,18 @@ async function verificarHallazgoIA(id){
   const out=document.getElementById('prenatalIAupd');
   const f=(PRENATAL_CUSTOM.findings||[]).find(x=>x.id===id); if(!f){ return; }
   if(out) out.innerHTML='<div class="loading">Verificando «'+escHtml(f.es)+'» ('+id+')…</div>';
-  const t=await verifyHpo(f.id);
-  const offEs=t?((window.__esLabels&&window.__esLabels[f.id])||t.name):null;
-  // ¿la etiqueta apunta a OTRO código? (el actual sería incorrecto)
+  // Se CONFÍA en el NOMBRE (de confianza) y se resuelve el CÓDIGO correcto a partir de él.
   const fx=await findHpoByText(f.es);
   if(fx && fx.id!==f.id){
-    corregirHallazgoIA(f.id, fx.id, fx.es||fx.en);
-    if(out) out.innerHTML='<div style="color:var(--ok);font-weight:600">✓ Corregido «'+escHtml(f.es)+'»: '+id+' → '+fx.id+' («'+escHtml(fx.es||fx.en||'')+'»). Marcado verificado.</div>';
-  } else if(t){
-    f.verified=true; if(offEs) f.es=offEs;
-    if(out) out.innerHTML='<div style="color:var(--ok);font-weight:600">✓ Verificado: '+id+' = «'+escHtml(offEs||t.name)+'» (HPO oficial). Etiqueta IA retirada.</div>';
+    corregirHallazgoIA(f.id, fx.id);   // corrige el CÓDIGO, MANTIENE el nombre
+    if(out) out.innerHTML='<div style="color:var(--ok);font-weight:600">✓ Corregido el código de «'+escHtml(f.es)+'»: '+id+' → '+fx.id+' (verificado).</div>';
+  } else if(fx){
+    f.verified=true;                   // el código ya correspondía al nombre
+    if(out) out.innerHTML='<div style="color:var(--ok);font-weight:600">✓ Verificado: «'+escHtml(f.es)+'» = '+f.id+'.</div>';
   } else {
-    if(out) out.innerHTML='<div class="err">'+id+' no existe en HPO. Conviene quitarlo (✕).</div>';
+    // No se pudo resolver el nombre → NO renombrar, NO marcar verificado. Mostrar qué significa el código actual.
+    const t=await verifyHpo(f.id); const off=t?((window.__esLabels&&window.__esLabels[f.id])||t.name):null;
+    if(out) out.innerHTML='<div class="study-flag" style="color:#f2b3a6">⚠ No se pudo verificar «'+escHtml(f.es)+'» automáticamente. '+(off?('Su código '+f.id+' significa «'+escHtml(off)+'» en HPO — si NO coincide, quítalo ✕.'):(f.id+' no existe en HPO — quítalo ✕.'))+'</div>';
     return;
   }
   await persistPrenatalCustom('prenatal: verificar hallazgo'); renderPrenatal();
@@ -3424,16 +3434,14 @@ async function verificarHallazgoIA(id){
 async function revisarHallazgosIA(){
   const out=document.getElementById('prenatalIAupd'); if(!out) return;
   if(!(PRENATAL_CUSTOM.findings||[]).some(t=>!t.verified)){ out.innerHTML='<div style="color:var(--ok)">✓ No hay hallazgos IA pendientes de verificar.</div>'; return; }
-  let n=0, guard=0; const logs=[];
-  while(guard++<80){
-    const f=(PRENATAL_CUSTOM.findings||[]).find(t=>!t.verified); if(!f) break;
+  let n=0, guard=0; const logs=[]; const done=new Set();
+  while(guard++<120){
+    const f=(PRENATAL_CUSTOM.findings||[]).find(t=>!t.verified && !done.has(t.id)); if(!f) break;
     out.innerHTML='<div class="loading">Revisando «'+escHtml(f.es)+'» ('+f.id+')… ('+(n+1)+')</div>';
-    const t=await verifyHpo(f.id);
-    const offEs=t?((window.__esLabels&&window.__esLabels[f.id])||t.name):null;
-    const fx=await findHpoByText(f.es);
-    if(fx && fx.id!==f.id){ logs.push('🔧 «'+f.es+'»: '+f.id+' → '+fx.id+' ('+(fx.es||fx.en||'')+')'); corregirHallazgoIA(f.id, fx.id, fx.es||fx.en); }
-    else if(t){ f.verified=true; if(offEs) f.es=offEs; logs.push('✓ '+f.id+' = '+(offEs||t.name)); }
-    else { f.verified=true; logs.push('⚠ '+f.id+' no existe en HPO — conviene quitarlo'); }
+    const fx=await findHpoByText(f.es);   // se confía en el NOMBRE → resuelve el código correcto
+    if(fx && fx.id!==f.id){ logs.push('🔧 «'+f.es+'»: código '+f.id+' → '+fx.id); corregirHallazgoIA(f.id, fx.id); }
+    else if(fx){ f.verified=true; logs.push('✓ «'+f.es+'» = '+f.id); }
+    else { done.add(f.id); logs.push('⚠ «'+f.es+'» ('+f.id+'): no verificable — revísalo/quítalo'); } // NO se renombra
     n++;
   }
   await persistPrenatalCustom('prenatal: revisar hallazgos IA'); renderPrenatal();
@@ -3472,7 +3480,7 @@ function renderPrenatalInd(){
   const sindHtml = sinds.length
     ? `<div class="cart-group-title" style="margin-top:12px">Síndromes a considerar</div>`
       + sinds.map(s=>{ const link=(s.ref&&s.ref.url)?`<a href="${s.ref.url}" target="_blank" rel="noopener">${escHtml(s.ref.titulo||'Fuente')}</a>`:`<a href="${grLink(s.name)}" target="_blank" rel="noopener">GeneReviews</a>`;
-        return `<div class="study" style="margin:6px 0"><b>${escHtml(s.name)}</b>${s.ia?' <span class="dx-meta" style="color:var(--accent)">· IA</span>':''} <span class="dx-meta">(${s.matched.length}/${s.total} hallazgos: ${s.matched.map(id=>escHtml((selections[id]&&selections[id].es)||id)).join(', ')})</span><br>→ Estudio dirigido: <b>${escHtml(s.test)}</b> · ${link}</div>`; }).join('')
+        return `<div class="study" style="margin:6px 0"><b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">· IA</span>':''} <span class="dx-meta">(${s.matched.length}/${s.total} hallazgos: ${s.matched.map(id=>escHtml((selections[id]&&selections[id].es)||id)).join(', ')})</span><br>→ Estudio dirigido: <b>${escHtml(s.test)}</b> · ${link}</div>`; }).join('')
     : '';
   box.innerHTML=`<div class="cart-group-title">Indicación de estudio prenatal sugerida</div>`
     +`<div class="dx-meta" style="margin-bottom:6px">${r.mayores} anomalía(s) mayor(es) · ${r.marcadores} marcador(es) · ${r.nucal} nucal/hidrops</div>`
@@ -3527,7 +3535,7 @@ function renderPrenatal(){
       ${gaNote}
       <div id="prenatalInd" style="margin:14px 0 18px"></div>
       <details class="morfo-region"><summary>Síndromes incorporados <span style="color:var(--ink3);font-weight:400">· ${allPrenatalSyndromes().length}</span></summary>
-        <div style="font-size:12.5px;line-height:1.7;padding:4px 0">${allPrenatalSyndromes().map(s=>`<div>· <b>${escHtml(s.name)}</b>${s.ia?' <span class="dx-meta" style="color:var(--accent)">IA</span>':''} <span class="dx-meta">— ${(s.findings||[]).length} hallazgos · ${escHtml(s.test||'')}</span>${s.ia?` <a class="tip-ai" data-rmsyn="${escHtml(s.name)}">quitar</a>`:''}</div>`).join('')}</div>
+        <div style="font-size:12.5px;line-height:1.7;padding:4px 0">${allPrenatalSyndromes().map(s=>`<div>· <b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)" title="Ficha Orphanet (español)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">IA</span>':''} <span class="dx-meta" style="cursor:help;text-decoration:underline dotted" title="${escHtml(syndromeFindingsTip(s))}">— ${(s.findings||[]).length} hallazgos</span> <span class="dx-meta">· ${escHtml(s.test||'')}</span>${s.ia?` <a class="tip-ai" data-rmsyn="${escHtml(s.name)}">quitar</a>`:''}</div>`).join('')}</div>
       </details>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0">
         <input id="prenatalFilter" type="text" placeholder="🔎 Filtrar hallazgos (nombre o HP:…)" autocomplete="off" style="flex:1;min-width:180px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
