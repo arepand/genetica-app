@@ -1840,7 +1840,7 @@ function renderAnthro(){
     if(bmi<18.5) chips+=chipBtn('HP:0004325','Bajo peso','Crecimiento y hábito');
     if(bmi>=30) chips+=chipBtn('HP:0001513','Obesidad','Crecimiento y hábito');
   }
-  if(env>0 && talla>0 && (env/talla)>=1.05){ chips+=chipBtn('HP:0001505','Hábito marfanoide','Crecimiento y hábito'); }
+  if(env>0 && talla>0){ const rr=env/talla; if(rr>=1.05) chips+=chipBtn('HP:0012771','Envergadura aumentada','Crecimiento y hábito'); else if(rr<=0.95) chips+=chipBtn('HP:0012770','Envergadura disminuida','Crecimiento y hábito'); }
   // Siempre disponibles para marcar manualmente (sin dato)
   const manual = [
     ['HP:0004322','Talla baja'],['HP:0000098','Talla alta'],
@@ -1894,6 +1894,7 @@ function renderAnthroResult(){
   const talla=parseFloat(String(patient.tallaCm).replace(',','.'));
   const peso=parseFloat(String(patient.pesoKg).replace(',','.'));
   const pc=parseFloat(String(patient.perimetroCranealCm).replace(',','.'));
+  const env=parseFloat(String(patient.envergaduraCm).replace(',','.'));
   const ageY=patientAgeYears(); const sx=sexKeyOf();
   let bmi=null; if(talla>0&&peso>0) bmi=peso/Math.pow(talla/100,2);
   let rows = anthroPctCard('Talla',talla,'cm','height') + anthroPctCard('Peso',peso,'kg','weight');
@@ -1904,6 +1905,14 @@ function renderAnthroResult(){
     rows += `<div class="am-row"><span class="am-t">IMC</span><span class="am-v">${bmi.toFixed(1)} kg/m²</span>${p}</div>`;
   }
   rows += anthroPctCard('Perímetro cefálico',pc,'cm','hc',5);
+  // Envergadura + cociente envergadura/talla
+  let envRatio=null;
+  if(env>0){
+    rows += `<div class="am-row"><span class="am-t">Envergadura</span><span class="am-v">${env} cm</span></div>`;
+    if(talla>0){ envRatio=env/talla; const cls=envRatio>=1.05?'high':(envRatio<=0.95?'low':'mid');
+      rows += `<div class="am-row"><span class="am-t">Envergadura / Talla</span><span class="am-v">${envRatio.toFixed(3)}</span><span class="pct ${cls}">${envRatio>=1.05?'≥1.05 (envergadura aumentada)':(envRatio<=0.95?'≤0.95 (envergadura disminuida)':'normal')}</span></div>`;
+    }
+  }
 
   let chips=''; let preg='';
   // Talla baja/alta con gravedad
@@ -1935,6 +1944,8 @@ function renderAnthroResult(){
   }
   // Perímetro cefálico
   if(pc>0 && sx && ageY!=null && ageY<=5){ const r=lmsZ('hc',sx,ageY,pc); if(r){ if(r.pct>97) chips+=chipBtn('HP:0000256','Macrocefalia','Antropometría'); if(r.pct<3) chips+=chipBtn('HP:0000252','Microcefalia','Antropometría'); } }
+  // Envergadura (cociente envergadura/talla)
+  if(envRatio!=null){ if(envRatio>=1.05) chips+=chipBtn('HP:0012771','Envergadura aumentada','Antropometría'); else if(envRatio<=0.95) chips+=chipBtn('HP:0012770','Envergadura disminuida','Antropometría'); }
 
   box.innerHTML = `<div class="am-grid">${rows}</div>`
     + (chips?`<div class="am-sub">Sugeridos por las medidas — pulsa para añadir al fenotipo:</div><div class="pheno-chips">${chips}</div>`:'')
@@ -1951,10 +1962,11 @@ function renderAntropometria(){
       <div class="field"><label>Talla (cm)</label><input id="anTalla" type="text" inputmode="decimal" value="${patient.tallaCm||''}"></div>
       <div class="field"><label>Peso (kg)</label><input id="anPeso" type="text" inputmode="decimal" value="${patient.pesoKg||''}"></div>
       <div class="field"><label>Perímetro cefálico (cm)</label><input id="anPC" type="text" inputmode="decimal" value="${patient.perimetroCranealCm||''}"></div>
+      <div class="field"><label>Envergadura (cm)</label><input id="anEnverg" type="text" inputmode="decimal" value="${patient.envergaduraCm||''}"></div>
     </div>
     <div id="anthroTabResult"></div>`;
   const bind=(id,key)=>{ const e=document.getElementById(id); if(e) e.addEventListener('input', ()=>{ patient[key]=e.value; renderAnthroResult(); }); };
-  bind('anTalla','tallaCm'); bind('anPeso','pesoKg'); bind('anPC','perimetroCranealCm');
+  bind('anTalla','tallaCm'); bind('anPeso','pesoKg'); bind('anPC','perimetroCranealCm'); bind('anEnverg','envergaduraCm');
   renderAnthroResult();
 }
 
