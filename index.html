@@ -1613,7 +1613,7 @@ function setActiveFicha(ficha, res, fichas){
   const nPreg = (ficha.dominios||[]).reduce((a,d)=>a+((d.preguntas||[]).length),0);
   const entidades = (ficha.entidades||[]).map(e=>`<span class="gene" title="${(e.genes||[]).join(', ')}">${e.nombre}</span>`).join(' ');
   const panel = (ficha.panel_genes||[]).map(g=>`<a class="gene" href="${panelAppLink(g)}" target="_blank" rel="noopener" style="text-decoration:none">${g}</a>`).join(' ');
-  const fuentes = (ficha.fuentes||[]).map(s=>`<a href="${s.url}" target="_blank" rel="noopener">${s.titulo}${s.anio?' ('+s.anio+')':''}</a>`).join(' · ');
+  const fuentes = (ficha.fuentes||[]).map(s=>`<a href="${s.url}" target="_blank" rel="noopener">${s.titulo}${s.anio?' ('+s.anio+')':''}</a>${bibRefHtml(s)}`).join(' · ');
   box.innerHTML = `
     <div style="border:1px solid var(--accent2); background:linear-gradient(180deg,#173430,#15201d); border-radius:12px; padding:16px 18px">
       <div style="display:flex; align-items:baseline; gap:10px; flex-wrap:wrap">
@@ -2618,7 +2618,7 @@ function evalResultHtml(r, note){
   return `<div class="eval ${r.indicado?'on':'off'}">
     <b>${r.indicado?'✓ Estudio indicado':'✗ No indicado'}</b> · ${r.cumple_criterios?'cumple criterios':'no cumple criterios'}
     ${r.justificacion?`<div style="margin-top:4px">${r.justificacion}</div>`:''}
-    ${g.url?`<div class="study-src">Según: <a href="${g.url}" target="_blank" rel="noopener">${g.titulo||g.url}${g.anio?' ('+g.anio+')':''}</a></div>`:(g.titulo?`<div class="study-src">Según: ${g.titulo}</div>`:'')}
+    ${g.url?`<div class="study-src">Según: <a href="${g.url}" target="_blank" rel="noopener">${g.titulo||g.url}${g.anio?' ('+g.anio+')':''}</a>${bibRefHtml({titulo:g.titulo,url:g.url,anio:g.anio})}</div>`:(g.titulo?`<div class="study-src">Según: ${g.titulo}</div>`:'')}
     ${note?`<div class="study-src" style="opacity:.85">${note}</div>`:''}
   </div>`;
 }
@@ -3634,8 +3634,6 @@ function renderPrenatalInd(){
     +`<button class="btn" id="btnPrenatalIA" style="margin-top:8px">Evaluar según guías vigentes (web · IA · usa tokens)</button><div id="prenatalIAout"></div>`
     +`<div class="am-note">Orientativo (ISUOG/ACMG/SMFM/SEGO + GeneReviews): no sustituye el juicio clínico ni el consejo prenatal. Los síndromes se sugieren por solapamiento de hallazgos; no son diagnóstico.</div>`;
   const b=box.querySelector('#btnPrenatalIA'); if(b) b.addEventListener('click', evalPrenatalGuias);
-  wireBibRefs(box, renderPrenatal);
-  box.querySelectorAll('.hastip').forEach(el=>el.addEventListener('click', (e)=>{ e.stopPropagation(); el.classList.toggle('open'); }));
 }
 async function evalPrenatalGuias(){
   const out=document.getElementById('prenatalIAout'); if(!out) return;
@@ -3722,8 +3720,6 @@ function renderPrenatal(){
   box.querySelectorAll('[data-rmsyn]').forEach(a=>a.addEventListener('click', ()=>quitarSindromeIA(a.dataset.rmsyn)));
   box.querySelectorAll('[data-vfy]').forEach(a=>a.addEventListener('click', (e)=>{ e.stopPropagation(); verificarHallazgoIA(a.dataset.vfy); }));
   box.querySelectorAll('[data-rmf]').forEach(a=>a.addEventListener('click', (e)=>{ e.stopPropagation(); quitarHallazgoIA(a.dataset.rmf); }));
-  box.querySelectorAll('.hastip').forEach(el=>el.addEventListener('click', (e)=>{ e.stopPropagation(); el.classList.toggle('open'); }));
-  wireBibRefs(box, renderPrenatal);
   // refresca iconos de PDF una vez cuando el índice llega (sin remover el panel: solo re-renderiza si seguimos en prenatal)
   if(!_docsPrefetched){ _docsPrefetched=true; getDocsIndex().then(idx=>{ if((idx&&idx.docs&&idx.docs.length) && document.getElementById('prenatalPanelSlot')) renderPrenatalInd(); }); }
   box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
@@ -3838,7 +3834,9 @@ async function abrirFichaBiblioteca(id, edit){
   if(!ficha){ showToast('No se pudo cargar la ficha'); return; }
   if(edit) openFichaReview(ficha, {origin:'biblioteca'}); else await renderFichaView(ficha);
 }
+let _viewedFicha=null;
 async function renderFichaView(f){
+  _viewedFicha=f;
   const box=document.getElementById('bibliotecaView'); if(!box) return;
   const docs=(await getDocsIndex()).docs||[];
   const fuentesArr=f.fuentes||[];
@@ -3873,7 +3871,6 @@ async function renderFichaView(f){
       ${fuentes?`<h3>Referencias</h3><ul class="src">${fuentes}</ul>`:''}
     </div>`;
   box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
-  box.querySelectorAll('.hastip').forEach(el=>el.addEventListener('click', (e)=>{ if(e.target.closest('a')) return; e.stopPropagation(); el.classList.toggle('open'); }));
   document.getElementById('fvBack').addEventListener('click', ()=>renderBiblioteca());
   document.getElementById('fvEdit').addEventListener('click', ()=>openFichaReview(f, {origin:'biblioteca'}));
   document.getElementById('fvValidate').addEventListener('click', ()=>openValidarHpo(f));
@@ -3916,7 +3913,25 @@ function openRegistrarDoc(fuente, onDone){
   });
 }
 
+function refreshBibViews(){
+  try{ if(currentSection==='prenatal') renderPrenatal(); }catch(e){}
+  try{ if(currentSection==='biblioteca' && _viewedFicha) renderFichaView(_viewedFicha); }catch(e){}
+  try{ renderCart&&renderCart(); }catch(e){}
+}
+// Manejador GLOBAL (delegado): cualquier "📎 asignar PDF" en TODA la app + toggle de tooltips .hastip en táctil.
+function wireGlobalBib(){
+  if(window.__bibWired) return; window.__bibWired=true;
+  document.addEventListener('click', e=>{
+    const t=e.target;
+    const assign = t.closest && t.closest('.bib-assign');
+    if(assign){ e.preventDefault(); e.stopPropagation(); let fu={}; try{ fu=JSON.parse(decodeURIComponent(assign.dataset.bibref)); }catch(_){}
+      openRegistrarDoc(fu, refreshBibViews); return; }
+    const tip = t.closest && t.closest('.hastip');
+    if(tip && !(t.closest && t.closest('a'))){ e.stopPropagation(); tip.classList.toggle('open'); }
+  });
+}
 function init(){
+  wireGlobalBib();
   document.getElementById('openSettings').addEventListener('click', openSettings);
   document.getElementById('openInformes').addEventListener('click', openInformes);
   document.getElementById('copyCodesBtn').addEventListener('click', copyCodes);
