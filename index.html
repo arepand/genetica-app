@@ -488,6 +488,8 @@ function infoDotHtml(id){
   if(staticDef) return `<span class="info-dot" data-id="${id}">i<span class="tooltip">${staticDef}</span></span>`;
   return `<span class="info-dot pending" data-id="${id}" style="display:none;">i<span class="tooltip"></span></span>`;
 }
+// Devuelve el código HPO con su punto de información (tooltip de significado). Para códigos HP: válidos.
+function hpoCodeInfo(id){ return /^HP:\d+$/.test(id||'') ? id+infoDotHtml(id) : (id||''); }
 function wireInfoDot(dot){
   if(dot.dataset.bound) return;
   dot.dataset.bound = '1';
@@ -1631,7 +1633,7 @@ const qOwned = {}; // qid -> [ids HPO aportados por esa pregunta (reversible)]
 function questionHtml(q, dom){
   const type = q.multiple ? 'checkbox' : 'radio';
   const opts = (q.opciones||[]).map((o,i)=>{
-    const hint = (o.hpo&&o.hpo.length) ? `<span class="q-hpo">${o.hpo.map(h=>h.id).join(', ')}</span>` : '';
+    const hint = (o.hpo&&o.hpo.length) ? `<span class="q-hpo">${o.hpo.map(h=>hpoCodeInfo(h.id)).join(', ')}</span>` : '';
     // Pre-marcar si los HPO de la opción YA están en el fenotipo (p. ej. extraídos de un informe lab/rayos/electro)
     const checked = (o.hpo && o.hpo.length && o.hpo.some(h=>!!selections[h.id])) ? ' checked' : '';
     return `<label class="q-opt"><input type="${type}" name="q_${q.id}" data-oi="${i}"${checked}><span>${o.etiqueta}</span>${hint}</label>`;
@@ -1699,6 +1701,7 @@ function renderAnamnesis(){
   (f.dominios||[]).forEach(d=>(d.preguntas||[]).forEach(q=>wireQuestion(q, d.nombre)));
   document.getElementById('btnVolver').addEventListener('click', renderInicio);
   document.getElementById('btnProfundizar').addEventListener('click', profundizarIA);
+  main.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(main);
   renderCart();
 }
 
@@ -2486,7 +2489,7 @@ async function renderFichaView(f){
     return `<li><a href="${s.url}" target="_blank" rel="noopener">${s.titulo||s.url}</a>${s.anio?' ('+s.anio+')':''}${status}</li>`;
   }).join('');
   const doms=(f.dominios||[]).map(d=>`<div class="dom"><div class="dom-n">${d.nombre}</div><ul>${(d.preguntas||[]).map(q=>`<li>${q.texto}</li>`).join('')}</ul></div>`).join('');
-  const ents=(f.entidades||[]).map(e=>`<div class="ent"><b>${e.nombre}</b>${e.genes&&e.genes.length?` · genes: ${e.genes.join(', ')}`:''}<br>Criterio: ${e.umbral||('≥'+(e.min_mayores||0)+' mayores '+(((e.logica||'and')==='or')?'o':'y')+' ≥'+(e.min_menores||0)+' menores')} · mayores: ${(e.mayores||[]).join(', ')||'—'} · menores: ${(e.menores||[]).join(', ')||'—'}</div>`).join('');
+  const ents=(f.entidades||[]).map(e=>`<div class="ent"><b>${e.nombre}</b>${e.genes&&e.genes.length?` · genes: ${e.genes.join(', ')}`:''}<br>Criterio: ${e.umbral||('≥'+(e.min_mayores||0)+' mayores '+(((e.logica||'and')==='or')?'o':'y')+' ≥'+(e.min_menores||0)+' menores')} · mayores: ${(e.mayores||[]).map(hpoCodeInfo).join(', ')||'—'} · menores: ${(e.menores||[]).map(hpoCodeInfo).join(', ')||'—'}</div>`).join('');
   const eg=f.estudio_genetico;
   const study = eg ? `<h3>Indicación de estudio genético</h3>
     ${eg.tipo?`<div><b>Tipo:</b> ${eg.tipo}</div>`:''}${eg.detalle?`<div style="margin-top:3px">${eg.detalle}</div>`:''}
@@ -2506,6 +2509,7 @@ async function renderFichaView(f){
       ${study}
       ${fuentes?`<h3>Referencias</h3><ul class="src">${fuentes}</ul>`:''}
     </div>`;
+  box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
   document.getElementById('fvBack').addEventListener('click', ()=>renderBiblioteca());
   document.getElementById('fvEdit').addEventListener('click', ()=>openFichaReview(f));
   document.getElementById('fvPrint').addEventListener('click', ()=>window.print());
