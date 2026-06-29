@@ -1073,6 +1073,31 @@ async function desregistrarDoc(id){
   cacheDocs(idx);
   return idx;
 }
+let _docsPrefetched=false;
+/* Componente reutilizable para CUALQUIER referencia bibliográfica:
+   - si su PDF está indexado en docs/index.json → icono 📄 con tooltip (nombre + descripción + abrir PDF);
+   - si no → botón "📎 asignar PDF" que abre el registro. fuente = {titulo,url,anio}. */
+function bibRefHtml(fuente){
+  if(!fuente || (!fuente.url && !fuente.titulo)) return '';
+  const docs=(cachedDocs()||{}).docs||[];
+  const d=matchDoc(fuente, docs);
+  if(d){
+    const pdf=d.enlace||d.url||'';
+    const tip=escHtml(d.titulo||fuente.titulo||'Documento')
+      +(d.descripcion?('<br><span class="dx-meta">'+escHtml(d.descripcion)+'</span>'):'')
+      +(pdf?('<br><a href="'+escHtml(pdf).replace(/"/g,'&quot;')+'" target="_blank" rel="noopener">Abrir PDF ↗</a>'):'');
+    return ' <span class="hastip bib-have" title="PDF en tu repositorio">📄<span class="tooltip">'+tip+'</span></span>';
+  }
+  const enc=encodeURIComponent(JSON.stringify({titulo:fuente.titulo||'', url:fuente.url||'', anio:fuente.anio||''}));
+  return ' <a class="tip-ai bib-assign" data-bibref="'+enc+'" title="Asignar/registrar el PDF de esta referencia en tu repositorio">📎 asignar PDF</a>';
+}
+function wireBibRefs(container, onDone){
+  if(!container) return;
+  container.querySelectorAll('.bib-assign').forEach(b=>b.addEventListener('click', e=>{ e.stopPropagation(); e.preventDefault();
+    let fu={}; try{ fu=JSON.parse(decodeURIComponent(b.dataset.bibref)); }catch(_){}
+    openRegistrarDoc(fu, onDone||(()=>{}));
+  }));
+}
 
 /* ---- Capa proveedor LLM (Claude / OpenAI) ---- */
 function extractJSON(text){
@@ -3553,7 +3578,7 @@ const PRENATAL_REFS={
   overview:{t:'Santoli et al., Revisión de guías de cribado y diagnóstico prenatal (2025)', u:'https://obgyn.onlinelibrary.wiley.com/doi/full/10.1002/pmf2.70016', a:'2025'}
 };
 function refsHtml(keys){
-  return `<div class="study-src">Fuentes: `+keys.map(k=>{ const r=PRENATAL_REFS[k]; return `<a href="${r.u}" target="_blank" rel="noopener">${escHtml(r.t)} (${r.a})</a>`; }).join(' · ')+`</div>`;
+  return `<div class="study-src">Fuentes: `+keys.map(k=>{ const r=PRENATAL_REFS[k]; return `<a href="${r.u}" target="_blank" rel="noopener">${escHtml(r.t)} (${r.a})</a>`+bibRefHtml({titulo:r.t, url:r.u, anio:r.a}); }).join(' · ')+`</div>`;
 }
 function prenatalIndicacion(){
   const sel=Object.keys(selections).filter(id=>PRENATAL_TIPO[id]);
@@ -3576,7 +3601,7 @@ function renderPrenatalInd(){
   const sindHtml = sinds.length
     ? `<div class="cart-group-title" style="margin-top:12px">Síndromes a considerar</div>`
       + sinds.map(s=>{ const link=(s.ref&&s.ref.url)?`<a href="${s.ref.url}" target="_blank" rel="noopener">${escHtml(s.ref.titulo||'Fuente')}</a>`:`<a href="${grLink(s.name)}" target="_blank" rel="noopener">GeneReviews</a>`;
-        return `<div class="study" style="margin:6px 0"><b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">· IA</span>':''} <span class="dx-meta">(${s.matched.length}/${s.total} hallazgos: ${s.matched.map(id=>escHtml((selections[id]&&selections[id].es)||id)).join(', ')})</span><br>→ Estudio dirigido: <b>${escHtml(s.test)}</b> · ${link}</div>`; }).join('')
+        return `<div class="study" style="margin:6px 0"><b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">· IA</span>':''} <span class="dx-meta">(${s.matched.length}/${s.total} hallazgos: ${s.matched.map(id=>escHtml((selections[id]&&selections[id].es)||id)).join(', ')})</span><br>→ Estudio dirigido: <b>${escHtml(s.test)}</b> · ${link}${s.ref?bibRefHtml(s.ref):''}</div>`; }).join('')
     : '';
   box.innerHTML=`<div class="cart-group-title">Indicación de estudio prenatal sugerida</div>`
     +`<div class="dx-meta" style="margin-bottom:6px">${r.mayores} anomalía(s) mayor(es) · ${r.marcadores} marcador(es) · ${r.nucal} nucal/hidrops</div>`
@@ -3585,6 +3610,8 @@ function renderPrenatalInd(){
     +`<button class="btn" id="btnPrenatalIA" style="margin-top:8px">Evaluar según guías vigentes (web · IA · usa tokens)</button><div id="prenatalIAout"></div>`
     +`<div class="am-note">Orientativo (ISUOG/ACMG/SMFM/SEGO + GeneReviews): no sustituye el juicio clínico ni el consejo prenatal. Los síndromes se sugieren por solapamiento de hallazgos; no son diagnóstico.</div>`;
   const b=box.querySelector('#btnPrenatalIA'); if(b) b.addEventListener('click', evalPrenatalGuias);
+  wireBibRefs(box, renderPrenatal);
+  box.querySelectorAll('.hastip').forEach(el=>el.addEventListener('click', (e)=>{ e.stopPropagation(); el.classList.toggle('open'); }));
 }
 async function evalPrenatalGuias(){
   const out=document.getElementById('prenatalIAout'); if(!out) return;
@@ -3631,7 +3658,7 @@ function renderPrenatal(){
       ${gaNote}
       <div id="prenatalInd" style="margin:14px 0 18px"></div>
       <details class="morfo-region"><summary>Síndromes incorporados <span style="color:var(--ink3);font-weight:400">· ${allPrenatalSyndromes().length}</span></summary>
-        <div style="font-size:12.5px;line-height:1.7;padding:4px 0">${allPrenatalSyndromes().map(s=>`<div>· <b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)" title="Ficha Orphanet (español)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">IA</span>':''} <span class="dx-meta hastip">— ${(s.findings||[]).length} hallazgos<span class="tooltip">${syndromeFindingsTip(s)}</span></span> <span class="dx-meta">· ${escHtml(s.test||'')}</span>${s.ia?` <a class="tip-ai" data-rmsyn="${escHtml(s.name)}">quitar</a>`:''}</div>`).join('')}</div>
+        <div style="font-size:12.5px;line-height:1.7;padding:4px 0">${allPrenatalSyndromes().map(s=>`<div>· <b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)" title="Ficha Orphanet (español)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">IA</span>':''} <span class="dx-meta hastip">— ${(s.findings||[]).length} hallazgos<span class="tooltip">${syndromeFindingsTip(s)}</span></span> <span class="dx-meta">· ${escHtml(s.test||'')}</span>${(s.ref&&s.ref.url)?` <a class="dx-meta" href="${escHtml(String(s.ref.url)).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">bibliografía</a>`:''}${s.ref?bibRefHtml(s.ref):''}${s.ia?` <a class="tip-ai" data-rmsyn="${escHtml(s.name)}">quitar</a>`:''}</div>`).join('')}</div>
       </details>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0">
         <input id="prenatalFilter" type="text" placeholder="🔎 Filtrar hallazgos (nombre o HP:…)" autocomplete="off" style="flex:1;min-width:180px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
@@ -3672,6 +3699,9 @@ function renderPrenatal(){
   box.querySelectorAll('[data-vfy]').forEach(a=>a.addEventListener('click', (e)=>{ e.stopPropagation(); verificarHallazgoIA(a.dataset.vfy); }));
   box.querySelectorAll('[data-rmf]').forEach(a=>a.addEventListener('click', (e)=>{ e.stopPropagation(); quitarHallazgoIA(a.dataset.rmf); }));
   box.querySelectorAll('.hastip').forEach(el=>el.addEventListener('click', (e)=>{ e.stopPropagation(); el.classList.toggle('open'); }));
+  wireBibRefs(box, renderPrenatal);
+  // refresca iconos de PDF una vez cuando el índice llega (sin remover el panel: solo re-renderiza si seguimos en prenatal)
+  if(!_docsPrefetched){ _docsPrefetched=true; getDocsIndex().then(idx=>{ if((idx&&idx.docs&&idx.docs.length) && document.getElementById('prenatalPanelSlot')) renderPrenatalInd(); }); }
   box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
   box.querySelectorAll('.morfo-term').forEach(btn=>btn.addEventListener('click', (e)=>{
     if(e.target.closest('.info-dot') || e.target.closest('.tip-ai') || e.target.closest('.x')) return;
@@ -3790,7 +3820,7 @@ async function renderFichaView(f){
     const d=matchDoc(s, docs);
     const picker = docs.length ? ` <select class="doc-link" data-fi="${i}" style="font-size:11px;max-width:200px"><option value="">🔗 …es uno ya registrado</option>${docs.map(dd=>`<option value="${dd.id}">${(dd.titulo||dd.id).replace(/</g,'&lt;')}</option>`).join('')}</select>` : '';
     const status = d
-      ? ` · <a href="${d.enlace||d.url}" target="_blank" rel="noopener" class="doc-have">📄 Tengo el PDF</a>`
+      ? ` · <span class="hastip bib-have" title="PDF en tu repositorio"><a href="${d.enlace||d.url}" target="_blank" rel="noopener" class="doc-have">📄 Tengo el PDF</a><span class="tooltip">${escHtml(d.titulo||'')}${d.descripcion?'<br><span class="dx-meta">'+escHtml(d.descripcion)+'</span>':''}${(d.enlace||d.url)?'<br><a href="'+escHtml(String(d.enlace||d.url)).replace(/"/g,'&quot;')+'" target="_blank" rel="noopener">Abrir PDF ↗</a>':''}</span></span>`
       : ` · <button class="btn doc-reg" data-fi="${i}" style="padding:3px 8px;font-size:11px">+ Registrar PDF</button>${picker}`;
     return `<li><a href="${s.url}" target="_blank" rel="noopener">${s.titulo||s.url}</a>${s.anio?' ('+s.anio+')':''}${status}</li>`;
   }).join('');
@@ -3817,6 +3847,7 @@ async function renderFichaView(f){
       ${fuentes?`<h3>Referencias</h3><ul class="src">${fuentes}</ul>`:''}
     </div>`;
   box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
+  box.querySelectorAll('.hastip').forEach(el=>el.addEventListener('click', (e)=>{ if(e.target.closest('a')) return; e.stopPropagation(); el.classList.toggle('open'); }));
   document.getElementById('fvBack').addEventListener('click', ()=>renderBiblioteca());
   document.getElementById('fvEdit').addEventListener('click', ()=>openFichaReview(f, {origin:'biblioteca'}));
   document.getElementById('fvValidate').addEventListener('click', ()=>openValidarHpo(f));
@@ -3840,6 +3871,7 @@ function openRegistrarDoc(fuente, onDone){
     <div class="field"><label>Referencia (URL del artículo/guía)</label><input id="rdUrl" type="text" value="${(fuente.url||'').replace(/"/g,'&quot;')}"></div>
     <div class="field"><label>DOI (opcional)</label><input id="rdDoi" type="text" placeholder="10.xxxx/…"></div>
     <div class="field"><label>Enlace al PDF (tu nube)</label><input id="rdLink" type="text" placeholder="https://drive.google.com/…"></div>
+    <div class="field"><label>Descripción (qué es)</label><input id="rdDesc" type="text" value="${(fuente.descripcion||'').replace(/"/g,'&quot;')}" placeholder="p. ej. Guía SEGO de cribado prenatal; revisión de casos prenatales de…"></div>
     <div class="test-out" id="rdOut"></div>
     <div class="modal-actions"><button class="btn ghost" id="rdCancel">Cancelar</button><button class="btn primary" id="rdSave">Registrar</button></div>
   </div>`;
@@ -3849,7 +3881,7 @@ function openRegistrarDoc(fuente, onDone){
   ov.addEventListener('click', e=>{ if(e.target===ov) close(); });
   ov.querySelector('#rdSave').addEventListener('click', async ()=>{
     const out=ov.querySelector('#rdOut');
-    const doc={ titulo:ov.querySelector('#rdTit').value.trim(), url:ov.querySelector('#rdUrl').value.trim(), doi:ov.querySelector('#rdDoi').value.trim(), enlace:ov.querySelector('#rdLink').value.trim(), anio:fuente.anio||'' };
+    const doc={ titulo:ov.querySelector('#rdTit').value.trim(), url:ov.querySelector('#rdUrl').value.trim(), doi:ov.querySelector('#rdDoi').value.trim(), enlace:ov.querySelector('#rdLink').value.trim(), descripcion:ov.querySelector('#rdDesc').value.trim(), anio:fuente.anio||'' };
     if(!doc.enlace && !doc.doi){ out.className='test-out bad'; out.textContent='Pon al menos el enlace al PDF o un DOI.'; return; }
     if(!ghConfigured()){ out.className='test-out bad'; out.textContent='Configura GitHub en ⚙ Ajustes para guardar el registro.'; return; }
     out.className='test-out'; out.textContent='Registrando…';
