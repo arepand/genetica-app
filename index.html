@@ -435,8 +435,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.5.3';
+const APP_VERSION='1.5.4';
 const CHANGELOG=[
+  {v:'1.5.4', d:'2026-06-29', c:['Búsquedas insensibles a tildes en toda la app: «fistula» encuentra «fístula» (HPO, dismorfología, prenatal, protocolos).']},
   {v:'1.5.3', d:'2026-06-29', c:['«Mis documentos»: botón ✏ Editar para corregir nombre y descripción a mano, y ↻ IA ahora REGENERA leyendo el TEXTO REAL del PDF (no el nombre del fichero) → títulos correctos.']},
   {v:'1.5.2', d:'2026-06-29', c:['Asignar PDF desde una referencia: ya NO analiza con IA (evita títulos erróneos); el nombre se toma de la referencia y solo se LIGA el PDF que elijas de tus documentos. La IA (✨, opcional) sigue disponible y el análisis automático se mantiene al indexar desde «Documentos».']},
   {v:'1.5.1', d:'2026-06-29', c:['Versionado de 3 niveles: mayor (gran avance) · menor (mejora) · parche (arreglo o detalle menor, p. ej. 1.5.1).']},
@@ -473,6 +474,8 @@ const liveDefinitionCache = {};
 
 /* Normaliza: minúsculas + sin acentos. */
 function normTxt(s){ return (s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9ñ ]/g,' ').replace(/\s+/g,' ').trim(); }
+// Minúsculas + SIN tildes (conserva el resto): para que las búsquedas igualen «fístula» y «fistula».
+function accLower(s){ return (s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,''); }
 const NL_STOP = new Set(['el','la','los','las','un','una','de','del','al','a','y','o','en','con','su','sus','se','que','cuando','esta','este','esto','muy','mas','le','lo','por','para','es','son','tiene','tener','hacia','entre','sobre','the','of']);
 /* Léxico coloquial → HPO (un grupo casa si TODAS sus raíces aparecen). */
 const LAY_LEXICON = [
@@ -732,6 +735,7 @@ async function runInlineSearch(term, regionLabel, boxId){
     const esLabels = await loadEsLabels();
     window.__esLabels = esLabels;
     const q = term.trim().toLowerCase();
+    const qa = accLower(term).trim();   // sin tildes
     const qn = normTxt(term);
     const qTokens = qn.split(' ').filter(t=>t.length>=4 && !NL_STOP.has(t));
     const matches = [];
@@ -755,7 +759,7 @@ async function runInlineSearch(term, regionLabel, boxId){
     // 2) Etiqueta española: subcadena directa
     for(const id in esLabels){
       if(matches.length >= 14) break;
-      if(esLabels[id].toLowerCase().includes(q)) addMatch(id, esLabels[id]);
+      if(accLower(esLabels[id]).includes(qa)) addMatch(id, esLabels[id]);
     }
     // 3) Etiqueta española: coincidencia por palabras clave
     if(qTokens.length){
@@ -3245,13 +3249,13 @@ function morfoTermHtml(t){
 // Filtra los términos en todas las regiones; abre las que tengan coincidencias.
 function applyMorfoFilter(q){
   const box=document.getElementById('dismorfologiaView'); if(!box) return;
-  q=(q||'').trim().toLowerCase();
+  q=accLower((q||'').trim());
   box.querySelectorAll('.morfo-region').forEach(det=>{
     let anyR=false;
     det.querySelectorAll('.morfo-sub').forEach(sub=>{
       let anyS=false;
       sub.querySelectorAll('.morfo-term').forEach(btn=>{
-        const hay = !q || ((btn.dataset.mes||'')+' '+(btn.dataset.mid||'')).toLowerCase().includes(q);
+        const hay = !q || accLower((btn.dataset.mes||'')+' '+(btn.dataset.mid||'')).includes(q);
         btn.style.display = hay ? '' : 'none';
         if(hay) anyS=true;
       });
@@ -3941,11 +3945,11 @@ function renderPrenatal(){
 }
 function applyPrenatalFilter(q){
   const box=document.getElementById('prenatalView'); if(!box) return;
-  q=(q||'').trim().toLowerCase();
+  q=accLower((q||'').trim());
   box.querySelectorAll('.morfo-region').forEach(det=>{
     let any=false;
     det.querySelectorAll('.morfo-term').forEach(btn=>{
-      const hay = !q || ((btn.dataset.mes||btn.dataset.pes||'')+' '+(btn.dataset.pid||'')).toLowerCase().includes(q);
+      const hay = !q || accLower((btn.dataset.mes||btn.dataset.pes||'')+' '+(btn.dataset.pid||'')).includes(q);
       btn.style.display = hay ? '' : 'none'; if(hay) any=true;
     });
     det.style.display = any ? '' : 'none'; det.open = !!q && any;
@@ -3985,9 +3989,9 @@ let _libCache=[];
 async function renderBiblioteca(filter){
   const box=document.getElementById('bibliotecaView'); if(!box) return;
   if(filter===undefined){ box.innerHTML='<div class="loading">Cargando biblioteca…</div>'; const idx=await getIndex(); _libCache=idx.fichas||[]; }
-  const q=(filter||'').toLowerCase();
-  const fichas=_libCache.filter(f=>!q || (f.nombre||'').toLowerCase().includes(q) || (f.id||'').toLowerCase().includes(q) || (f.sinonimos||[]).join(' ').toLowerCase().includes(q));
-  const prenat=allPrenatalSyndromes().filter(s=>!q || (s.name||'').toLowerCase().includes(q) || normSyndName(s.name).includes(normSyndName(q)));
+  const q=accLower(filter||'');
+  const fichas=_libCache.filter(f=>!q || accLower(f.nombre||'').includes(q) || accLower(f.id||'').includes(q) || accLower((f.sinonimos||[]).join(' ')).includes(q));
+  const prenat=allPrenatalSyndromes().filter(s=>!q || accLower(s.name||'').includes(q) || normSyndName(s.name).includes(normSyndName(q)));
   box.innerHTML=`
     <div class="lib-head">
       <h2>📚 Protocolos <span style="font-size:12px;color:var(--ink3)">(${_libCache.length} fichas · ${allPrenatalSyndromes().length} prenatales)</span></h2>
