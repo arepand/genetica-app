@@ -134,6 +134,12 @@
   /* franja invisible que une la ⓘ con el tooltip para no perder el hover al ir a "mejorar (IA)" */
   .info-dot .tooltip::before{content:""; position:absolute; top:-6px; left:0; right:0; height:6px;}
   .info-dot:hover .tooltip, .info-dot.open .tooltip{display:block;}
+  .hastip{position:relative; cursor:help; text-decoration:underline dotted; text-underline-offset:2px;}
+  .hastip .tooltip{display:none; position:absolute; top:100%; left:0; margin-top:4px; width:300px; max-width:80vw;
+    background:#0a0f14; color:var(--ink); border:1px solid var(--accent2); font-weight:400;
+    font-size:11.5px; line-height:1.55; padding:10px 12px; border-radius:9px; text-align:left; z-index:60; box-shadow:var(--shadow); white-space:normal;}
+  .hastip .tooltip::before{content:""; position:absolute; top:-6px; left:0; right:0; height:6px;}
+  .hastip:hover .tooltip, .hastip.open .tooltip{display:block;}
   .loading{font-size:12.5px; color:var(--ink3); padding:14px 0;}
   .err{font-size:13px; color:#f2b3a6; padding:13px; background:#2c1714; border:1px solid var(--danger); border-radius:9px; margin-top:10px;}
 
@@ -3296,7 +3302,7 @@ function prenatalFindingLabel(id){
   const c=(PRENATAL_CUSTOM.findings||[]).find(x=>x.id===id); if(c) return c.es;
   return (window.__esLabels&&window.__esLabels[id])||id;
 }
-function syndromeFindingsTip(s){ return (s.findings||[]).map(id=>prenatalFindingLabel(id)+' ('+id+')').join('\n'); }
+function syndromeFindingsTip(s){ return (s.findings||[]).map(id=>'· '+escHtml(prenatalFindingLabel(id))+' <span class="hp">'+id+'</span>').join('<br>'); }
 function prenatalSindromes(){
   const out=[];
   for(const s of allPrenatalSyndromes()){
@@ -3541,7 +3547,7 @@ function renderPrenatal(){
       ${gaNote}
       <div id="prenatalInd" style="margin:14px 0 18px"></div>
       <details class="morfo-region"><summary>Síndromes incorporados <span style="color:var(--ink3);font-weight:400">· ${allPrenatalSyndromes().length}</span></summary>
-        <div style="font-size:12.5px;line-height:1.7;padding:4px 0">${allPrenatalSyndromes().map(s=>`<div>· <b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)" title="Ficha Orphanet (español)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">IA</span>':''} <span class="dx-meta" style="cursor:help;text-decoration:underline dotted" title="${escHtml(syndromeFindingsTip(s))}">— ${(s.findings||[]).length} hallazgos</span> <span class="dx-meta">· ${escHtml(s.test||'')}</span>${s.ia?` <a class="tip-ai" data-rmsyn="${escHtml(s.name)}">quitar</a>`:''}</div>`).join('')}</div>
+        <div style="font-size:12.5px;line-height:1.7;padding:4px 0">${allPrenatalSyndromes().map(s=>`<div>· <b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)" title="Ficha Orphanet (español)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">IA</span>':''} <span class="dx-meta hastip">— ${(s.findings||[]).length} hallazgos<span class="tooltip">${syndromeFindingsTip(s)}</span></span> <span class="dx-meta">· ${escHtml(s.test||'')}</span>${s.ia?` <a class="tip-ai" data-rmsyn="${escHtml(s.name)}">quitar</a>`:''}</div>`).join('')}</div>
       </details>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0">
         <input id="prenatalFilter" type="text" placeholder="🔎 Filtrar hallazgos (nombre o HP:…)" autocomplete="off" style="flex:1;min-width:180px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
@@ -3581,6 +3587,7 @@ function renderPrenatal(){
   box.querySelectorAll('[data-rmsyn]').forEach(a=>a.addEventListener('click', ()=>quitarSindromeIA(a.dataset.rmsyn)));
   box.querySelectorAll('[data-vfy]').forEach(a=>a.addEventListener('click', (e)=>{ e.stopPropagation(); verificarHallazgoIA(a.dataset.vfy); }));
   box.querySelectorAll('[data-rmf]').forEach(a=>a.addEventListener('click', (e)=>{ e.stopPropagation(); quitarHallazgoIA(a.dataset.rmf); }));
+  box.querySelectorAll('.hastip').forEach(el=>el.addEventListener('click', (e)=>{ e.stopPropagation(); el.classList.toggle('open'); }));
   box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
   box.querySelectorAll('.morfo-term').forEach(btn=>btn.addEventListener('click', (e)=>{
     if(e.target.closest('.info-dot') || e.target.closest('.tip-ai') || e.target.closest('.x')) return;
