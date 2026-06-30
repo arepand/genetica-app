@@ -389,6 +389,7 @@
   <button class="section-btn" data-section="antropometria">📏 Antropometría</button>
   <button class="section-btn" data-section="prenatal">🤰 Prenatal</button>
   <button class="section-btn" data-section="informes">📄 Informes</button>
+  <button class="section-btn" data-section="seguimiento">🩺 Gen → seguimiento</button>
   <button class="section-btn" data-section="biblioteca">📚 Protocolos</button>
   <button class="section-btn" data-section="documentos">📁 Documentos</button>
 </nav>
@@ -423,6 +424,7 @@
 <div id="antropometriaView" class="section-view" style="display:none"></div>
 <div id="prenatalView" class="section-view" style="display:none"></div>
 <div id="informesView" class="section-view" style="display:none"></div>
+<div id="seguimientoView" class="section-view" style="display:none"></div>
 <div id="documentosView" class="section-view" style="display:none"></div>
 
 <div id="toast"></div>
@@ -435,8 +437,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.7.3';
+const APP_VERSION='1.8.0';
 const CHANGELOG=[
+  {v:'1.8.0', d:'2026-06-30', c:['Nueva sección «🩺 Gen → seguimiento»: introduces un gen / alteración / entidad y la IA devuelve la vigilancia/cribado y el manejo/tratamiento recomendados según guías vigentes, con bibliografía (y tus documentos RAG). Se guarda como base de conocimiento en tu GitHub (reutilizable sin gastar tokens).']},
   {v:'1.7.3', d:'2026-06-30', c:['Informe PDF prenatal: cabecera con edad gestacional y sexo fetal (en vez de motivo/edad); tras el fenotipo, los síndromes que cumplen criterios (✓ presentes / ○ faltan) y la indicación de estudio prenatal sugerida.']},
   {v:'1.7.2', d:'2026-06-30', c:['Prenatal: el panel «cumple criterios» ahora muestra con claridad qué hallazgos están ✓ presentes y cuáles ○ faltan de cada síndrome (en vez de solo «1/2»).']},
   {v:'1.7.1', d:'2026-06-30', c:['RAG: el texto de cada PDF se guarda en tu GitHub (docs/text) → se indexa UNA sola vez, es permanente y funciona en cualquier dispositivo (no hay que reindexar ni reconectar Drive cada vez).','Informe PDF: A4 con el logo completo de Ariadna arriba a la izquierda.']},
@@ -3171,6 +3174,72 @@ function renderInformes(){
   box.querySelector('#btnExtractElectro').addEventListener('click', ()=>extraerInforme('electro'));
 }
 
+/* ===== Gen → seguimiento y tratamiento (vigilancia/cribado + manejo, basado en guías) ===== */
+let _segCache=(()=>{ try{ return JSON.parse(localStorage.getItem('fh_seg_index'))||[]; }catch(e){ return []; } })();
+function segKey(g){ return accLower(g||'').replace(/[^a-z0-9]/g,''); }
+function renderSeguimiento(){
+  const box=document.getElementById('seguimientoView'); if(!box) return;
+  box.innerHTML=`
+    <div class="lib-head"><h2>🩺 Gen → seguimiento y tratamiento</h2></div>
+    <div class="sec-note">Introduce un <b>gen</b> (p. ej. NF1, BRCA1, FBN1, TSC2), una <b>alteración</b> (del22q11) o una <b>entidad</b>. La IA busca <b>guías vigentes</b> (GeneReviews, sociedades) y devuelve la <b>vigilancia/cribado</b> y el <b>manejo/tratamiento</b> recomendados, con bibliografía. Tus documentos RAG se tienen en cuenta. Verifica siempre con la fuente.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0">
+      <input id="segInput" type="text" placeholder="Gen / alteración / entidad…" autocomplete="off" style="flex:1;min-width:240px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
+      <button class="btn primary" id="segBtn">🔎 Buscar recomendaciones (IA · web)</button>
+    </div>
+    <div id="segOut"></div>
+    ${_segCache.length?`<div class="cart-group-title" style="margin-top:18px">Guardados (${_segCache.length})</div><div class="lib-grid">${_segCache.map(s=>`<div class="lib-card"><div class="nm">${escHtml(s.gen||s.key)}</div><div class="meta">${escHtml(s.entidad||'')}${s.date?' · '+String(s.date).slice(0,10):''}</div><div class="acts"><button class="btn" data-segload="${escHtml(s.key)}">👁 Ver</button><button class="btn ghost" data-segdel="${escHtml(s.key)}">✕</button></div></div>`).join('')}</div>`:''}`;
+  const inp=document.getElementById('segInput'), btn=document.getElementById('segBtn');
+  if(btn) btn.addEventListener('click', ()=>buscarSeguimiento(inp.value));
+  if(inp) inp.addEventListener('keydown', e=>{ if(e.key==='Enter') buscarSeguimiento(inp.value); });
+  box.querySelectorAll('[data-segload]').forEach(b=>b.addEventListener('click', ()=>cargarSeguimiento(b.dataset.segload)));
+  box.querySelectorAll('[data-segdel]').forEach(b=>b.addEventListener('click', ()=>{ _segCache=_segCache.filter(x=>x.key!==b.dataset.segdel); try{ localStorage.setItem('fh_seg_index', JSON.stringify(_segCache)); localStorage.removeItem('fh_seg_'+b.dataset.segdel); }catch(e){} renderSeguimiento(); }));
+}
+function segIndexAdd(j, gene){ const key=j.key; _segCache=_segCache.filter(s=>s.key!==key); _segCache.unshift({key, gen:j.gen||gene, entidad:j.entidad||'', date:j.date}); try{ localStorage.setItem('fh_seg_index', JSON.stringify(_segCache)); }catch(e){} }
+async function buscarSeguimiento(gene){
+  const out=document.getElementById('segOut'); if(!out) return;
+  gene=(gene||'').trim(); if(!gene) return;
+  const key=segKey(gene);
+  // 1) caché local → 2) GitHub (base de conocimiento compartida) → reusar sin gastar tokens
+  let cached=null; try{ cached=JSON.parse(localStorage.getItem('fh_seg_'+key)); }catch(e){}
+  if(!cached && ghConfigured()){ try{ const r=await ghGetFile('seguimiento/'+key+'.json'); if(r.json && r.json.gen){ cached=r.json; localStorage.setItem('fh_seg_'+key, JSON.stringify(cached)); } }catch(e){} }
+  if(cached){ segIndexAdd(cached, gene); renderSegResult(cached, true); return; }
+  if(!anyProvider()){ out.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
+  out.innerHTML='<div class="loading">Buscando guías de vigilancia y tratamiento (web · IA)…</div>';
+  try{
+    let rag=''; try{ if(Object.keys(ragDocs).length){ rag=await ragContext(4, gene); } }catch(e){}
+    const sys='Eres genetista clínico. Para el GEN / alteración / entidad indicada, devuelve las recomendaciones de VIGILANCIA (cribado/seguimiento) y de MANEJO/TRATAMIENTO basadas en GUÍAS VIGENTES (GeneReviews, sociedades médicas, documentos de consenso). NO inventes URLs ni datos; si no hay evidencia clara, indícalo. '+SOURCE_PRIORITY+(rag?('\n\nDOCUMENTOS DE MI REPOSITORIO (tenlos en cuenta y cítalos en fuentes):\n'+rag):'')+' Devuelve SOLO JSON {"gen":"","entidad":"","herencia":"","resumen":"1-2 frases","vigilancia":[{"area":"","prueba":"","inicio":"","frecuencia":"","nota":""}],"tratamiento":[{"tema":"","recomendacion":""}],"fuentes":[{"titulo":"","url":"","anio":""}]}.';
+    const resp=await callLLM({system:sys, user:'Gen/alteración/entidad: '+gene, webSearch:true, maxTokens:2400, task:'eval'});
+    const j=extractJSON(resp);
+    if(!j){ out.innerHTML='<div class="err">La IA no devolvió datos válidos. Reintenta.</div>'; return; }
+    j.key=key; j.date=new Date().toISOString();
+    try{ localStorage.setItem('fh_seg_'+key, JSON.stringify(j)); }catch(e){}
+    segIndexAdd(j, gene);
+    try{ if(ghConfigured()){ let sha=null; try{ const ci=await ghGetFile('seguimiento/'+key+'.json'); sha=ci.sha; }catch(e){} await ghPutFile('seguimiento/'+key+'.json', j, 'seguimiento: '+(j.gen||gene), sha); } }catch(e){}
+    renderSegResult(j, false);
+  }catch(e){ out.innerHTML='<div class="err">Error: '+e.message+'</div>'; }
+}
+async function cargarSeguimiento(key){
+  let j=null; try{ j=JSON.parse(localStorage.getItem('fh_seg_'+key)); }catch(e){}
+  if(!j && ghConfigured()){ try{ const r=await ghGetFile('seguimiento/'+key+'.json'); if(r.json) j=r.json; }catch(e){} }
+  if(j){ const inp=document.getElementById('segInput'); if(inp) inp.value=j.gen||key; renderSegResult(j, true); try{ window.scrollTo(0,0); }catch(e){} }
+}
+function renderSegResult(j, fromCache){
+  const out=document.getElementById('segOut'); if(!out) return;
+  const gl=geneLinks(j.gen||'');
+  const vig=(j.vigilancia||[]).map(v=>`<tr><td style="padding:5px 8px;border-top:1px solid var(--line)"><b>${escHtml(v.area||'')}</b></td><td style="padding:5px 8px;border-top:1px solid var(--line)">${escHtml(v.prueba||'')}</td><td style="padding:5px 8px;border-top:1px solid var(--line)">${escHtml(v.inicio||'')}</td><td style="padding:5px 8px;border-top:1px solid var(--line)">${escHtml(v.frecuencia||'')}</td><td style="padding:5px 8px;border-top:1px solid var(--line);color:var(--ink3)">${escHtml(v.nota||'')}</td></tr>`).join('');
+  const trt=(j.tratamiento||[]).map(t=>`<li><b>${escHtml(t.tema||'')}:</b> ${escHtml(t.recomendacion||'')}</li>`).join('');
+  const fuentes=(j.fuentes||[]).map(f=>`<li><a href="${escHtml(String(f.url||'')).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">${escHtml(f.titulo||f.url||'')}${f.anio?' ('+escHtml(String(f.anio))+')':''}</a>${bibRefHtml({titulo:f.titulo,url:f.url,anio:f.anio})}</li>`).join('');
+  out.innerHTML=`<div class="study" style="margin:10px 0;padding:12px">
+    <div style="font-size:16px;font-weight:600">${escHtml(j.gen||'')}${j.entidad?` <span class="dx-meta">· ${escHtml(j.entidad)}</span>`:''}${j.herencia?` <span class="pop-badge">${escHtml(j.herencia)}</span>`:''}${fromCache?' <span class="dx-meta">· guardado</span>':''}</div>
+    ${j.resumen?`<div style="margin:6px 0;font-size:13px;line-height:1.6">${escHtml(j.resumen)}</div>`:''}
+    <div class="dx-meta" style="margin:4px 0">${Object.entries(gl).map(([k,u])=>`<a href="${u}" target="_blank" rel="noopener">${k}</a>`).join(' · ')}</div>
+    ${vig?`<div class="cart-group-title" style="margin-top:12px">Vigilancia / cribado</div><table style="width:100%;border-collapse:collapse;font-size:12.5px"><tr class="dx-meta"><td style="padding:4px 8px">Área</td><td style="padding:4px 8px">Prueba</td><td style="padding:4px 8px">Inicio</td><td style="padding:4px 8px">Frecuencia</td><td style="padding:4px 8px">Nota</td></tr>${vig}</table>`:''}
+    ${trt?`<div class="cart-group-title" style="margin-top:12px">Manejo / tratamiento</div><ul style="margin:4px 0 0 16px;font-size:13px;line-height:1.6">${trt}</ul>`:''}
+    ${fuentes?`<div class="cart-group-title" style="margin-top:12px">Bibliografía</div><ul class="src" style="font-size:12.5px;line-height:1.7">${fuentes}</ul>`:''}
+    <div class="am-note" style="margin-top:8px">Orientativo, basado en guías; verifica con la fuente. No sustituye el juicio clínico.</div>
+  </div>`;
+}
+
 /* ===========================================================================
    PARTE H — Módulo 10: Export (PDF con jsPDF + copiar códigos)
    =========================================================================== */
@@ -4051,8 +4120,9 @@ function showSection(s){
   const ant=document.getElementById('antropometriaView');
   const pv0=document.getElementById('prenatalView');
   const inf=document.getElementById('informesView');
+  const seg=document.getElementById('seguimientoView');
   const panel=document.getElementById('phenoPanel');
-  [fen,feno,bib,doc,dis,ant,pv0,inf].forEach(v=>{ if(v) v.style.display='none'; });
+  [fen,feno,bib,doc,dis,ant,pv0,inf,seg].forEach(v=>{ if(v) v.style.display='none'; });
   // El panel de fenotipo (búsqueda + carrito + diferencial + Monarch + export) es ÚNICO:
   // en "fenotipo" va a pantalla completa; en el resto vuelve al aside del protocolo.
   if(s==='fenotipo'){
@@ -4066,6 +4136,7 @@ function showSection(s){
   else if(s==='dismorfologia'){ if(dis){ dis.style.display='block'; renderDismorfologia(); } }
   else if(s==='antropometria'){ if(ant){ ant.style.display='block'; renderAntropometria(); } }
   else if(s==='informes'){ if(inf){ inf.style.display='block'; renderInformes(); } }
+  else if(s==='seguimiento'){ if(seg){ seg.style.display='block'; renderSeguimiento(); } }
   else if(s==='prenatal'){ const pv=document.getElementById('prenatalView'); if(pv){ pv.style.display='block'; renderPrenatal(); const slot=document.getElementById('prenatalPanelSlot'); if(slot&&panel){ slot.appendChild(panel); panel.classList.remove('cart-full'); renderCart(); renderDifferential(); renderMonarch(); } } }
   else if(fen) fen.style.display='';
 }
