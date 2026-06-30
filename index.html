@@ -437,8 +437,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.9.0';
+const APP_VERSION='1.9.1';
 const CHANGELOG=[
+  {v:'1.9.1', d:'2026-06-30', c:['Prenatal: corregida la sincronía — al desmarcar un HPO en el panel derecho (Fenotipo del paciente) ahora también se desmarca en los listados de la izquierda y en el panel de síndromes. Además, el panel derecho ya no «desaparecía» al re-renderizar (aceptar síndrome, etc.).']},
   {v:'1.9.0', d:'2026-06-30', c:['Prenatal: cada hallazgo (HPO) muestra su 👁 ventana de visibilidad ecográfica (semana desde / hasta). Es dato del SIGNO, no del síndrome → mapa único compartido (prenatal-ga.json en tu GitHub). Botón «Semanas de visibilidad (IA)» que la completa en bloque (verificable/editable); los síndromes nuevos ya la incluyen.']},
   {v:'1.8.0', d:'2026-06-30', c:['Nueva sección «🩺 Gen → seguimiento»: introduces un gen / alteración / entidad y la IA devuelve la vigilancia/cribado y el manejo/tratamiento recomendados según guías vigentes, con bibliografía (y tus documentos RAG). Se guarda como base de conocimiento en tu GitHub (reutilizable sin gastar tokens).']},
   {v:'1.7.3', d:'2026-06-30', c:['Informe PDF prenatal: cabecera con edad gestacional y sexo fetal (en vez de motivo/edad); tras el fenotipo, los síndromes que cumplen criterios (✓ presentes / ○ faltan) y la indicación de estudio prenatal sugerida.']},
@@ -1213,6 +1214,9 @@ function refreshSelectionStatesInDom(){
   document.querySelectorAll('#dismorfologiaView .morfo-term').forEach(btn=>{
     btn.classList.toggle('on', !!selections[btn.dataset.mid]);
   });
+  document.querySelectorAll('#prenatalView .morfo-term').forEach(btn=>{
+    btn.classList.toggle('on', !!selections[btn.dataset.pid]);
+  });
 }
 // Punto único tras CUALQUIER alta/baja de HPO: todas las vistas quedan coherentes.
 function syncSelections(){
@@ -1220,6 +1224,7 @@ function syncSelections(){
   refreshAnamnesisIfShown();
   refreshSelectionStatesInDom();
   renderMorfoSelected();
+  if(document.getElementById('prenatalInd')) renderPrenatalInd();   // refresca indicación + panel «cumple criterios» al cambiar desde cualquier vista
 }
 function addSelection(id, es, en, origen, toggle){
   if(toggle && selections[id]){ delete selections[id]; syncSelections(); return false; }
@@ -4056,6 +4061,7 @@ async function evalPrenatalGuias(){
 }
 function renderPrenatal(){
   const box=document.getElementById('prenatalView'); if(!box) return;
+  const _phenoPanel=document.getElementById('phenoPanel');   // capturar ANTES de wipear el HTML (si no, queda huérfano)
   const ga=patient.gestacion ? `${patient.gestSemanas||'?'}+${patient.gestDias||'0'} semanas` : null;
   const gaNote = ga
     ? `<div class="dx-meta">Edad gestacional: <b>${ga}</b> · ${patientLabel()||'feto'}</div>`
@@ -4109,6 +4115,9 @@ function renderPrenatal(){
       <div id="prenatalPanelSlot"></div>
     </div>
   </div>`;
+  // Re-coloca el panel de fenotipo (único, compartido) en el slot tras re-renderizar — si no, el cart queda huérfano.
+  { const slot=document.getElementById('prenatalPanelSlot');
+    if(slot && _phenoPanel && currentSection==='prenatal'){ slot.appendChild(_phenoPanel); _phenoPanel.classList.remove('cart-full'); renderCart(); renderDifferential(); renderMonarch(); } }
   renderPrenatalInd();
   const fil=document.getElementById('prenatalFilter'); if(fil) fil.addEventListener('input', e=>applyPrenatalFilter(e.target.value));
   const bIA=document.getElementById('btnSindIA'); if(bIA) bIA.addEventListener('click', actualizarSindromesIA);
