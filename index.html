@@ -439,8 +439,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.14.0';
+const APP_VERSION='1.15.0';
 const CHANGELOG=[
+  {v:'1.15.0', d:'2026-06-30', c:['Paneles génicos (HAC): ahora es many-to-many — un panel puede aplicarse a varios protocolos y un protocolo puede tener varios paneles (con checkboxes). Cada panel tiene campo «código» de laboratorio. En la ficha, los genes del panel se colorean VERDE (recomendados por el protocolo) o AZUL («a mayores») y un aviso ROJO lista los recomendados que faltan en tus paneles.']},
   {v:'1.14.0', d:'2026-06-30', c:['Antropometría unificada: el módulo que se despliega en las fichas es ahora EL MISMO que la pestaña Antropometría (percentiles OMS, IMC, perímetro cefálico, envergadura, gravedad de talla; valor en DE). Los criterios de Beighton (hiperlaxitud) se integran como apartado dentro de Antropometría (ficha y pestaña).']},
   {v:'1.13.0', d:'2026-06-30', c:['Buscador de Protocolos: ya no pierde el foco al teclear (solo actualiza resultados).','Importar JSON: botón en Protocolos para añadir tu propia ficha; pasa por la misma revisión y verificación de HPO que las creadas por la IA.','Creación de protocolos: más margen de tokens (16k) + reintento y mensaje claro si la respuesta llega cortada; prompt reforzado para que cada HPO corresponda EXACTAMENTE al concepto.','Antropometría: corregido el peso en niños (OMS peso/edad solo 0-10 a → indica valorar por IMC, en vez de «fuera de rango»); el valor mostrado se etiqueta como DE (desviación estándar = z).']},
   {v:'1.12.0', d:'2026-06-30', c:['Diferencial cruzado: al añadir fenotipos (cualquier fuente menos prenatal), además del protocolo abierto se sugieren TUS protocolos que también encajan con esa combinación de HPO (aunque no estén abiertos; si son varios, todos). Coste 0 IA — comparación local con tus fichas.']},
@@ -3197,18 +3198,19 @@ function renderSegResult(j, fromCache){
 let PANELES=[]; let _panelSel=null;
 function panelGenes(s){ return [...new Set((s||'').split(/[\s,;]+/).map(g=>g.trim().toUpperCase()).filter(Boolean))]; }
 function bumpVer(v){ const m=String(v||'1.0').match(/^(\d+)\.(\d+)/); return m? (m[1]+'.'+(parseInt(m[2])+1)) : '1.1'; }
-function panelForFicha(fid){ return PANELES.find(p=>p.fichaId===fid)||null; }
+function normPanel(p){ p.fichaIds = Array.isArray(p.fichaIds)?p.fichaIds:(p.fichaId?[p.fichaId]:[]); if('fichaId' in p) delete p.fichaId; if(typeof p.codigo!=='string') p.codigo=''; return p; }
+function panelsForFicha(fid){ return PANELES.filter(p=>(p.fichaIds||[]).includes(fid)); }   // un protocolo puede tener VARIOS paneles
 async function persistPaneles(msg){
   try{ localStorage.setItem('fh_paneles', JSON.stringify(PANELES)); }catch(e){}
   try{ if(ghConfigured()){ let sha=null; try{ const ci=await ghGetFile('paneles.json'); sha=ci.sha; }catch(e){} await ghPutFile('paneles.json', {paneles:PANELES}, msg||'paneles: actualizar', sha); } }catch(e){}
 }
 async function loadPaneles(){
-  try{ const c=JSON.parse(localStorage.getItem('fh_paneles')); if(Array.isArray(c)) PANELES=c; }catch(e){}
-  if(ghConfigured()){ try{ const r=await ghGetFile('paneles.json'); if(r.json && Array.isArray(r.json.paneles)){ PANELES=r.json.paneles; try{ localStorage.setItem('fh_paneles', JSON.stringify(PANELES)); }catch(e){} } }catch(e){} }
+  try{ const c=JSON.parse(localStorage.getItem('fh_paneles')); if(Array.isArray(c)) PANELES=c.map(normPanel); }catch(e){}
+  if(ghConfigured()){ try{ const r=await ghGetFile('paneles.json'); if(r.json && Array.isArray(r.json.paneles)){ PANELES=r.json.paneles.map(normPanel); try{ localStorage.setItem('fh_paneles', JSON.stringify(PANELES)); }catch(e){} } }catch(e){} }
 }
 function crearPanel(name){
   name=(name||'').trim(); if(!name) return null;
-  const p={ id:slugify(name)+'-'+Math.random().toString(36).slice(2,6), name, version:'1.0', created:new Date().toISOString(), modified:new Date().toISOString(), genes:[], fichaId:null, changelog:[{date:new Date().toISOString(), version:'1.0', added:[], removed:[], nota:'Creado'}] };
+  const p={ id:slugify(name)+'-'+Math.random().toString(36).slice(2,6), name, codigo:'', version:'1.0', created:new Date().toISOString(), modified:new Date().toISOString(), genes:[], fichaIds:[], changelog:[{date:new Date().toISOString(), version:'1.0', added:[], removed:[], nota:'Creado'}] };
   PANELES.unshift(p); persistPaneles('paneles: crear '+name); return p;
 }
 async function editarPanelGenes(id, raw){
@@ -3220,10 +3222,17 @@ async function editarPanelGenes(id, raw){
   p.changelog=p.changelog||[]; p.changelog.unshift({date:p.modified, version:p.version, added, removed});
   await persistPaneles('paneles: '+p.name+' v'+p.version+' (+'+added.length+'/-'+removed.length+')');
 }
-async function asociarPanelFicha(panelId, fichaId){
-  const p=PANELES.find(x=>x.id===panelId); if(!p) return;
-  p.fichaId = fichaId || null; p.modified=new Date().toISOString();
-  await persistPaneles('paneles: asociar '+p.name+(fichaId?(' → '+fichaId):' (desasociar)'));
+async function togglePanelFicha(panelId, fichaId, on){
+  const p=PANELES.find(x=>x.id===panelId); if(!p||!fichaId) return;
+  p.fichaIds=p.fichaIds||[];
+  if(on){ if(!p.fichaIds.includes(fichaId)) p.fichaIds.push(fichaId); } else { p.fichaIds=p.fichaIds.filter(x=>x!==fichaId); }
+  p.modified=new Date().toISOString();
+  await persistPaneles('paneles: '+(on?'asociar':'desasociar')+' '+p.name+' ↔ '+fichaId);
+}
+async function setPanelCodigo(id, codigo){
+  const p=PANELES.find(x=>x.id===id); if(!p) return;
+  p.codigo=(codigo||'').trim(); p.modified=new Date().toISOString();
+  await persistPaneles('paneles: código '+p.name);
 }
 async function eliminarPanel(id){
   const p=PANELES.find(x=>x.id===id); if(!p) return;
@@ -3236,13 +3245,13 @@ function renderPaneles(){
   if(_panelSel){ const p=PANELES.find(x=>x.id===_panelSel); if(p){ renderPanelDetalle(box, p); return; } _panelSel=null; }
   box.innerHTML=`
     <div class="lib-head"><h2>🧩 Paneles génicos (HAC)</h2></div>
-    <div class="sec-note">Tus paneles génicos del laboratorio. Cada panel guarda versión, fecha de creación/modificación y un changelog de genes añadidos/eliminados, y se asocia a un protocolo. Pulsa un panel para ver el detalle.</div>
+    <div class="sec-note">Tus paneles génicos del laboratorio. Cada panel guarda <b>código</b> de laboratorio, versión, fechas y un changelog de genes añadidos/eliminados. Un panel puede aplicarse a <b>varios</b> protocolos y un protocolo puede tener <b>varios</b> paneles. Pulsa un panel para el detalle.</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0">
       <input id="panNew" type="text" placeholder="Nombre del nuevo panel (p. ej. Conectivopatías HAC)" autocomplete="off" style="flex:1;min-width:260px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
       <button class="btn primary" id="panCreate">+ Nuevo panel</button>
     </div>
-    ${PANELES.length?`<div class="lib-grid">${PANELES.map(p=>{ const fic=p.fichaId?( (_libCache.find(f=>f.id===p.fichaId)||{}).nombre || p.fichaId):null;
-      return `<div class="lib-card" data-panopen="${escHtml(p.id)}" style="cursor:pointer"><div class="nm">${escHtml(p.name)} <span class="pop-badge">v${escHtml(p.version)}</span></div><div class="meta">${(p.genes||[]).length} genes · mod. ${String(p.modified||'').slice(0,10)}${fic?' · 📋 '+escHtml(fic):' · sin protocolo'}</div></div>`; }).join('')}</div>`
+    ${PANELES.length?`<div class="lib-grid">${PANELES.map(p=>{ const n=(p.fichaIds||[]).length;
+      return `<div class="lib-card" data-panopen="${escHtml(p.id)}" style="cursor:pointer"><div class="nm">${escHtml(p.name)} <span class="pop-badge">v${escHtml(p.version)}</span>${p.codigo?` <span class="dx-meta">[${escHtml(p.codigo)}]</span>`:''}</div><div class="meta">${(p.genes||[]).length} genes · mod. ${String(p.modified||'').slice(0,10)} · ${n?(n+' protocolo'+(n>1?'s':'')):'sin protocolo'}</div></div>`; }).join('')}</div>`
       :'<div class="placeholder">Aún no tienes paneles. Crea el primero arriba.</div>'}`;
   const ni=document.getElementById('panNew'), cb=document.getElementById('panCreate');
   const doCreate=()=>{ const p=crearPanel(ni.value); if(p){ _panelSel=p.id; renderPaneles(); } };
@@ -3251,18 +3260,17 @@ function renderPaneles(){
   box.querySelectorAll('[data-panopen]').forEach(c=>c.addEventListener('click', ()=>{ _panelSel=c.dataset.panopen; renderPaneles(); }));
 }
 function renderPanelDetalle(box, p){
-  const fichaOpts=(_libCache||[]).map(f=>`<option value="${escHtml(f.id)}" ${p.fichaId===f.id?'selected':''}>${escHtml(f.nombre||f.id)}</option>`).join('');
+  const fichaChecks=(_libCache||[]).map(f=>`<label class="q-opt" style="display:inline-flex;margin:2px 10px 2px 0;font-size:12.5px"><input type="checkbox" class="panFichaTog" data-fid="${escHtml(f.id)}" ${(p.fichaIds||[]).includes(f.id)?'checked':''}> ${escHtml(f.nombre||f.id)}</label>`).join('') || '<span class="dx-meta">No hay protocolos. Crea fichas en Protocolos.</span>';
   const cl=(p.changelog||[]).map(c=>`<div style="font-size:12px;border-top:1px solid var(--line);padding:5px 0"><b>v${escHtml(c.version)}</b> <span class="dx-meta">${String(c.date||'').slice(0,10)}</span>${c.nota?' · '+escHtml(c.nota):''}${(c.added&&c.added.length)?'<br><span style="color:var(--ok)">+ '+c.added.map(escHtml).join(', ')+'</span>':''}${(c.removed&&c.removed.length)?'<br><span style="color:#f2a">− '+c.removed.map(escHtml).join(', ')+'</span>':''}</div>`).join('');
   box.innerHTML=`
     <div class="fview-bar"><button class="btn" id="panBack">‹ Volver a paneles</button><button class="btn" id="panRename">✎ Renombrar</button><button class="btn ghost" id="panDel">🗑 Eliminar</button></div>
     <div class="fview">
       <h1>${escHtml(p.name)} <span class="pop-badge">v${escHtml(p.version)}</span></h1>
       <div class="fsub">Creado ${String(p.created||'').slice(0,10)} · Modificado ${String(p.modified||'').slice(0,10)} · ${(p.genes||[]).length} genes</div>
-      <h3>Protocolo asociado</h3>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <select id="panFicha" style="min-width:240px;padding:8px 11px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px"><option value="">— sin protocolo —</option>${fichaOpts}</select>
-        ${p.fichaId?`<button class="btn" id="panGoFicha">Ver protocolo ›</button>`:''}
-      </div>
+      <h3>Código de laboratorio</h3>
+      <input id="panCodigo" type="text" value="${escHtml(p.codigo||'').replace(/"/g,'&quot;')}" placeholder="Código del panel en tu sistema de laboratorio (LIS)" style="width:100%;max-width:320px;box-sizing:border-box;padding:8px 11px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
+      <h3>Protocolos asociados <span class="dx-meta">(puede ser más de uno)</span></h3>
+      <div style="margin:4px 0">${fichaChecks}</div>
       <h3>Genes (${(p.genes||[]).length})</h3>
       <div style="margin:4px 0">${(p.genes||[]).map(g=>`<a class="gene" href="${geneLinks(g).Franklin}" target="_blank" rel="noopener" style="text-decoration:none">${escHtml(g)}</a>`).join(' ')||'<span class="dx-meta">Sin genes aún.</span>'}</div>
       <details style="margin-top:8px"><summary class="cart-group-title" style="cursor:pointer">Editar genes</summary>
@@ -3275,29 +3283,36 @@ function renderPanelDetalle(box, p){
   box.querySelector('#panBack').addEventListener('click', ()=>{ _panelSel=null; renderPaneles(); });
   box.querySelector('#panDel').addEventListener('click', ()=>eliminarPanel(p.id));
   box.querySelector('#panRename').addEventListener('click', ()=>{ const n=prompt('Nuevo nombre del panel:', p.name); if(n&&n.trim()){ p.name=n.trim(); p.modified=new Date().toISOString(); persistPaneles('paneles: renombrar'); renderPaneles(); } });
-  box.querySelector('#panFicha').addEventListener('change', async e=>{ await asociarPanelFicha(p.id, e.target.value||null); renderPaneles(); });
-  const gf=box.querySelector('#panGoFicha'); if(gf) gf.addEventListener('click', ()=>{ showSection('biblioteca'); setTimeout(()=>abrirFichaBiblioteca(p.fichaId,false), 50); });
+  box.querySelector('#panCodigo').addEventListener('change', e=>setPanelCodigo(p.id, e.target.value));
+  box.querySelectorAll('.panFichaTog').forEach(cb=>cb.addEventListener('change', async ()=>{ await togglePanelFicha(p.id, cb.dataset.fid, cb.checked); }));
   box.querySelector('#panSaveGenes').addEventListener('click', async ()=>{ await editarPanelGenes(p.id, box.querySelector('#panGenes').value); renderPaneles(); });
 }
-/* Bloque de panel para la ficha: panel recomendado coloreado vs Panel HAC + bloque HAC + selector de asociación. */
+/* Bloque de panel para la ficha: panel(es) HAC asociado(s) — genes en VERDE (recomendados) o AZUL (a mayores) + label ROJO con los recomendados que faltan. */
 function fichaPanelHtml(f){
   const rec=(f.panel_genes||[]); const recU=rec.map(g=>String(g).toUpperCase());
-  const hac=panelForFicha(f.id); const hacSet=new Set(((hac&&hac.genes)||[]).map(g=>String(g).toUpperCase()));
-  let html='';
+  const panels=panelsForFicha(f.id);
+  const hacU=new Set(panels.flatMap(p=>(p.genes||[]).map(g=>String(g).toUpperCase())));
+  let html='<h3>Panel génico HAC</h3>';
   if(rec.length){
-    const chips=rec.map(g=>{ const ok=hacSet.has(String(g).toUpperCase()); return `<a class="gene" href="${geneLinks(g).Franklin}" target="_blank" rel="noopener" style="text-decoration:none;border-color:${ok?'var(--ok)':'#e0607a'};color:${ok?'var(--ok)':'#e0607a'}" title="${ok?'En tu Panel HAC':'Falta en tu Panel HAC'}">${escHtml(g)}</a>`; }).join(' ');
-    html+=`<h3>Panel génico recomendado <span class="dx-meta">(${rec.length})</span></h3>`
-      +(hac?`<div class="dx-meta" style="margin:2px 0">Frente a tu Panel HAC «${escHtml(hac.name)}»: <span style="color:var(--ok)">verde = incluido</span> · <span style="color:#e0607a">rojo = falta en tu panel</span></div>`:`<div class="dx-meta" style="margin:2px 0">Asocia un Panel HAC abajo para ver qué genes cubre tu panel.</div>`)
-      +`<div style="margin:4px 0">${chips}</div>`;
+    html+=`<div class="dx-meta" style="margin:2px 0"><b>${rec.length}</b> genes recomendados por el protocolo. <span style="color:var(--ok)">verde</span> = en tu(s) panel(es) · <span style="color:#5b9bd5">azul</span> = a mayores · <span style="color:#e0607a">rojo</span> = recomendado que falta.</div>`;
   }
-  html+=`<h3>Panel HAC</h3>`;
-  if(hac){
-    const cubre=recU.filter(g=>hacSet.has(g)).length;
-    html+=`<div class="dx-meta" style="margin:2px 0"><b>${escHtml(hac.name)}</b> v${escHtml(hac.version)} · ${(hac.genes||[]).length} genes${rec.length?` · cubre <b>${cubre}/${rec.length}</b> del recomendado`:''} · <a class="tip-ai" data-panview="${escHtml(hac.id)}">ver/editar panel</a></div>`
-      +`<div style="margin:4px 0">${(hac.genes||[]).map(g=>{ const inRec=recU.includes(String(g).toUpperCase()); return `<a class="gene" href="${geneLinks(g).Franklin}" target="_blank" rel="noopener" style="text-decoration:none${inRec?'':';opacity:.65'}" title="${inRec?'Recomendado':'No está en el recomendado'}">${escHtml(g)}</a>`; }).join(' ')||'<span class="dx-meta">Sin genes.</span>'}</div>`;
+  if(panels.length){
+    panels.forEach(p=>{
+      html+=`<div style="margin:6px 0"><b>${escHtml(p.name)}</b> <span class="pop-badge">v${escHtml(p.version)}</span>${p.codigo?` <span class="dx-meta">[${escHtml(p.codigo)}]</span>`:''} <span class="dx-meta">· ${(p.genes||[]).length} genes · <a class="tip-ai" data-panview="${escHtml(p.id)}">ver/editar</a></span>`
+        +`<div style="margin:3px 0">${(p.genes||[]).map(g=>{ const inRec=recU.includes(String(g).toUpperCase()); const col=inRec?'var(--ok)':'#5b9bd5'; return `<a class="gene" href="${geneLinks(g).Franklin}" target="_blank" rel="noopener" style="text-decoration:none;border-color:${col};color:${col}" title="${inRec?'Recomendado':'A mayores (no en el recomendado)'}">${escHtml(g)}</a>`; }).join(' ')||'<span class="dx-meta">Sin genes.</span>'}</div></div>`;
+    });
+    if(rec.length){ const falt=rec.filter(g=>!hacU.has(String(g).toUpperCase()));
+      html+= falt.length
+        ? `<div style="margin:6px 0;color:#e0607a;font-size:12.5px">⚠ Recomendados que NO están en tus paneles (${falt.length}): ${falt.map(escHtml).join(', ')}</div>`
+        : `<div style="margin:6px 0;color:var(--ok);font-size:12.5px">✓ Tus paneles cubren los ${rec.length} genes recomendados.</div>`;
+    }
+  } else {
+    html+='<div class="dx-meta" style="margin:2px 0">Sin paneles HAC asociados. Marca abajo los que apliquen a este protocolo.</div>';
+    if(rec.length) html+=`<div style="margin:4px 0">Recomendados: ${rec.map(g=>`<a class="gene" href="${geneLinks(g).Franklin}" target="_blank" rel="noopener" style="text-decoration:none">${escHtml(g)}</a>`).join(' ')}</div>`;
   }
-  const opts=(PANELES||[]).map(p=>`<option value="${escHtml(p.id)}" ${hac&&hac.id===p.id?'selected':''}>${escHtml(p.name)} (v${escHtml(p.version)})</option>`).join('');
-  html+=`<div style="display:flex;gap:8px;align-items:center;margin-top:6px"><select class="panAssoc" data-fid="${escHtml(f.id)}" style="min-width:220px;padding:7px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:12.5px"><option value="">${hac?'— quitar asociación —':'— asociar un Panel HAC —'}</option>${opts}</select></div>`;
+  // Asociar/quitar paneles (varios) a este protocolo
+  const checks=(PANELES||[]).map(p=>`<label class="q-opt" style="display:inline-flex;margin:2px 10px 2px 0;font-size:12px"><input type="checkbox" class="panTog" data-pid="${escHtml(p.id)}" ${(p.fichaIds||[]).includes(f.id)?'checked':''}> ${escHtml(p.name)}${p.codigo?' ['+escHtml(p.codigo)+']':''}</label>`).join('') || '<span class="dx-meta">No tienes paneles. Créalos en 🧩 Paneles.</span>';
+  html+=`<div class="dx-meta" style="margin-top:6px">Paneles aplicables a este protocolo:</div><div style="margin:2px 0">${checks}</div>`;
   return html;
 }
 
@@ -4409,12 +4424,7 @@ async function renderFichaView(f){
   document.getElementById('fvEdit').addEventListener('click', ()=>openFichaReview(f, {origin:'biblioteca'}));
   document.getElementById('fvValidate').addEventListener('click', ()=>openValidarHpo(f));
   document.getElementById('fvPrint').addEventListener('click', ()=>window.print());
-  box.querySelectorAll('.panAssoc').forEach(sel=>sel.addEventListener('change', async ()=>{
-    const cur=panelForFicha(f.id);
-    if(cur && (!sel.value || cur.id!==sel.value)) await asociarPanelFicha(cur.id, null);   // soltar el actual al cambiar/quitar
-    if(sel.value) await asociarPanelFicha(sel.value, f.id);
-    renderFichaView(f);
-  }));
+  box.querySelectorAll('.panTog').forEach(cb=>cb.addEventListener('change', async ()=>{ await togglePanelFicha(cb.dataset.pid, f.id, cb.checked); renderFichaView(f); }));
   box.querySelectorAll('[data-panview]').forEach(a=>a.addEventListener('click', ()=>{ _panelSel=a.dataset.panview; showSection('paneles'); }));
 }
 
