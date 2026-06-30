@@ -439,8 +439,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.13.0';
+const APP_VERSION='1.14.0';
 const CHANGELOG=[
+  {v:'1.14.0', d:'2026-06-30', c:['Antropometría unificada: el módulo que se despliega en las fichas es ahora EL MISMO que la pestaña Antropometría (percentiles OMS, IMC, perímetro cefálico, envergadura, gravedad de talla; valor en DE). Los criterios de Beighton (hiperlaxitud) se integran como apartado dentro de Antropometría (ficha y pestaña).']},
   {v:'1.13.0', d:'2026-06-30', c:['Buscador de Protocolos: ya no pierde el foco al teclear (solo actualiza resultados).','Importar JSON: botón en Protocolos para añadir tu propia ficha; pasa por la misma revisión y verificación de HPO que las creadas por la IA.','Creación de protocolos: más margen de tokens (16k) + reintento y mensaje claro si la respuesta llega cortada; prompt reforzado para que cada HPO corresponda EXACTAMENTE al concepto.','Antropometría: corregido el peso en niños (OMS peso/edad solo 0-10 a → indica valorar por IMC, en vez de «fuera de rango»); el valor mostrado se etiqueta como DE (desviación estándar = z).']},
   {v:'1.12.0', d:'2026-06-30', c:['Diferencial cruzado: al añadir fenotipos (cualquier fuente menos prenatal), además del protocolo abierto se sugieren TUS protocolos que también encajan con esa combinación de HPO (aunque no estén abiertos; si son varios, todos). Coste 0 IA — comparación local con tus fichas.']},
   {v:'1.11.0', d:'2026-06-30', c:['Nueva sección «🧩 Paneles»: gestor de tus paneles génicos (HAC) estilo PanelApp — lista → detalle, con versión, fechas de creación/modificación, changelog de genes añadidos/eliminados, lista de genes y protocolo asociado (se asocia/desasocia desde el panel o desde el protocolo). En la ficha del protocolo aparece «Panel HAC» y el panel génico recomendado se colorea VERDE (incluido en tu HAC) o ROJO (falta), para ver de un vistazo si cumples las recomendaciones.']},
@@ -1769,11 +1770,10 @@ function beightonHtml(){
   </div>`;
 }
 function attachBeighton(region){
-  const main = document.getElementById('main');
-  main.querySelectorAll('input[data-bk]').forEach(cb=>{
+  document.querySelectorAll('input[data-bk]').forEach(cb=>{   // funciona en la ficha (#main) y en la pestaña Antropometría
     cb.addEventListener('change', ()=>{
       beighton[cb.dataset.bk] = cb.checked;
-      const wrap = main.querySelector('.beighton');
+      const wrap = cb.closest('.beighton');
       if(wrap){ wrap.outerHTML = beightonHtml(); attachBeighton(region); }
     });
   });
@@ -1794,21 +1794,25 @@ function antropometriaHtml(){
   return `<div class="anthro-box">
     <div class="domain-h" style="color:var(--accent)">Antropometría</div>
     <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:6px">
-      <div class="field" style="margin:0"><label>Talla (cm)</label><input id="inTalla" type="text" inputmode="decimal" value="${patient.tallaCm||''}" style="width:110px"></div>
-      <div class="field" style="margin:0"><label>Peso (kg)</label><input id="inPeso" type="text" inputmode="decimal" value="${patient.pesoKg||''}" style="width:110px"></div>
-      <div class="field" style="margin:0"><label>Envergadura (cm)</label><input id="inEnverg" type="text" inputmode="decimal" value="${patient.envergaduraCm||''}" style="width:130px"></div>
+      <div class="field" style="margin:0"><label>Talla (cm)</label><input id="inTalla" type="text" inputmode="decimal" value="${patient.tallaCm||''}" style="width:100px"></div>
+      <div class="field" style="margin:0"><label>Peso (kg)</label><input id="inPeso" type="text" inputmode="decimal" value="${patient.pesoKg||''}" style="width:100px"></div>
+      <div class="field" style="margin:0"><label>P. cefálico (cm)</label><input id="inPC" type="text" inputmode="decimal" value="${patient.perimetroCranealCm||''}" style="width:110px"></div>
+      <div class="field" style="margin:0"><label>Envergadura (cm)</label><input id="inEnverg" type="text" inputmode="decimal" value="${patient.envergaduraCm||''}" style="width:120px"></div>
     </div>
     <div id="anthroResult"></div>
+    <details class="morfo-region" style="margin-top:8px"><summary>Criterios de Beighton (hiperlaxitud articular)</summary><div id="beightonSlot">${beightonHtml()}</div></details>
   </div>`;
 }
 function attachAntropometria(){
   const commit=()=>{
     patient.tallaCm=(document.getElementById('inTalla')||{}).value||'';
     patient.pesoKg=(document.getElementById('inPeso')||{}).value||'';
+    patient.perimetroCranealCm=(document.getElementById('inPC')||{}).value||'';
     patient.envergaduraCm=(document.getElementById('inEnverg')||{}).value||'';
     renderAnthro();
   };
-  ['inTalla','inPeso','inEnverg'].forEach(id=>{ const el=document.getElementById(id); if(el) el.addEventListener('input', commit); });
+  ['inTalla','inPeso','inPC','inEnverg'].forEach(id=>{ const el=document.getElementById(id); if(el) el.addEventListener('input', commit); });
+  attachBeighton({label:'Beighton'});
   renderAnthro();
 }
 /* === MOTOR ANTROPOMETRÍA INJERTADO VERBATIM (fenotipHAC_conectivopatias_3.html) === */
@@ -1885,107 +1889,7 @@ function chipBtn(id, label, region){
   return `<button class="pheno-chip ${on?'on':''}" data-pid="${id}" data-pes="${label.replace(/"/g,'&quot;')}" data-preg="${(region||'Antropometría')}">${on?'✓ ':''}${label} <span class="hp">${id}</span>${infoDotHtml(id)}</button>`;
 }
 
-function renderAnthro(){
-  const box=document.getElementById('anthroResult');
-  if(!box) return;
-  const talla=parseFloat(String(patient.tallaCm).replace(',','.'));
-  const peso=parseFloat(String(patient.pesoKg).replace(',','.'));
-  const env=parseFloat(String(patient.envergaduraCm).replace(',','.'));
-  const ageY=patientAgeYears();
-  const sx=sexKeyOf();
-  let rows='';
-
-  // IMC
-  let bmi=null;
-  if(talla>0 && peso>0){ bmi = peso/Math.pow(talla/100,2); }
-
-  // Cards de medidas con percentil (pediátrico LMS-OMS o adulto normal-poblacional)
-  const isAdult = (ageY!=null && ageY>19);
-  function measureCard(title, value, unit, measure){
-    let pctHtml='';
-    if(value>0 && sx && ageY!=null && ageY<=19){
-      const r=fmtPct(lmsZ(measure, sx, ageY, value));
-      if(r){
-        const cls = r.pct<3?'low':(r.pct>97?'high':'mid');
-        pctHtml=`<span class="pct ${cls}">${r.band} · z ${r.z>=0?'+':''}${r.z.toFixed(2)}</span>`;
-      } else { pctHtml=`<span class="pct na">fuera de rango/edad</span>`; }
-    } else if(value>0 && sx && isAdult){
-      const a=adultPct(measure, sx, value);
-      if(a){
-        const band = a.pct<3?'< P3':(a.pct>97?'> P97':('P'+Math.round(a.pct)));
-        const cls = a.pct<3?'low':(a.pct>97?'high':'mid');
-        const tag = measure==='weight' ? ' aprox.' : '';
-        pctHtml=`<span class="pct ${cls}">${band}${tag} · z ${a.z>=0?'+':''}${a.z.toFixed(2)}</span>`;
-      }
-    } else if(value>0 && (!sx || ageY==null)){
-      pctHtml=`<span class="pct na">indica edad y sexo para percentil</span>`;
-    }
-    return `<div class="am-row"><span class="am-t">${title}</span><span class="am-v">${value>0?value+' '+unit:'—'}</span>${pctHtml}</div>`;
-  }
-
-  rows+=measureCard('Talla', talla, 'cm', 'height');
-  rows+=measureCard('Peso', peso, 'kg', 'weight');
-  if(bmi){
-    let bmiPct='';
-    if(sx && ageY!=null && ageY<=19 && ageY>=0){
-      const r=fmtPct(lmsZ('bmi', sx, ageY, bmi));
-      if(r){ const cls=r.pct<3?'low':(r.pct>97?'high':'mid'); bmiPct=`<span class="pct ${cls}">${r.band} · z ${r.z>=0?'+':''}${r.z.toFixed(2)}</span>`; }
-    } else if(isAdult){
-      const bc=bmiClass(bmi);
-      if(bc) bmiPct=`<span class="pct ${bc.c}">${bc.t} (OMS)</span>`;
-    }
-    rows+=`<div class="am-row"><span class="am-t">IMC</span><span class="am-v">${bmi.toFixed(1)} kg/m²</span>${bmiPct}</div>`;
-  }
-  // Cociente envergadura/talla (marfanoide si ≥1.05 adulto)
-  if(env>0 && talla>0){
-    const ratio=env/talla;
-    const flag = ratio>=1.05;
-    rows+=`<div class="am-row"><span class="am-t">Envergadura/Talla</span><span class="am-v">${ratio.toFixed(3)}</span>${flag?'<span class="pct high">≥1.05 (hábito marfanoide)</span>':''}</div>`;
-  }
-
-  // Atajos de fenotipo según medidas
-  let chips='';
-  const isPed = (ageY!=null && ageY<=19);
-  // talla
-  if(talla>0 && sx && isPed){
-    const r=lmsZ('height',sx,ageY,talla);
-    if(r){ if(r.pct<3) chips+=chipBtn('HP:0004322','Talla baja','Crecimiento y hábito'); if(r.pct>97) chips+=chipBtn('HP:0000098','Talla alta','Crecimiento y hábito'); }
-  } else if(talla>0 && sx && isAdult){
-    const a=adultPct('height',sx,talla);
-    if(a){ if(a.pct<3) chips+=chipBtn('HP:0004322','Talla baja','Crecimiento y hábito'); if(a.pct>97) chips+=chipBtn('HP:0000098','Talla alta','Crecimiento y hábito'); }
-  }
-  // imc/peso
-  if(bmi && sx && isPed){
-    const r=lmsZ('bmi',sx,ageY,bmi);
-    if(r){ if(r.pct<3) chips+=chipBtn('HP:0004325','Bajo peso','Crecimiento y hábito'); if(r.pct>97) chips+=chipBtn('HP:0001513','Obesidad','Crecimiento y hábito'); }
-  } else if(bmi && isAdult){
-    if(bmi<18.5) chips+=chipBtn('HP:0004325','Bajo peso','Crecimiento y hábito');
-    if(bmi>=30) chips+=chipBtn('HP:0001513','Obesidad','Crecimiento y hábito');
-  }
-  if(env>0 && talla>0){ const rr=env/talla; if(rr>=1.05) chips+=chipBtn('HP:0012771','Envergadura aumentada','Crecimiento y hábito'); else if(rr<=0.95) chips+=chipBtn('HP:0012770','Envergadura disminuida','Crecimiento y hábito'); }
-  // Siempre disponibles para marcar manualmente (sin dato)
-  const manual = [
-    ['HP:0004322','Talla baja'],['HP:0000098','Talla alta'],
-    ['HP:0001548','Sobrecrecimiento'],['HP:0001519','Hábito desproporcionado'],
-    ['HP:0001382','Hiperlaxitud articular'],['HP:0000256','Macrocefalia'],['HP:0000252','Microcefalia']
-  ];
-  let manualChips = manual.map(m=>chipBtn(m[0],m[1],'Crecimiento y hábito')).join('');
-
-  const noteHtml = isAdult
-    ? 'Percentiles adulto: <b>talla</b> por modelo normal con referencia poblacional española (varón μ177.7/σ5.9 cm; mujer μ164.7/σ5.4 cm); <b>peso</b> es aproximado (la valoración estándar del adulto es la clasificación de <b>IMC</b> de la OMS). Orientativo.'
-    : 'Percentiles: estándares <b>OMS</b> (2006, 0-5 a; 2007, 5-19 a) por método LMS. En España la AEP recomienda como referencia poblacional los <b>Estudios Españoles de Crecimiento 2010</b> (Carrascosa et al.); interpreta los extremos en ese contexto.';
-
-  box.innerHTML = `
-    ${rows? `<div class="am-grid">${rows}</div>`:'<div class="am-empty">Introduce talla y peso para calcular IMC y percentiles.</div>'}
-    ${chips? `<div class="am-sub">Sugeridos por las medidas — toca para añadir al fenotipo:</div><div class="pheno-chips">${chips}</div>`:''}
-    <div class="am-sub">Marcar signo sin introducir dato:</div><div class="pheno-chips">${manualChips}</div>
-    <div class="am-note">${noteHtml}</div>
-  `;
-  box.querySelectorAll('.pheno-chip').forEach(b=>{
-    b.addEventListener('click', (e)=>{ if(e.target.closest('.info-dot')) return; toggleQuickPheno(b.dataset.pid, b.dataset.pes, b.dataset.preg); });
-  });
-  box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
-}
+function renderAnthro(){ renderAnthroResult('anthroResult'); }  // unificado con la pestaña Antropometría
 /* === fin motor antropometría === */
 
 /* ===========================================================================
@@ -1995,7 +1899,7 @@ function renderAnthro(){
 function toggleAnthroPheno(id, es){
   if(selections[id]){ delete selections[id]; }
   else { selections[id]={hpo:id, es, en:es, region:'Antropometría', origen:'Antropometría', verified:true}; }
-  syncSelections(); renderAnthroResult();
+  syncSelections(); renderAnthroResult('anthroTabResult'); renderAnthroResult('anthroResult');
 }
 function anthroPctCard(title, value, unit, measure, maxAge){
   const ageY=patientAgeYears(); const sx=sexKeyOf(); let pctHtml='';
@@ -2013,8 +1917,8 @@ function anthroPctCard(title, value, unit, measure, maxAge){
   } else if(value>0 && (!sx||ageY==null)){ pctHtml='<span class="pct na">indica edad y sexo</span>'; }
   return `<div class="am-row"><span class="am-t">${title}</span><span class="am-v">${value>0?value+' '+unit:'—'}</span>${pctHtml}</div>`;
 }
-function renderAnthroResult(){
-  const box=document.getElementById('anthroTabResult'); if(!box) return;
+function renderAnthroResult(boxId){
+  const box=document.getElementById(boxId||'anthroTabResult'); if(!box) return;
   const talla=parseFloat(String(patient.tallaCm).replace(',','.'));
   const peso=parseFloat(String(patient.pesoKg).replace(',','.'));
   const pc=parseFloat(String(patient.perimetroCranealCm).replace(',','.'));
@@ -2088,9 +1992,11 @@ function renderAntropometria(){
       <div class="field"><label>Perímetro cefálico (cm)</label><input id="anPC" type="text" inputmode="decimal" value="${patient.perimetroCranealCm||''}"></div>
       <div class="field"><label>Envergadura (cm)</label><input id="anEnverg" type="text" inputmode="decimal" value="${patient.envergaduraCm||''}"></div>
     </div>
-    <div id="anthroTabResult"></div>`;
+    <div id="anthroTabResult"></div>
+    <details class="morfo-region" style="margin-top:12px"><summary>Criterios de Beighton (hiperlaxitud articular)</summary><div id="beightonSlot">${beightonHtml()}</div></details>`;
   const bind=(id,key)=>{ const e=document.getElementById(id); if(e) e.addEventListener('input', ()=>{ patient[key]=e.value; renderAnthroResult(); }); };
   bind('anTalla','tallaCm'); bind('anPeso','pesoKg'); bind('anPC','perimetroCranealCm'); bind('anEnverg','envergaduraCm');
+  attachBeighton({label:'Beighton'});
   renderAnthroResult();
 }
 
@@ -2151,7 +2057,7 @@ function renderAnamnesis(){
     <div class="step-title">${f.nombre_es||f.id}</div>
     <div class="step-sub">Anamnesis dirigida · marca lo presente · cada respuesta añade HPO verificados (panel derecho). Orden HPO preservado.</div>
     ${domsHtml||'<div class="placeholder">Esta ficha no tiene dominios/preguntas.</div>'}
-    ${(f.modulos&&f.modulos.beighton)?beightonHtml():''}
+    ${(f.modulos&&f.modulos.beighton && !(f.modulos&&f.modulos.antropometria))?beightonHtml():''}
     ${(f.modulos&&f.modulos.antropometria)?antropometriaHtml():''}
     <details class="deepen">
       <summary>✨ Profundizar con IA (bajo demanda)</summary>
@@ -2163,7 +2069,7 @@ function renderAnamnesis(){
     <div class="nav-buttons" style="display:flex; justify-content:flex-start; margin-top:24px">
       <button class="btn ghost" id="btnVolver">‹ Volver a Inicio</button>
     </div>`;
-  if(f.modulos&&f.modulos.beighton) attachBeighton({label:'Beighton'});
+  if(f.modulos&&f.modulos.beighton && !(f.modulos&&f.modulos.antropometria)) attachBeighton({label:'Beighton'});
   if(f.modulos&&f.modulos.antropometria) attachAntropometria();
   (f.dominios||[]).forEach(d=>(d.preguntas||[]).forEach(q=>wireQuestion(q, d.nombre)));
   document.getElementById('btnVolver').addEventListener('click', renderInicio);
