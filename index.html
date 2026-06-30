@@ -439,8 +439,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.15.0';
+const APP_VERSION='1.16.0';
 const CHANGELOG=[
+  {v:'1.16.0', d:'2026-06-30', c:['Creador/editor de protocolos: nuevo diálogo con motivo + un campo de INSTRUCCIONES libres (admite un JSON de plantilla a respetar) + posibilidad de aportar UNO O VARIOS PDF (subidos o elegidos de tu repositorio documental) como fuente principal. La generación sigue verificando cada HPO contra JAX.']},
   {v:'1.15.0', d:'2026-06-30', c:['Paneles génicos (HAC): ahora es many-to-many — un panel puede aplicarse a varios protocolos y un protocolo puede tener varios paneles (con checkboxes). Cada panel tiene campo «código» de laboratorio. En la ficha, los genes del panel se colorean VERDE (recomendados por el protocolo) o AZUL («a mayores») y un aviso ROJO lista los recomendados que faltan en tus paneles.']},
   {v:'1.14.0', d:'2026-06-30', c:['Antropometría unificada: el módulo que se despliega en las fichas es ahora EL MISMO que la pestaña Antropometría (percentiles OMS, IMC, perímetro cefálico, envergadura, gravedad de talla; valor en DE). Los criterios de Beighton (hiperlaxitud) se integran como apartado dentro de Antropometría (ficha y pestaña).']},
   {v:'1.13.0', d:'2026-06-30', c:['Buscador de Protocolos: ya no pierde el foco al teclear (solo actualiza resultados).','Importar JSON: botón en Protocolos para añadir tu propia ficha; pasa por la misma revisión y verificación de HPO que las creadas por la IA.','Creación de protocolos: más margen de tokens (16k) + reintento y mensaje claro si la respuesta llega cortada; prompt reforzado para que cada HPO corresponda EXACTAMENTE al concepto.','Antropometría: corregido el peso en niños (OMS peso/edad solo 0-10 a → indica valorar por IMC, en vez de «fuera de rango»); el valor mostrado se etiqueta como DE (desviación estándar = z).']},
@@ -1635,7 +1636,7 @@ async function openFichaFlow(){
       ${fichas.length?`<div style="margin-top:14px">${fichaSelectorHtml(fichas,'')}</div>`:''}
     </div>`;
   const cf=document.getElementById('btnCrearFicha');
-  if(cf) cf.addEventListener('click', ()=>generarFichaIA(patient.motivo));
+  if(cf) cf.addEventListener('click', ()=>openAutoriaModal(patient.motivo));
   const imp=document.getElementById('btnImportFicha');
   if(imp) imp.addEventListener('change', ()=>{ if(imp.files&&imp.files[0]) importFicha(imp.files[0]); });
   wireFichaSelector(box, fichas);
@@ -1706,7 +1707,7 @@ function setActiveFicha(ficha, res, fichas){
     </div>`;
   document.getElementById('btnAnamnesis').addEventListener('click', renderAnamnesis);
   document.getElementById('btnCambiarFicha').addEventListener('click', ()=>{ activeFicha=null; openFichaFlow(); });
-  document.getElementById('btnNuevaIA').addEventListener('click', ()=>generarFichaIA(patient.motivo));
+  document.getElementById('btnNuevaIA').addEventListener('click', ()=>openAutoriaModal(patient.motivo));
   const fr=document.getElementById('fichaFreshness');
   if(fr){ fr.innerHTML=freshnessBannerHtml(ficha.id); const fc=fr.querySelector('#btnFreshCheck'); if(fc) fc.addEventListener('click', comprobarFreshness); }
   renderPatientLine();
@@ -2592,13 +2593,14 @@ async function indexarDriveDoc(f, opts){
 
 /* Modal opcional: aportar una guía (URL o PDF) como fuente principal antes de generar. */
 
-async function generarFichaIA(motivo, guiaContext){
+async function generarFichaIA(motivo, guiaContext, instructions){
   const box=document.getElementById('fichaFlow');
   if(!anyProvider()){ if(box) box.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
   if(box) box.innerHTML='<div class="loading">Generando ficha con IA (buscando criterios vigentes en la web)… puede tardar.</div>';
   try{
     let user='Motivo de consulta: "'+(motivo||'')+'". Genera la ficha JSON más completa y vigente para esta entidad o grupo nosológico, con sus criterios diagnósticos actuales.';
-    if(guiaContext){ user += '\n\nGUÍA APORTADA POR EL CLÍNICO (úsala como FUENTE PRINCIPAL y cítala en "fuentes"):\n'+guiaContext; }
+    if(instructions && instructions.trim()){ user += '\n\nINSTRUCCIONES ADICIONALES DEL CLÍNICO (síguelas con prioridad; pueden incluir un JSON de referencia/plantilla a respetar):\n'+instructions.trim(); }
+    if(guiaContext){ user += '\n\nGUÍA(S)/DOCUMENTO(S) APORTADO(S) POR EL CLÍNICO (úsalos como FUENTE PRINCIPAL y cítalos en "fuentes"):\n'+guiaContext; }
     if(Object.keys(ragDocs).length){ if(box) box.innerHTML='<div class="loading">Recuperando lo relevante de tus documentos (RAG)…</div>'; const rag=await ragContext(4, motivo); if(rag) user += '\n\nDOCUMENTOS DE MI REPOSITORIO (tenlos en cuenta ADEMÁS de la búsqueda web — la COMPLEMENTAN, no la sustituyen — y cítalos en "fuentes"):\n'+rag; }
     let resp=await callLLM({system:FICHA_SYSTEM_PROMPT, user, webSearch:true, maxTokens:16000, task:'author'});
     let f=extractJSON(resp);
@@ -2608,6 +2610,43 @@ async function generarFichaIA(motivo, guiaContext){
   }catch(e){ if(box) box.innerHTML='<div class="err">Error generando la ficha: '+e.message+'</div>'; }
 }
 
+/* Texto completo de un documento indexado (por su driveId): caché local → GitHub docs/text. */
+async function docFullText(driveId){
+  if(!driveId) return null;
+  try{ const c=JSON.parse(localStorage.getItem('fh_doctext_'+driveId)); if(c){ if(typeof c==='string') return c; if(c.text) return c.text; } }catch(e){}
+  if(ghConfigured()){ try{ const r=await ghGetFile('docs/text/'+driveId+'.json'); if(r.json && r.json.text) return r.json.text; }catch(e){} }
+  return null;
+}
+/* Modal de autoría: motivo + instrucciones libres (admite JSON) + uno o varios PDF (subidos o del repositorio). */
+function openAutoriaModal(motivo){
+  const repoDocs=((cachedDocs()||{}).docs||[]).filter(d=>d.driveId);
+  const ov=document.createElement('div'); ov.className='overlay'; ov.id='autoriaOverlay';
+  ov.innerHTML=`<div class="modal" style="max-width:660px"><h2>✨ Nueva ficha / protocolo (IA)</h2>
+    <div class="msub">La IA genera la ficha buscando criterios vigentes en la web. Puedes añadir <b>instrucciones libres</b> (incluso un JSON de plantilla a respetar) y aportar <b>uno o varios PDF</b> (subidos o de tu repositorio) como fuente principal. Cada HPO se verifica luego contra JAX.</div>
+    <div class="field"><label>Motivo / entidad</label><input id="auMotivo" type="text" value="${escHtml(motivo||'').replace(/"/g,'&quot;')}" placeholder="p. ej. conectivopatía, síndrome autoinflamatorio, trombopenia crónica…"></div>
+    <div class="field"><label>Instrucciones (opcional · admite JSON)</label><textarea id="auInstr" style="width:100%;min-height:90px;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:12.5px;font-family:var(--mono,monospace)" placeholder="Matices, alcance, estructura preferida, o pega un JSON de referencia/plantilla…"></textarea></div>
+    <div class="field"><label>PDF aportados (uno o varios)</label><input id="auFiles" type="file" accept="application/pdf" multiple></div>
+    ${repoDocs.length?`<div class="field"><label>…o de tu repositorio documental (indexados)</label><div style="max-height:140px;overflow:auto;border:1px solid var(--line);border-radius:9px;padding:6px">${repoDocs.map(d=>`<label class="q-opt" style="display:block;font-size:12.5px"><input type="checkbox" class="auRepo" data-did="${escHtml(String(d.driveId))}"> ${escHtml(d.titulo||d.driveId)}</label>`).join('')}</div></div>`:''}
+    <div class="test-out" id="auOut"></div>
+    <div class="modal-actions"><button class="btn ghost" id="auCancel">Cancelar</button><button class="btn primary" id="auGo">✨ Generar</button></div></div>`;
+  document.body.appendChild(ov);
+  const close=()=>ov.remove();
+  ov.querySelector('#auCancel').addEventListener('click', close);
+  ov.addEventListener('click', e=>{ if(e.target===ov) close(); });
+  ov.querySelector('#auGo').addEventListener('click', async ()=>{
+    const out=ov.querySelector('#auOut'); const mot=ov.querySelector('#auMotivo').value.trim();
+    if(!mot){ out.className='test-out bad'; out.textContent='Indica el motivo/entidad.'; return; }
+    const instr=ov.querySelector('#auInstr').value;
+    out.className='test-out'; out.textContent='Leyendo documentos aportados…';
+    const parts=[];
+    const files=(ov.querySelector('#auFiles')||{}).files||[];
+    for(const fl of files){ try{ const t=await extractPdfText(fl); if(t) parts.push('--- '+fl.name+' ---\n'+t.slice(0,8000)); }catch(e){} }
+    for(const cb of ov.querySelectorAll('.auRepo:checked')){ try{ const t=await docFullText(cb.dataset.did); if(t) parts.push('--- '+(cb.parentElement.textContent||'doc').trim()+' ---\n'+t.slice(0,8000)); }catch(e){} }
+    const guia=parts.join('\n\n');
+    close(); patient.motivo=mot; showSection('fenotipado');
+    setTimeout(()=>generarFichaIA(mot, guia, instr), 50);
+  });
+}
 /* Conteo rápido de una ficha para mostrar el delta tras aplicar una guía. */
 function countFichaStats(f){
   const dom=(f.dominios||[]).length;
@@ -3419,7 +3458,7 @@ async function comprobarFreshness(){
       ${src?`<div class="study-src">${src}</div>`:''}
       ${j.novedad?'<button class="btn" id="btnRegen" style="margin-top:8px">Regenerar ficha con IA</button>':''}
     </div>`;
-    const rg=out.querySelector('#btnRegen'); if(rg) rg.addEventListener('click', ()=>generarFichaIA(activeFicha.nombre_es||patient.motivo));
+    const rg=out.querySelector('#btnRegen'); if(rg) rg.addEventListener('click', ()=>openAutoriaModal(activeFicha.nombre_es||patient.motivo));
   }catch(e){ out.innerHTML='<div class="err">Error: '+e.message+'</div>'; }
 }
 
@@ -4293,7 +4332,7 @@ async function renderBiblioteca(filter){
   document.getElementById('libRefresh').addEventListener('click', ()=>renderBiblioteca());
   document.getElementById('libImport').addEventListener('click', importarFichaJson);
   document.getElementById('libValidate').addEventListener('click', validarTodosProtocolos);
-  document.getElementById('libNueva').addEventListener('click', ()=>{ showSection('fenotipado'); const m=document.getElementById('inMotivo'); if(m) m.focus(); });
+  document.getElementById('libNueva').addEventListener('click', ()=>openAutoriaModal(''));
   wireLibCards(box);
 }
 function libResultsHtml(filter){
