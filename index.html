@@ -390,6 +390,7 @@
   <button class="section-btn" data-section="prenatal">🤰 Prenatal</button>
   <button class="section-btn" data-section="informes">📄 Informes</button>
   <button class="section-btn" data-section="seguimiento">🩺 Gen → seguimiento</button>
+  <button class="section-btn" data-section="paneles">🧩 Paneles</button>
   <button class="section-btn" data-section="biblioteca">📚 Protocolos</button>
   <button class="section-btn" data-section="documentos">📁 Documentos</button>
 </nav>
@@ -425,6 +426,7 @@
 <div id="prenatalView" class="section-view" style="display:none"></div>
 <div id="informesView" class="section-view" style="display:none"></div>
 <div id="seguimientoView" class="section-view" style="display:none"></div>
+<div id="panelesView" class="section-view" style="display:none"></div>
 <div id="documentosView" class="section-view" style="display:none"></div>
 
 <div id="toast"></div>
@@ -437,8 +439,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.10.0';
+const APP_VERSION='1.11.0';
 const CHANGELOG=[
+  {v:'1.11.0', d:'2026-06-30', c:['Nueva sección «🧩 Paneles»: gestor de tus paneles génicos (HAC) estilo PanelApp — lista → detalle, con versión, fechas de creación/modificación, changelog de genes añadidos/eliminados, lista de genes y protocolo asociado (se asocia/desasocia desde el panel o desde el protocolo). En la ficha del protocolo aparece «Panel HAC» y el panel génico recomendado se colorea VERDE (incluido en tu HAC) o ROJO (falta), para ver de un vistazo si cumples las recomendaciones.']},
   {v:'1.10.0', d:'2026-06-30', c:['Enlace a Franklin (Genoox) por gen: en el panel génico del diferencial y en «Gen → seguimiento» cada gen abre directamente su página en Franklin (clinical-db, hg38). Usa tu sesión iniciada en Franklin; no requiere API ni clave.']},
   {v:'1.9.1', d:'2026-06-30', c:['Prenatal: corregida la sincronía — al desmarcar un HPO en el panel derecho (Fenotipo del paciente) ahora también se desmarca en los listados de la izquierda y en el panel de síndromes. Además, el panel derecho ya no «desaparecía» al re-renderizar (aceptar síndrome, etc.).']},
   {v:'1.9.0', d:'2026-06-30', c:['Prenatal: cada hallazgo (HPO) muestra su 👁 ventana de visibilidad ecográfica (semana desde / hasta). Es dato del SIGNO, no del síndrome → mapa único compartido (prenatal-ga.json en tu GitHub). Botón «Semanas de visibilidad (IA)» que la completa en bloque (verificable/editable); los síndromes nuevos ya la incluyen.']},
@@ -3248,6 +3251,114 @@ function renderSegResult(j, fromCache){
   </div>`;
 }
 
+/* ===== Paneles génicos propios (HAC) — estilo PanelApp: lista → detalle, versión + changelog, asociación a protocolo ===== */
+let PANELES=[]; let _panelSel=null;
+function panelGenes(s){ return [...new Set((s||'').split(/[\s,;]+/).map(g=>g.trim().toUpperCase()).filter(Boolean))]; }
+function bumpVer(v){ const m=String(v||'1.0').match(/^(\d+)\.(\d+)/); return m? (m[1]+'.'+(parseInt(m[2])+1)) : '1.1'; }
+function panelForFicha(fid){ return PANELES.find(p=>p.fichaId===fid)||null; }
+async function persistPaneles(msg){
+  try{ localStorage.setItem('fh_paneles', JSON.stringify(PANELES)); }catch(e){}
+  try{ if(ghConfigured()){ let sha=null; try{ const ci=await ghGetFile('paneles.json'); sha=ci.sha; }catch(e){} await ghPutFile('paneles.json', {paneles:PANELES}, msg||'paneles: actualizar', sha); } }catch(e){}
+}
+async function loadPaneles(){
+  try{ const c=JSON.parse(localStorage.getItem('fh_paneles')); if(Array.isArray(c)) PANELES=c; }catch(e){}
+  if(ghConfigured()){ try{ const r=await ghGetFile('paneles.json'); if(r.json && Array.isArray(r.json.paneles)){ PANELES=r.json.paneles; try{ localStorage.setItem('fh_paneles', JSON.stringify(PANELES)); }catch(e){} } }catch(e){} }
+}
+function crearPanel(name){
+  name=(name||'').trim(); if(!name) return null;
+  const p={ id:slugify(name)+'-'+Math.random().toString(36).slice(2,6), name, version:'1.0', created:new Date().toISOString(), modified:new Date().toISOString(), genes:[], fichaId:null, changelog:[{date:new Date().toISOString(), version:'1.0', added:[], removed:[], nota:'Creado'}] };
+  PANELES.unshift(p); persistPaneles('paneles: crear '+name); return p;
+}
+async function editarPanelGenes(id, raw){
+  const p=PANELES.find(x=>x.id===id); if(!p) return;
+  const nuevos=panelGenes(raw); const viejos=p.genes||[];
+  const added=nuevos.filter(g=>!viejos.includes(g)); const removed=viejos.filter(g=>!nuevos.includes(g));
+  if(!added.length && !removed.length) return;   // sin cambios
+  p.genes=nuevos; p.version=bumpVer(p.version); p.modified=new Date().toISOString();
+  p.changelog=p.changelog||[]; p.changelog.unshift({date:p.modified, version:p.version, added, removed});
+  await persistPaneles('paneles: '+p.name+' v'+p.version+' (+'+added.length+'/-'+removed.length+')');
+}
+async function asociarPanelFicha(panelId, fichaId){
+  const p=PANELES.find(x=>x.id===panelId); if(!p) return;
+  p.fichaId = fichaId || null; p.modified=new Date().toISOString();
+  await persistPaneles('paneles: asociar '+p.name+(fichaId?(' → '+fichaId):' (desasociar)'));
+}
+async function eliminarPanel(id){
+  const p=PANELES.find(x=>x.id===id); if(!p) return;
+  if(!confirm('¿Eliminar el panel «'+p.name+'»?')) return;
+  PANELES=PANELES.filter(x=>x.id!==id); _panelSel=null;
+  await persistPaneles('paneles: eliminar '+p.name); renderPaneles();
+}
+function renderPaneles(){
+  const box=document.getElementById('panelesView'); if(!box) return;
+  if(_panelSel){ const p=PANELES.find(x=>x.id===_panelSel); if(p){ renderPanelDetalle(box, p); return; } _panelSel=null; }
+  box.innerHTML=`
+    <div class="lib-head"><h2>🧩 Paneles génicos (HAC)</h2></div>
+    <div class="sec-note">Tus paneles génicos del laboratorio. Cada panel guarda versión, fecha de creación/modificación y un changelog de genes añadidos/eliminados, y se asocia a un protocolo. Pulsa un panel para ver el detalle.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0">
+      <input id="panNew" type="text" placeholder="Nombre del nuevo panel (p. ej. Conectivopatías HAC)" autocomplete="off" style="flex:1;min-width:260px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
+      <button class="btn primary" id="panCreate">+ Nuevo panel</button>
+    </div>
+    ${PANELES.length?`<div class="lib-grid">${PANELES.map(p=>{ const fic=p.fichaId?( (_libCache.find(f=>f.id===p.fichaId)||{}).nombre || p.fichaId):null;
+      return `<div class="lib-card" data-panopen="${escHtml(p.id)}" style="cursor:pointer"><div class="nm">${escHtml(p.name)} <span class="pop-badge">v${escHtml(p.version)}</span></div><div class="meta">${(p.genes||[]).length} genes · mod. ${String(p.modified||'').slice(0,10)}${fic?' · 📋 '+escHtml(fic):' · sin protocolo'}</div></div>`; }).join('')}</div>`
+      :'<div class="placeholder">Aún no tienes paneles. Crea el primero arriba.</div>'}`;
+  const ni=document.getElementById('panNew'), cb=document.getElementById('panCreate');
+  const doCreate=()=>{ const p=crearPanel(ni.value); if(p){ _panelSel=p.id; renderPaneles(); } };
+  if(cb) cb.addEventListener('click', doCreate);
+  if(ni) ni.addEventListener('keydown', e=>{ if(e.key==='Enter') doCreate(); });
+  box.querySelectorAll('[data-panopen]').forEach(c=>c.addEventListener('click', ()=>{ _panelSel=c.dataset.panopen; renderPaneles(); }));
+}
+function renderPanelDetalle(box, p){
+  const fichaOpts=(_libCache||[]).map(f=>`<option value="${escHtml(f.id)}" ${p.fichaId===f.id?'selected':''}>${escHtml(f.nombre||f.id)}</option>`).join('');
+  const cl=(p.changelog||[]).map(c=>`<div style="font-size:12px;border-top:1px solid var(--line);padding:5px 0"><b>v${escHtml(c.version)}</b> <span class="dx-meta">${String(c.date||'').slice(0,10)}</span>${c.nota?' · '+escHtml(c.nota):''}${(c.added&&c.added.length)?'<br><span style="color:var(--ok)">+ '+c.added.map(escHtml).join(', ')+'</span>':''}${(c.removed&&c.removed.length)?'<br><span style="color:#f2a">− '+c.removed.map(escHtml).join(', ')+'</span>':''}</div>`).join('');
+  box.innerHTML=`
+    <div class="fview-bar"><button class="btn" id="panBack">‹ Volver a paneles</button><button class="btn" id="panRename">✎ Renombrar</button><button class="btn ghost" id="panDel">🗑 Eliminar</button></div>
+    <div class="fview">
+      <h1>${escHtml(p.name)} <span class="pop-badge">v${escHtml(p.version)}</span></h1>
+      <div class="fsub">Creado ${String(p.created||'').slice(0,10)} · Modificado ${String(p.modified||'').slice(0,10)} · ${(p.genes||[]).length} genes</div>
+      <h3>Protocolo asociado</h3>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="panFicha" style="min-width:240px;padding:8px 11px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px"><option value="">— sin protocolo —</option>${fichaOpts}</select>
+        ${p.fichaId?`<button class="btn" id="panGoFicha">Ver protocolo ›</button>`:''}
+      </div>
+      <h3>Genes (${(p.genes||[]).length})</h3>
+      <div style="margin:4px 0">${(p.genes||[]).map(g=>`<a class="gene" href="${geneLinks(g).Franklin}" target="_blank" rel="noopener" style="text-decoration:none">${escHtml(g)}</a>`).join(' ')||'<span class="dx-meta">Sin genes aún.</span>'}</div>
+      <details style="margin-top:8px"><summary class="cart-group-title" style="cursor:pointer">Editar genes</summary>
+        <textarea id="panGenes" style="width:100%;min-height:90px;box-sizing:border-box;margin-top:6px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px" placeholder="Pega los genes separados por coma, espacio o salto de línea">${escHtml((p.genes||[]).join(', '))}</textarea>
+        <button class="btn primary" id="panSaveGenes" style="margin-top:6px">Guardar genes (nueva versión)</button>
+      </details>
+      <h3>Changelog</h3>
+      <div>${cl||'<span class="dx-meta">Sin cambios registrados.</span>'}</div>
+    </div>`;
+  box.querySelector('#panBack').addEventListener('click', ()=>{ _panelSel=null; renderPaneles(); });
+  box.querySelector('#panDel').addEventListener('click', ()=>eliminarPanel(p.id));
+  box.querySelector('#panRename').addEventListener('click', ()=>{ const n=prompt('Nuevo nombre del panel:', p.name); if(n&&n.trim()){ p.name=n.trim(); p.modified=new Date().toISOString(); persistPaneles('paneles: renombrar'); renderPaneles(); } });
+  box.querySelector('#panFicha').addEventListener('change', async e=>{ await asociarPanelFicha(p.id, e.target.value||null); renderPaneles(); });
+  const gf=box.querySelector('#panGoFicha'); if(gf) gf.addEventListener('click', ()=>{ showSection('biblioteca'); setTimeout(()=>abrirFichaBiblioteca(p.fichaId,false), 50); });
+  box.querySelector('#panSaveGenes').addEventListener('click', async ()=>{ await editarPanelGenes(p.id, box.querySelector('#panGenes').value); renderPaneles(); });
+}
+/* Bloque de panel para la ficha: panel recomendado coloreado vs Panel HAC + bloque HAC + selector de asociación. */
+function fichaPanelHtml(f){
+  const rec=(f.panel_genes||[]); const recU=rec.map(g=>String(g).toUpperCase());
+  const hac=panelForFicha(f.id); const hacSet=new Set(((hac&&hac.genes)||[]).map(g=>String(g).toUpperCase()));
+  let html='';
+  if(rec.length){
+    const chips=rec.map(g=>{ const ok=hacSet.has(String(g).toUpperCase()); return `<a class="gene" href="${geneLinks(g).Franklin}" target="_blank" rel="noopener" style="text-decoration:none;border-color:${ok?'var(--ok)':'#e0607a'};color:${ok?'var(--ok)':'#e0607a'}" title="${ok?'En tu Panel HAC':'Falta en tu Panel HAC'}">${escHtml(g)}</a>`; }).join(' ');
+    html+=`<h3>Panel génico recomendado <span class="dx-meta">(${rec.length})</span></h3>`
+      +(hac?`<div class="dx-meta" style="margin:2px 0">Frente a tu Panel HAC «${escHtml(hac.name)}»: <span style="color:var(--ok)">verde = incluido</span> · <span style="color:#e0607a">rojo = falta en tu panel</span></div>`:`<div class="dx-meta" style="margin:2px 0">Asocia un Panel HAC abajo para ver qué genes cubre tu panel.</div>`)
+      +`<div style="margin:4px 0">${chips}</div>`;
+  }
+  html+=`<h3>Panel HAC</h3>`;
+  if(hac){
+    const cubre=recU.filter(g=>hacSet.has(g)).length;
+    html+=`<div class="dx-meta" style="margin:2px 0"><b>${escHtml(hac.name)}</b> v${escHtml(hac.version)} · ${(hac.genes||[]).length} genes${rec.length?` · cubre <b>${cubre}/${rec.length}</b> del recomendado`:''} · <a class="tip-ai" data-panview="${escHtml(hac.id)}">ver/editar panel</a></div>`
+      +`<div style="margin:4px 0">${(hac.genes||[]).map(g=>{ const inRec=recU.includes(String(g).toUpperCase()); return `<a class="gene" href="${geneLinks(g).Franklin}" target="_blank" rel="noopener" style="text-decoration:none${inRec?'':';opacity:.65'}" title="${inRec?'Recomendado':'No está en el recomendado'}">${escHtml(g)}</a>`; }).join(' ')||'<span class="dx-meta">Sin genes.</span>'}</div>`;
+  }
+  const opts=(PANELES||[]).map(p=>`<option value="${escHtml(p.id)}" ${hac&&hac.id===p.id?'selected':''}>${escHtml(p.name)} (v${escHtml(p.version)})</option>`).join('');
+  html+=`<div style="display:flex;gap:8px;align-items:center;margin-top:6px"><select class="panAssoc" data-fid="${escHtml(f.id)}" style="min-width:220px;padding:7px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:12.5px"><option value="">${hac?'— quitar asociación —':'— asociar un Panel HAC —'}</option>${opts}</select></div>`;
+  return html;
+}
+
 /* ===========================================================================
    PARTE H — Módulo 10: Export (PDF con jsPDF + copiar códigos)
    =========================================================================== */
@@ -4183,8 +4294,9 @@ function showSection(s){
   const pv0=document.getElementById('prenatalView');
   const inf=document.getElementById('informesView');
   const seg=document.getElementById('seguimientoView');
+  const pan=document.getElementById('panelesView');
   const panel=document.getElementById('phenoPanel');
-  [fen,feno,bib,doc,dis,ant,pv0,inf,seg].forEach(v=>{ if(v) v.style.display='none'; });
+  [fen,feno,bib,doc,dis,ant,pv0,inf,seg,pan].forEach(v=>{ if(v) v.style.display='none'; });
   // El panel de fenotipo (búsqueda + carrito + diferencial + Monarch + export) es ÚNICO:
   // en "fenotipo" va a pantalla completa; en el resto vuelve al aside del protocolo.
   if(s==='fenotipo'){
@@ -4199,6 +4311,7 @@ function showSection(s){
   else if(s==='antropometria'){ if(ant){ ant.style.display='block'; renderAntropometria(); } }
   else if(s==='informes'){ if(inf){ inf.style.display='block'; renderInformes(); } }
   else if(s==='seguimiento'){ if(seg){ seg.style.display='block'; renderSeguimiento(); } }
+  else if(s==='paneles'){ if(pan){ pan.style.display='block'; renderPaneles(); } }
   else if(s==='prenatal'){ const pv=document.getElementById('prenatalView'); if(pv){ pv.style.display='block'; renderPrenatal(); const slot=document.getElementById('prenatalPanelSlot'); if(slot&&panel){ slot.appendChild(panel); panel.classList.remove('cart-full'); renderCart(); renderDifferential(); renderMonarch(); } } }
   else if(fen) fen.style.display='';
 }
@@ -4316,7 +4429,7 @@ async function renderFichaView(f){
       <div class="fsub">${f.poblacion&&f.poblacion!=='unica'?(f.poblacion==='pediatrica'?'Población pediátrica · ':'Población adulta · '):''}${f.version?'v'+f.version+' · ':''}${(f.sinonimos||[]).join(', ')}</div>
       ${doms?`<h3>Dominios y anamnesis</h3>${doms}`:''}
       ${ents?`<h3>Diferencial y criterios</h3>${ents}`:''}
-      ${(f.panel_genes&&f.panel_genes.length)?`<h3>Panel génico</h3><div>${f.panel_genes.join(' · ')}</div>`:''}
+      ${fichaPanelHtml(f)}
       ${study}
       ${fuentes?`<h3>Referencias</h3><ul class="src">${fuentes}</ul>`:''}
     </div>`;
@@ -4325,6 +4438,13 @@ async function renderFichaView(f){
   document.getElementById('fvEdit').addEventListener('click', ()=>openFichaReview(f, {origin:'biblioteca'}));
   document.getElementById('fvValidate').addEventListener('click', ()=>openValidarHpo(f));
   document.getElementById('fvPrint').addEventListener('click', ()=>window.print());
+  box.querySelectorAll('.panAssoc').forEach(sel=>sel.addEventListener('change', async ()=>{
+    const cur=panelForFicha(f.id);
+    if(cur && (!sel.value || cur.id!==sel.value)) await asociarPanelFicha(cur.id, null);   // soltar el actual al cambiar/quitar
+    if(sel.value) await asociarPanelFicha(sel.value, f.id);
+    renderFichaView(f);
+  }));
+  box.querySelectorAll('[data-panview]').forEach(a=>a.addEventListener('click', ()=>{ _panelSel=a.dataset.panview; showSection('paneles'); }));
 }
 
 /* Registrar un PDF descargado: el PDF vive en la nube del usuario; aquí guardamos el enlace + metadatos en docs/index.json. */
@@ -4448,6 +4568,8 @@ function init(){
   ensureGhDefs();
   // Pre-carga de los síndromes prenatales añadidos por IA (GitHub)
   loadPrenatalCustom();
+  // Pre-carga de los paneles génicos propios (GitHub)
+  loadPaneles();
   // Pestaña de inicio: Fenotipo (panel a pantalla completa)
   showSection('fenotipo');
 }
