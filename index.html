@@ -437,8 +437,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.8.0';
+const APP_VERSION='1.9.0';
 const CHANGELOG=[
+  {v:'1.9.0', d:'2026-06-30', c:['Prenatal: cada hallazgo (HPO) muestra su 👁 ventana de visibilidad ecográfica (semana desde / hasta). Es dato del SIGNO, no del síndrome → mapa único compartido (prenatal-ga.json en tu GitHub). Botón «Semanas de visibilidad (IA)» que la completa en bloque (verificable/editable); los síndromes nuevos ya la incluyen.']},
   {v:'1.8.0', d:'2026-06-30', c:['Nueva sección «🩺 Gen → seguimiento»: introduces un gen / alteración / entidad y la IA devuelve la vigilancia/cribado y el manejo/tratamiento recomendados según guías vigentes, con bibliografía (y tus documentos RAG). Se guarda como base de conocimiento en tu GitHub (reutilizable sin gastar tokens).']},
   {v:'1.7.3', d:'2026-06-30', c:['Informe PDF prenatal: cabecera con edad gestacional y sexo fetal (en vez de motivo/edad); tras el fenotipo, los síndromes que cumplen criterios (✓ presentes / ○ faltan) y la indicación de estudio prenatal sugerida.']},
   {v:'1.7.2', d:'2026-06-30', c:['Prenatal: el panel «cumple criterios» ahora muestra con claridad qué hallazgos están ✓ presentes y cuáles ○ faltan de cada síndrome (en vez de solo «1/2»).']},
@@ -3642,6 +3643,31 @@ async function loadPrenatalCustom(){
       if(before>after) persistPrenatalCustom('prenatal: saneo automático ('+(before-after)+' eliminados: duplicados/huérfanos)');
     } }catch(e){}
   }
+  await loadPrenatalGa();
+}
+/* Capa de SEMANAS DE VISIBILIDAD ecográfica por HALLAZGO (HPO): {hpoId:{min,max}} (sem de gestación).
+   Es propiedad del SIGNO, no del síndrome → un solo mapa compartido, persistido en GitHub (prenatal-ga.json). */
+let PRENATAL_GA={};
+function gaLabel(id){
+  const g=PRENATAL_GA[id]; if(!g) return '';
+  let t=''; const mn=parseInt(g.min), mx=parseInt(g.max);
+  if(mn&&mx) t='👁 '+mn+'–'+mx+' sem'; else if(mn) t='👁 desde '+mn+' sem'; else if(mx) t='👁 hasta '+mx+' sem'; else return '';
+  return ` <span class="dx-meta" style="color:#9cc4ff" title="Semanas de gestación en que el signo es visible en ecografía (orientativo)">${t}</span>`;
+}
+async function persistPrenatalGa(msg){
+  try{ localStorage.setItem('fh_prenatal_ga', JSON.stringify(PRENATAL_GA)); }catch(e){}
+  try{ if(ghConfigured()){ let sha=null; try{ const ci=await ghGetFile('prenatal-ga.json'); sha=ci.sha; }catch(e){} await ghPutFile('prenatal-ga.json', PRENATAL_GA, msg||'prenatal: semanas de visibilidad', sha); } }catch(e){}
+}
+async function loadPrenatalGa(){
+  let local={}; try{ local=JSON.parse(localStorage.getItem('fh_prenatal_ga'))||{}; }catch(e){}
+  let gh={}; if(ghConfigured()){ try{ const r=await ghGetFile('prenatal-ga.json'); if(r.json) gh=r.json; }catch(e){} }
+  PRENATAL_GA=Object.assign({}, gh, local);   // GitHub de base, lo local (más reciente) por encima
+  try{ localStorage.setItem('fh_prenatal_ga', JSON.stringify(PRENATAL_GA)); }catch(e){}
+}
+function setGa(id, min, max){
+  const mn=parseInt(min), mx=parseInt(max);
+  const o={}; if(mn>=6&&mn<=42) o.min=mn; if(mx>=6&&mx<=42) o.max=mx;   // semanas plausibles
+  if(o.min||o.max) PRENATAL_GA[id]=o;
 }
 function allPrenatalSyndromes(){ return [...PRENATAL_SYNDROMES, ...(PRENATAL_CUSTOM.syndromes||[])]; }
 function prenatalFindingLabel(id){
@@ -3649,7 +3675,7 @@ function prenatalFindingLabel(id){
   const c=(PRENATAL_CUSTOM.findings||[]).find(x=>x.id===id); if(c) return c.es;
   return (window.__esLabels&&window.__esLabels[id])||id;
 }
-function syndromeFindingsTip(s){ return (s.findings||[]).map(id=>'· '+escHtml(prenatalFindingLabel(id))+' <span class="hp">'+id+'</span>').join('<br>'); }
+function syndromeFindingsTip(s){ return (s.findings||[]).map(id=>'· '+escHtml(prenatalFindingLabel(id))+' <span class="hp">'+id+'</span>'+gaLabel(id)).join('<br>'); }
 /* Jerarquía HPO: al marcar un hallazgo, auto-marca sus ANCESTROS que también estén en el set prenatal
    (p. ej. CIV HP:0001629 → Anomalía cardiaca HP:0001627). Ancestros de JAX, cacheados. */
 let _ancCache={}; try{ _ancCache=JSON.parse(localStorage.getItem('fh_hpo_anc'))||{}; }catch(e){ _ancCache={}; }
@@ -3702,6 +3728,7 @@ async function addPrenatalCands(cands, minF){
       const tipo=(['mayor','marcador','nucal'].includes(f.tipo)?f.tipo:'mayor');
       const sistema=(f.sistema||'').trim()||null;                     // acepta categoría nueva si la IA la propone
       const offEs=(window.__esLabels&&window.__esLabels[id])||f.label||id;
+      if(f.ga_min||f.ga_max) setGa(id, f.ga_min, f.ga_max);   // semana de visibilidad del signo
       findings.push({id, es:offEs, tipo, sistema});
     }
     if(findings.length<need){ log.push('✗ '+c.name+': '+findings.length+'/'+proposed+' HPO verificados contra JAX (mínimo '+need+') → NO añadido.'); continue; }
@@ -3710,7 +3737,7 @@ async function addPrenatalCands(cands, minF){
     for(const x of findings){ if(!knownF.has(x.id)){ PRENATAL_CUSTOM.findings.push(x); PRENATAL_TIPO[x.id]=x.tipo; knownF.add(x.id); addedF++; } }
     log.push('✓ '+c.name+': añadido ('+findings.length+'/'+proposed+' HPO verificados, '+findings.map(x=>x.id).join(', ')+').');
   }
-  if(addedS) await persistPrenatalCustom('prenatal: +'+addedS+' síndromes IA (HPO verificados)');
+  if(addedS){ await persistPrenatalCustom('prenatal: +'+addedS+' síndromes IA (HPO verificados)'); await persistPrenatalGa('prenatal: GA de hallazgos nuevos'); }
   return {addedS, addedF, log};
 }
 /* Descubrimiento: la IA PROPONE síndromes; el usuario acepta/rechaza cada uno individualmente. */
@@ -3721,7 +3748,7 @@ async function actualizarSindromesIA(){
   out.innerHTML='<div class="loading">Buscando síndromes prenatales con IA (Opus 4.8 + búsqueda web)… No se añade nada todavía.</div>';
   try{
     const existing=allPrenatalSyndromes().map(s=>s.name);
-    const system='Eres genetista clínico experto en DIAGNÓSTICO PRENATAL. Propón síndromes/entidades con diagnóstico prenatal relevante. Para cada uno: nombre en español (sin prefijos como "Síndrome de"), "test" (estudio genético dirigido), "min" (1-3), "ref" {titulo,url} = BIBLIOGRAFÍA OBLIGATORIA con URL REAL y verificable (GeneReviews/OMIM/PubMed/guía clínica); NO inventes la URL; si no puedes aportar una referencia fiable, OMITE ese síndrome. "findings": 3-6 hallazgos ECOGRÁFICOS FETALES, cada uno con "hpo" (código HPO REAL y VIGENTE, HP:0000000), "label" (español), "label_en" (NOMBRE EXACTO del término HPO en inglés), "tipo" (mayor|marcador|nucal) y "sistema" (uno de: '+PRENATAL_SYSTEMS.join(' | ')+', o una categoría nueva si ninguna encaja). El "hpo" y "label_en" DEBEN ser el mismo término HPO. '+SOURCE_PRIORITY+' Devuelve SOLO JSON {"sindromes":[{"name":"","test":"","min":2,"ref":{"titulo":"","url":""},"findings":[{"hpo":"HP:0000000","label":"","label_en":"","tipo":"mayor","sistema":""}]}]}.';
+    const system='Eres genetista clínico experto en DIAGNÓSTICO PRENATAL. Propón síndromes/entidades con diagnóstico prenatal relevante. Para cada uno: nombre en español (sin prefijos como "Síndrome de"), "test" (estudio genético dirigido), "min" (1-3), "ref" {titulo,url} = BIBLIOGRAFÍA OBLIGATORIA con URL REAL y verificable (GeneReviews/OMIM/PubMed/guía clínica); NO inventes la URL; si no puedes aportar una referencia fiable, OMITE ese síndrome. "findings": 3-6 hallazgos ECOGRÁFICOS FETALES, cada uno con "hpo" (código HPO REAL y VIGENTE, HP:0000000), "label" (español), "label_en" (NOMBRE EXACTO del término HPO en inglés), "tipo" (mayor|marcador|nucal), "sistema" (uno de: '+PRENATAL_SYSTEMS.join(' | ')+', o una categoría nueva si ninguna encaja), "ga_min" (semana de gestación desde la que el signo es visible en ecografía) y "ga_max" (semana hasta la que es visible; null si persiste). El "hpo" y "label_en" DEBEN ser el mismo término HPO. '+SOURCE_PRIORITY+' Devuelve SOLO JSON {"sindromes":[{"name":"","test":"","min":2,"ref":{"titulo":"","url":""},"findings":[{"hpo":"HP:0000000","label":"","label_en":"","tipo":"mayor","sistema":"","ga_min":12,"ga_max":null}]}]}.';
     const resp=await callLLM({system, user:'Ya incluidos (puedes proponer mejoras/actualizaciones de estos o nuevos): '+existing.join('; '), webSearch:true, maxTokens:4000, task:'author', thinking:true});
     const j=extractJSON(resp); const cands=((j&&j.sindromes)||[]).filter(c=>c&&c.name);
     if(!cands.length){ out.innerHTML='<div class="empty">La IA no devolvió propuestas.</div>'; return; }
@@ -3793,6 +3820,7 @@ async function procesarPropuesta(c){
     const tipo=(['mayor','marcador','nucal'].includes(f.tipo)?f.tipo:'mayor');
     const sistema=(f.sistema||'').trim()||null;
     const offEs=(window.__esLabels&&window.__esLabels[id])||f.label||id;
+    if(f.ga_min||f.ga_max) setGa(id, f.ga_min, f.ga_max);   // semana de visibilidad del signo
     findings.push({id, es:offEs, tipo, sistema});
   }
   const need=existing?1:2;
@@ -3803,11 +3831,11 @@ async function procesarPropuesta(c){
     existing.findings=[...new Set([...(existing.findings||[]), ...findings.map(x=>x.id)])];
     if(c.ref && c.ref.url) existing.ref=c.ref;
     if(c.orpha){ existing.orpha=c.orpha; if(c.name && c.name!==existing.name) existing.name=c.name; }  // adopta nombre+código Orphanet
-    await persistPrenatalCustom('prenatal: fusionar '+existing.name);
+    await persistPrenatalCustom('prenatal: fusionar '+existing.name); await persistPrenatalGa('prenatal: GA de hallazgos fusionados');
     return {ok:true, kind:'update', msg:'✓ Fusionado en «'+existing.name+'»'+(c.orpha?(' (ORPHA:'+c.orpha+')'):'')+': +'+(existing.findings.length-before)+' hallazgo(s) nuevo(s).'};
   }
   PRENATAL_CUSTOM.syndromes.push({name:c.name, test:c.test||'', min:Math.max(1,Math.min(3,parseInt(c.min)||2)), findings:findings.map(x=>x.id), ref:c.ref, orpha:c.orpha||null, ia:true});
-  await persistPrenatalCustom('prenatal: +1 síndrome IA '+c.name);
+  await persistPrenatalCustom('prenatal: +1 síndrome IA '+c.name); await persistPrenatalGa('prenatal: GA de hallazgos nuevos');
   return {ok:true, kind:'new', msg:'✓ Añadido «'+c.name+'» ('+findings.length+' HPO verificados; bibliografía: '+escHtml(c.ref.titulo||c.ref.url)+').'};
 }
 /* Añadir UN síndrome/enfermedad concreto por nombre (p. ej. Fibrosis quística, Pallister-Killian). */
@@ -3835,7 +3863,7 @@ async function añadirSindromePorNombre(name){
   const yaBuiltin=PRENATAL_SYNDROMES.some(s=>normSyndName(s.name)===normSyndName(name));
   out.innerHTML='<div class="loading">Generando «'+escHtml(name)+'»'+(orpha?' (ORPHA:'+orpha.orpha+')':'')+' con IA'+((yaCustom||yaBuiltin)?' — ya existe, prepararé una propuesta de fusión':'')+'…</div>';
   try{
-    const system='Eres genetista clínico experto en diagnóstico prenatal. Para el síndrome/enfermedad indicado, devuelve sus hallazgos ECOGRÁFICOS FETALES característicos (cada uno con "hpo" código HPO REAL/vigente formato HP:0000000, "label" en español, "label_en" EL NOMBRE EXACTO del término HPO en inglés, "tipo" mayor|marcador|nucal y "sistema" uno de: '+PRENATAL_SYSTEMS.join(' | ')+', o una categoría nueva si ninguna encaja; "hpo" y "label_en" DEBEN ser el mismo término HPO), el "name" (sin prefijo "Síndrome de"), "test" (estudio genético dirigido), "min" (1-3), "ref"{titulo,url} = BIBLIOGRAFÍA OBLIGATORIA con URL REAL y verificable (GeneReviews/OMIM/PubMed/guía clínica; NO inventes la URL), y "prenatal" (true si tiene hallazgos prenatales reconocibles; false si no los tiene). '+SOURCE_PRIORITY+' Devuelve SOLO JSON {"name":"","prenatal":true,"test":"","min":1,"ref":{"titulo":"","url":""},"findings":[{"hpo":"HP:0000000","label":"","label_en":"","tipo":"mayor","sistema":""}]}.';
+    const system='Eres genetista clínico experto en diagnóstico prenatal. Para el síndrome/enfermedad indicado, devuelve sus hallazgos ECOGRÁFICOS FETALES característicos (cada uno con "hpo" código HPO REAL/vigente formato HP:0000000, "label" en español, "label_en" EL NOMBRE EXACTO del término HPO en inglés, "tipo" mayor|marcador|nucal, "sistema" uno de: '+PRENATAL_SYSTEMS.join(' | ')+' (o categoría nueva), "ga_min" (semana de gestación desde la que es visible en ecografía) y "ga_max" (semana hasta la que es visible; null si persiste); "hpo" y "label_en" DEBEN ser el mismo término HPO), el "name" (sin prefijo "Síndrome de"), "test" (estudio genético dirigido), "min" (1-3), "ref"{titulo,url} = BIBLIOGRAFÍA OBLIGATORIA con URL REAL y verificable (GeneReviews/OMIM/PubMed/guía clínica; NO inventes la URL), y "prenatal" (true si tiene hallazgos prenatales reconocibles; false si no los tiene). '+SOURCE_PRIORITY+' Devuelve SOLO JSON {"name":"","prenatal":true,"test":"","min":1,"ref":{"titulo":"","url":""},"findings":[{"hpo":"HP:0000000","label":"","label_en":"","tipo":"mayor","sistema":"","ga_min":12,"ga_max":null}]}.';
     const user='Síndrome/enfermedad: '+name+(orpha?' (Orphanet ORPHA:'+orpha.orpha+')':'');
     let j=await llmCandidato(system, user, true);          // Opus 4.8 + razonamiento
     if(!j) j=await llmCandidato(system, user, false);      // reintento sin thinking (evita "no devolvió datos válidos" por truncado)
@@ -3934,6 +3962,27 @@ async function revisarHallazgosIA(){
   await persistPrenatalCustom('prenatal: revisar hallazgos IA'); renderPrenatal();
   document.getElementById('prenatalIAupd').innerHTML='<div style="color:var(--ok);font-weight:600">✓ Revisión completa ('+n+').</div><div class="dx-meta" style="margin-top:4px">'+logs.map(escHtml).join('<br>')+'</div>';
 }
+/* Asigna a cada hallazgo (HPO) la ventana de visibilidad ecográfica (semana desde / hasta). Dato del SIGNO, no del síndrome. */
+async function analizarGaIA(force){
+  const out=document.getElementById('prenatalIAupd'); if(!out) return;
+  if(!anyProvider()){ out.innerHTML='<div class="err">Configura una API key en ⚙ Ajustes.</div>'; return; }
+  const all=[...PRENATAL_FINDINGS.flatMap(s=>s.terms.map(t=>({id:t.id, es:t.es}))), ...(PRENATAL_CUSTOM.findings||[]).map(t=>({id:t.id, es:t.es}))];
+  const seen=new Set(); const todo=[];
+  for(const t of all){ if(seen.has(t.id)) continue; seen.add(t.id); if(force || !PRENATAL_GA[t.id]) todo.push(t); }
+  if(!todo.length){ out.innerHTML='<div style="color:var(--ok)">✓ Todos los hallazgos ya tienen semanas de visibilidad.</div>'; return; }
+  out.innerHTML='<div class="loading">Calculando semanas de visibilidad ecográfica de '+todo.length+' hallazgos (IA · web)…</div>';
+  try{
+    const sys='Eres especialista en medicina materno-fetal (ISUOG). Para CADA signo ECOGRÁFICO FETAL de la lista, indica la SEMANA DE GESTACIÓN a partir de la cual es TÍPICAMENTE visible en ecografía ("min") y, si DEJA de ser visible a partir de cierta semana, hasta cuál ("max"; null si persiste o no aplica). Basado en la práctica y guías; NO inventes: si no tienes un dato fiable para un id, OMÍTELO. Devuelve SOLO JSON {"HP:0000000":{"min":12,"max":null}, …} (semanas enteras).';
+    const user='Signos (id — nombre):\n'+todo.map(t=>t.id+' — '+t.es).join('\n');
+    const resp=await callLLM({system:sys, user, webSearch:true, maxTokens:3500, task:'eval'});
+    const j=extractJSON(resp);
+    if(!j){ out.innerHTML='<div class="err">La IA no devolvió datos válidos. Reintenta.</div>'; return; }
+    let n=0; for(const id in j){ if(!/^HP:\d{7}$/.test(id)) continue; const g=j[id]||{}; const before=JSON.stringify(PRENATAL_GA[id]||null); setGa(id, g.min, g.max); if(JSON.stringify(PRENATAL_GA[id]||null)!==before) n++; }
+    await persistPrenatalGa('prenatal: semanas de visibilidad (IA, '+n+')');
+    renderPrenatal();
+    const o2=document.getElementById('prenatalIAupd'); if(o2) o2.innerHTML='<div style="color:var(--ok);font-weight:600">✓ Asignadas semanas de visibilidad a '+n+' hallazgos (👁 junto a cada HPO). Orientativo: revisa los que veas raros.</div>';
+  }catch(e){ out.innerHTML='<div class="err">Error: '+e.message+'</div>'; }
+}
 
 const PRENATAL_REFS={
   acmgExome:{t:'ACMG · Secuenciación de exoma fetal, Points to Consider (Genet Med 2021)', u:'https://www.gimjournal.org/article/S1098-3600(21)01166-7/fulltext', a:'2021'},
@@ -3979,8 +4028,8 @@ function renderPrenatalDx(){
   if(!sinds.length){ box.innerHTML=''; return; }
   box.innerHTML=`<div class="cart-group-title" style="color:var(--ok)">✓ Cumple criterios de ${sinds.length} síndrome(s)</div>`
     + sinds.map(s=>{ const link=(s.ref&&s.ref.url)?`<a href="${escHtml(String(s.ref.url)).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">${escHtml(s.ref.titulo||'Fuente')}</a>`:`<a href="${grLink(s.name)}" target="_blank" rel="noopener">GeneReviews</a>`;
-      const pres=s.matched.map(id=>escHtml(prenatalFindingLabel(id))).join(' · ');
-      const falt=s.missing.map(id=>escHtml(prenatalFindingLabel(id))).join(' · ');
+      const pres=s.matched.map(id=>escHtml(prenatalFindingLabel(id))+gaLabel(id)).join(' · ');
+      const falt=s.missing.map(id=>escHtml(prenatalFindingLabel(id))+gaLabel(id)).join(' · ');
       return `<div class="study" style="margin:6px 0;border-left:3px solid var(--ok);padding-left:8px">`
         +`<div><b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">· IA</span>':''} <span class="dx-meta">· cumple ${s.matched.length}/${s.total} (mín. ${s.min})</span></div>`
         +`<div style="font-size:12px;line-height:1.5;margin:3px 0"><span style="color:var(--ok)">✓ presentes (${s.matched.length}):</span> ${pres}</div>`
@@ -4024,7 +4073,7 @@ function renderPrenatal(){
   const findings = systems.map(s=>`<details class="morfo-region" open><summary>${escHtml(s.system)}${s.nuevo?' <span class="dx-meta" style="color:var(--accent)">nueva</span>':''} <span style="color:var(--ink3);font-weight:400">· ${s.terms.length}</span></summary><div class="morfo-terms">${s.terms.map(t=>{
         const on=!!selections[t.id];
         const iaTag = (t.ia && !t.verified) ? ` <span class="dx-meta" style="color:var(--accent)" title="Añadido por IA, sin verificar el concepto">IA</span> <span class="tip-ai" data-vfy="${t.id}" title="Verificar que el código HPO corresponde al concepto">verificar</span> <span class="x" data-rmf="${t.id}" title="Quitar hallazgo" role="button">✕</span>` : '';
-        return `<button class="morfo-term${on?' on':''}" data-pid="${t.id}" data-pes="${(t.es||'').replace(/"/g,'&quot;')}">${escHtml(t.es)} <span class="hp">${t.id}</span>${infoDotHtml(t.id)}${iaTag}</button>`;
+        return `<button class="morfo-term${on?' on':''}" data-pid="${t.id}" data-pes="${(t.es||'').replace(/"/g,'&quot;')}">${escHtml(t.es)} <span class="hp">${t.id}</span>${gaLabel(t.id)}${infoDotHtml(t.id)}${iaTag}</button>`;
       }).join('')}</div></details>`).join('');
   box.innerHTML=`<div class="prenatal-layout">
     <div class="prenatal-main">
@@ -4049,6 +4098,7 @@ function renderPrenatal(){
           </span>
           <button class="btn" id="btnAddSynd" title="La IA genera ese síndrome; sus HPO se verifican contra JAX y se guarda en tu GitHub">+ Añadir (IA)</button>
           <button class="btn" id="btnSindIA" title="La IA PROPONE síndromes (nuevos o actualizar existentes); tú aceptas/rechazas cada uno. Nada se guarda sin tu confirmación">✨ Proponer (IA)</button>
+          <button class="btn" id="btnGaIA" title="Asigna a cada hallazgo la semana de gestación desde la que es visible en ecografía (y hasta cuándo, si deja de verse)">👁 Semanas de visibilidad (IA)</button>
           ${(PRENATAL_CUSTOM.findings||[]).some(t=>!t.verified)?'<button class="btn" id="btnRevisarIA" title="Comprueba que cada HPO añadido por IA corresponde realmente al concepto; corrige los erróneos">🔧 Revisar hallazgos IA</button>':''}
         </div>
         <div id="prenatalIAupd" style="margin-bottom:10px"></div>
@@ -4062,6 +4112,7 @@ function renderPrenatal(){
   renderPrenatalInd();
   const fil=document.getElementById('prenatalFilter'); if(fil) fil.addEventListener('input', e=>applyPrenatalFilter(e.target.value));
   const bIA=document.getElementById('btnSindIA'); if(bIA) bIA.addEventListener('click', actualizarSindromesIA);
+  const bGa=document.getElementById('btnGaIA'); if(bGa) bGa.addEventListener('click', analizarGaIA);
   const bRev=document.getElementById('btnRevisarIA'); if(bRev) bRev.addEventListener('click', revisarHallazgosIA);
   const addInp=document.getElementById('addSyndName'); const addBtn=document.getElementById('btnAddSynd');
   if(addBtn) addBtn.addEventListener('click', ()=>añadirSindromePorNombre(addInp.value));
