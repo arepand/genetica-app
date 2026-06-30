@@ -437,8 +437,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.9.1';
+const APP_VERSION='1.10.0';
 const CHANGELOG=[
+  {v:'1.10.0', d:'2026-06-30', c:['Enlace a Franklin (Genoox) por gen: en el panel génico del diferencial y en «Gen → seguimiento» cada gen abre directamente su página en Franklin (clinical-db, hg38). Usa tu sesión iniciada en Franklin; no requiere API ni clave.']},
   {v:'1.9.1', d:'2026-06-30', c:['Prenatal: corregida la sincronía — al desmarcar un HPO en el panel derecho (Fenotipo del paciente) ahora también se desmarca en los listados de la izquierda y en el panel de síndromes. Además, el panel derecho ya no «desaparecía» al re-renderizar (aceptar síndrome, etc.).']},
   {v:'1.9.0', d:'2026-06-30', c:['Prenatal: cada hallazgo (HPO) muestra su 👁 ventana de visibilidad ecográfica (semana desde / hasta). Es dato del SIGNO, no del síndrome → mapa único compartido (prenatal-ga.json en tu GitHub). Botón «Semanas de visibilidad (IA)» que la completa en bloque (verificable/editable); los síndromes nuevos ya la incluyen.']},
   {v:'1.8.0', d:'2026-06-30', c:['Nueva sección «🩺 Gen → seguimiento»: introduces un gen / alteración / entidad y la IA devuelve la vigilancia/cribado y el manejo/tratamiento recomendados según guías vigentes, con bibliografía (y tus documentos RAG). Se guarda como base de conocimiento en tu GitHub (reutilizable sin gastar tokens).']},
@@ -2830,7 +2831,8 @@ function geneLinks(g){
     PanelApp: panelAppLink(g),
     GeneReviews: 'https://www.ncbi.nlm.nih.gov/books/?term='+encodeURIComponent(g+'[gene] AND GeneReviews[book]'),
     OMIM: 'https://www.omim.org/search?index=entry&search='+e,
-    ClinGen: 'https://search.clinicalgenome.org/kb/genes?page=1&search='+e
+    ClinGen: 'https://search.clinicalgenome.org/kb/genes?page=1&search='+e,
+    Franklin: 'https://franklin.genoox.com/clinical-db/gene/hg38/'+e   // requiere tu sesión iniciada en Franklin
   };
 }
 function geneRowHtml(g){
