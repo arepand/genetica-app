@@ -439,8 +439,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.11.0';
+const APP_VERSION='1.12.0';
 const CHANGELOG=[
+  {v:'1.12.0', d:'2026-06-30', c:['Diferencial cruzado: al añadir fenotipos (cualquier fuente menos prenatal), además del protocolo abierto se sugieren TUS protocolos que también encajan con esa combinación de HPO (aunque no estén abiertos; si son varios, todos). Coste 0 IA — comparación local con tus fichas.']},
   {v:'1.11.0', d:'2026-06-30', c:['Nueva sección «🧩 Paneles»: gestor de tus paneles génicos (HAC) estilo PanelApp — lista → detalle, con versión, fechas de creación/modificación, changelog de genes añadidos/eliminados, lista de genes y protocolo asociado (se asocia/desasocia desde el panel o desde el protocolo). En la ficha del protocolo aparece «Panel HAC» y el panel génico recomendado se colorea VERDE (incluido en tu HAC) o ROJO (falta), para ver de un vistazo si cumples las recomendaciones.']},
   {v:'1.10.0', d:'2026-06-30', c:['Enlace a Franklin (Genoox) por gen: en el panel génico del diferencial y en «Gen → seguimiento» cada gen abre directamente su página en Franklin (clinical-db, hg38). Usa tu sesión iniciada en Franklin; no requiere API ni clave.']},
   {v:'1.9.1', d:'2026-06-30', c:['Prenatal: corregida la sincronía — al desmarcar un HPO en el panel derecho (Fenotipo del paciente) ahora también se desmarca en los listados de la izquierda y en el panel de síndromes. Además, el panel derecho ya no «desaparecía» al re-renderizar (aceptar síndrome, etc.).']},
@@ -1019,7 +1020,7 @@ async function getFicha(id){
   try{ return JSON.parse(localStorage.getItem('fh_ficha_'+id)); }catch(e){ return null; }
 }
 async function saveFicha(ficha){
-  _fichaRefSet=null; // las referencias pueden haber cambiado
+  _fichaRefSet=null; _fichaDxIndex=null; // referencias e índice de diferencial cruzado pueden haber cambiado
   // 1) sha actual de la ficha (si existe) y PUT de la ficha
   let sha=null;
   try{ const cur=await ghGetFile('fichas/'+ficha.id+'.json'); sha=cur.sha; }catch(e){}
@@ -2916,22 +2917,53 @@ async function evalIndicacionGenetica(){
   }catch(e){ studyEval={error:e.message, key}; }
   renderDifferential();
 }
+/* Índice de entidades de TODAS las fichas (para el diferencial cruzado). Coste 0 IA; carga una vez y cachea. */
+let _fichaDxIndex=null;
+async function fichaDxIndex(){
+  if(_fichaDxIndex) return _fichaDxIndex;
+  const arr=[];
+  try{ const idx=await getIndex(); for(const fi of (idx.fichas||[])){ const f=await getFicha(fi.id); if(f && (f.entidades||[]).length) arr.push({id:fi.id, nombre:f.nombre_es||fi.nombre||fi.id, entidades:f.entidades}); } }catch(e){}
+  _fichaDxIndex=arr; return arr;
+}
+/* Fichas/protocolos (cualquiera, no solo la activa) cuyas entidades CRUZAN su umbral con el fenotipo actual. */
+function crossProtocolMatches(){
+  const out=[]; const activeId=activeFicha&&activeFicha.id;
+  for(const fc of (_fichaDxIndex||[])){
+    if(fc.id===activeId) continue;
+    let best=null; for(const e of (fc.entidades||[])){ const st=entidadStatus(e); if(st.cumple && (st.maj.length+st.min.length)>0){ if(!best||st.score>best.st.score) best={e, st}; } }
+    if(best) out.push({id:fc.id, nombre:fc.nombre, ent:best.e.nombre, st:best.st});
+  }
+  return out.sort((a,b)=>b.st.score-a.st.score);
+}
+function crossProtocolHtml(topMargin){
+  if(currentSection==='prenatal') return '';
+  const cross=crossProtocolMatches(); if(!cross.length) return '';
+  return `<div class="cart-group-title" style="color:var(--accent)${topMargin?';margin-top:12px':''}">También encaja con tus protocolos <span class="dx-meta">(${cross.length})</span></div>`
+    + cross.map(m=>`<div class="study" style="margin:5px 0"><a class="tip-ai" data-openficha="${escHtml(m.id)}"><b>${escHtml(m.nombre)}</b></a> <span class="dx-meta">· ${escHtml(m.ent)} — ${m.st.maj.length}/${m.st.needMaj} mayores · ${m.st.min.length}/${m.st.needMin} menores</span></div>`).join('');
+}
+function wireCrossProto(box){ box.querySelectorAll('[data-openficha]').forEach(a=>a.addEventListener('click', ()=>{ showSection('biblioteca'); setTimeout(()=>abrirFichaBiblioteca(a.dataset.openficha, false), 50); })); }
 function renderDifferential(){
   const dbox=document.getElementById('differentialBox');
   const gbox=document.getElementById('genePanelBox');
   if(!dbox||!gbox) return;
+  if(!_fichaDxIndex && Object.keys(selections).length>=2 && currentSection!=='prenatal') fichaDxIndex().then(()=>renderDifferential());  // carga el índice una vez
+  // Sin ficha activa: aun así muestra los protocolos que encajan (no prenatal).
   if(!activeFicha || !((activeFicha.entidades||[]).length || activeFicha.estudio_genetico || (activeFicha.panel_genes||[]).length)){
-    dbox.style.display='none'; gbox.style.display='none'; return;
+    const ch=crossProtocolHtml(false);
+    if(ch){ dbox.style.display='block'; dbox.innerHTML=ch; wireCrossProto(dbox); } else dbox.style.display='none';
+    gbox.style.display='none'; return;
   }
   const ents=(activeFicha.entidades||[]).map(e=>({e, st:entidadStatus(e)}));
   const cumplen=ents.filter(x=>x.st.cumple).sort((a,b)=>b.st.score-a.st.score);
   // Diferencial: SOLO entidades que cruzan su umbral formal
-  if(activeFicha.entidades && activeFicha.entidades.length){
+  const ch=crossProtocolHtml(true);
+  if((activeFicha.entidades && activeFicha.entidades.length) || ch){
     dbox.style.display='block';
-    dbox.innerHTML = `<div class="cart-group-title">Diferencial${(patient.edad||patient.sexo)?` · ${[patient.edad,patient.sexo].filter(Boolean).join(' · ')}`:''}</div>` +
-      (cumplen.length
-        ? cumplen.map(x=>dxHtml(x.e, x.st)).join('')
-        : '<div class="empty">Ninguna entidad cruza aún su umbral formal. Marca más rasgos.</div>');
+    dbox.innerHTML = ((activeFicha.entidades&&activeFicha.entidades.length)
+        ? `<div class="cart-group-title">Diferencial${(patient.edad||patient.sexo)?` · ${[patient.edad,patient.sexo].filter(Boolean).join(' · ')}`:''}</div>` +
+          (cumplen.length ? cumplen.map(x=>dxHtml(x.e, x.st)).join('') : '<div class="empty">Ninguna entidad cruza aún su umbral formal. Marca más rasgos.</div>')
+        : '') + ch;
+    wireCrossProto(dbox);
   } else { dbox.style.display='none'; }
   // Panel génico: genes de las entidades activas; si ninguna, panel_genes completo
   const genes = cumplen.length ? [...new Set(cumplen.flatMap(x=>x.e.genes||[]))] : (activeFicha.panel_genes||[]);
