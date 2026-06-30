@@ -435,8 +435,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.7.2';
+const APP_VERSION='1.7.3';
 const CHANGELOG=[
+  {v:'1.7.3', d:'2026-06-30', c:['Informe PDF prenatal: cabecera con edad gestacional y sexo fetal (en vez de motivo/edad); tras el fenotipo, los síndromes que cumplen criterios (✓ presentes / ○ faltan) y la indicación de estudio prenatal sugerida.']},
   {v:'1.7.2', d:'2026-06-30', c:['Prenatal: el panel «cumple criterios» ahora muestra con claridad qué hallazgos están ✓ presentes y cuáles ○ faltan de cada síndrome (en vez de solo «1/2»).']},
   {v:'1.7.1', d:'2026-06-30', c:['RAG: el texto de cada PDF se guarda en tu GitHub (docs/text) → se indexa UNA sola vez, es permanente y funciona en cualquier dispositivo (no hay que reindexar ni reconectar Drive cada vez).','Informe PDF: A4 con el logo completo de Ariadna arriba a la izquierda.']},
   {v:'1.7.0', d:'2026-06-30', c:['RAG ahora funciona SOLO con Claude (sin OpenAI): la búsqueda en tus documentos pasa de embeddings (que requerían OpenAI) a recuperación léxica BM25 en el navegador — gratis, instantánea y sin API externa. Solo necesita el texto del PDF (Drive).']},
@@ -3193,23 +3194,45 @@ function buildInformePdf(img){
     doc.setFont('helvetica', o.bold?'bold':'normal'); doc.setFontSize(o.size||10);
     doc.splitTextToSize(String(txt), W).forEach(t=>{ if(y>800){ doc.addPage(); y=46; } doc.text(t, L, y); y+=(o.lh||14); });
   };
-  write('Motivo: '+(patient.motivo||'—')+'    Edad: '+(patient.edad||'—')+'    Sexo: '+(patient.sexo||'—'));
-  if(activeFicha) write('Ficha: '+(activeFicha.nombre_es||activeFicha.id));
+  const esPrenatal = patient.gestacion || currentSection==='prenatal';
+  if(esPrenatal){
+    const ga = (patient.gestSemanas||patient.gestDias) ? ((patient.gestSemanas||'?')+'+'+(patient.gestDias||'0')+' semanas') : '—';
+    const sx = patient.sexo==='Masculino'?'varón':(patient.sexo==='Femenino'?'mujer':'no determinado');
+    write('Edad gestacional: '+ga+'    Sexo fetal: '+sx);
+  } else {
+    write('Motivo: '+(patient.motivo||'—')+'    Edad: '+(patient.edad||'—')+'    Sexo: '+(patient.sexo||'—'));
+    if(activeFicha) write('Ficha: '+(activeFicha.nombre_es||activeFicha.id));
+  }
   y+=6;
   const ids=Object.keys(selections);
-  write('Fenotipo HPO ('+ids.length+')', {size:12, bold:true});
+  write((esPrenatal?'Hallazgos ecográficos fetales (HPO) (':'Fenotipo HPO (')+ids.length+')', {size:12, bold:true});
   ids.forEach(id=>{ const s=selections[id]; write('• '+id+'  '+(s.es||'')+(s.verified===false?'  [no verificado]':''), {size:9, lh:12}); });
-  if(activeFicha && (activeFicha.entidades||[]).length){
-    const cumplen=(activeFicha.entidades||[]).map(e=>({e,st:entidadStatus(e)})).filter(x=>x.st.cumple);
-    if(cumplen.length){ y+=6; write('Diferencial (cumple umbral)', {size:12, bold:true});
-      cumplen.forEach(x=> write('• '+x.e.nombre+' — genes: '+(x.e.genes||[]).join(', '), {size:9, lh:12})); }
+  if(esPrenatal){
+    y+=6; write('Síndromes que cumplen criterios', {size:12, bold:true});
+    const sinds=prenatalSindromes();
+    if(sinds.length){ sinds.forEach(s=>{
+      write('• '+s.name+' — cumple '+s.matched.length+'/'+s.total+' (mín. '+s.min+')'+(s.orpha?' · ORPHA:'+s.orpha:''), {size:9.5, bold:true, lh:12});
+      write('    ✓ presentes: '+s.matched.map(id=>prenatalFindingLabel(id)).join(', '), {size:9, lh:11});
+      if(s.missing.length) write('    ○ faltan: '+s.missing.map(id=>prenatalFindingLabel(id)).join(', '), {size:9, lh:11});
+      write('    → Estudio dirigido: '+(s.test||'—'), {size:9, lh:11}); });
+    } else { write('Ninguno con los hallazgos marcados.', {size:9, lh:12}); }
+    const ind=prenatalIndicacion();
+    if(ind){ y+=6; write('Indicación de estudio prenatal sugerida', {size:12, bold:true});
+      write(ind.mayores+' anomalía(s) mayor(es) · '+ind.marcadores+' marcador(es) · '+ind.nucal+' nucal/hidrops', {size:8.5, lh:12});
+      ind.lines.forEach(l=> write('• '+String(l.html).replace(/<[^>]+>/g,''), {size:9, lh:12})); }
+  } else {
+    if(activeFicha && (activeFicha.entidades||[]).length){
+      const cumplen=(activeFicha.entidades||[]).map(e=>({e,st:entidadStatus(e)})).filter(x=>x.st.cumple);
+      if(cumplen.length){ y+=6; write('Diferencial (cumple umbral)', {size:12, bold:true});
+        cumplen.forEach(x=> write('• '+x.e.nombre+' — genes: '+(x.e.genes||[]).join(', '), {size:9, lh:12})); }
+    }
+    if(activeFicha && activeFicha.estudio_genetico){
+      y+=6; write('Estudio genético', {size:12, bold:true});
+      const s=activeFicha.estudio_genetico;
+      write((s.tipo||'')+(s.detalle?'. '+s.detalle:''), {size:9, lh:12});
+    }
   }
-  if(activeFicha && activeFicha.estudio_genetico){
-    y+=6; write('Estudio genético', {size:12, bold:true});
-    const s=activeFicha.estudio_genetico;
-    write((s.tipo||'')+(s.detalle?'. '+s.detalle:''), {size:9, lh:12});
-  }
-  write('— Orientativo; no sustituye el juicio clínico ni la confirmación molecular.', {size:8, lh:12});
+  write('— Orientativo; no sustituye el juicio clínico ni el consejo/confirmación molecular.', {size:8, lh:12});
   // Abrir en otra pestaña (no descargar): el usuario descarga desde el visor si quiere.
   try{ const url=doc.output('bloburl'); const w=window.open(url, '_blank'); if(!w) doc.save('ariadna-informe.pdf'); }
   catch(e){ doc.save('ariadna-informe.pdf'); }
