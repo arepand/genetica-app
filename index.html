@@ -439,8 +439,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.12.0';
+const APP_VERSION='1.13.0';
 const CHANGELOG=[
+  {v:'1.13.0', d:'2026-06-30', c:['Buscador de Protocolos: ya no pierde el foco al teclear (solo actualiza resultados).','Importar JSON: botón en Protocolos para añadir tu propia ficha; pasa por la misma revisión y verificación de HPO que las creadas por la IA.','Creación de protocolos: más margen de tokens (16k) + reintento y mensaje claro si la respuesta llega cortada; prompt reforzado para que cada HPO corresponda EXACTAMENTE al concepto.','Antropometría: corregido el peso en niños (OMS peso/edad solo 0-10 a → indica valorar por IMC, en vez de «fuera de rango»); el valor mostrado se etiqueta como DE (desviación estándar = z).']},
   {v:'1.12.0', d:'2026-06-30', c:['Diferencial cruzado: al añadir fenotipos (cualquier fuente menos prenatal), además del protocolo abierto se sugieren TUS protocolos que también encajan con esa combinación de HPO (aunque no estén abiertos; si son varios, todos). Coste 0 IA — comparación local con tus fichas.']},
   {v:'1.11.0', d:'2026-06-30', c:['Nueva sección «🧩 Paneles»: gestor de tus paneles génicos (HAC) estilo PanelApp — lista → detalle, con versión, fechas de creación/modificación, changelog de genes añadidos/eliminados, lista de genes y protocolo asociado (se asocia/desasocia desde el panel o desde el protocolo). En la ficha del protocolo aparece «Panel HAC» y el panel génico recomendado se colorea VERDE (incluido en tu HAC) o ROJO (falta), para ver de un vistazo si cumples las recomendaciones.']},
   {v:'1.10.0', d:'2026-06-30', c:['Enlace a Franklin (Genoox) por gen: en el panel génico del diferencial y en «Gen → seguimiento» cada gen abre directamente su página en Franklin (clinical-db, hg38). Usa tu sesión iniciada en Franklin; no requiere API ni clave.']},
@@ -2000,11 +2001,13 @@ function anthroPctCard(title, value, unit, measure, maxAge){
   const ageY=patientAgeYears(); const sx=sexKeyOf(); let pctHtml='';
   if(value>0 && sx && ageY!=null && ageY<=(maxAge||19)){
     const r=fmtPct(lmsZ(measure, sx, ageY, value));
-    if(r){ const cls=r.pct<3?'low':(r.pct>97?'high':'mid'); pctHtml=`<span class="pct ${cls}">${r.band} · z ${r.z>=0?'+':''}${r.z.toFixed(2)}</span>`; }
+    if(r){ const cls=r.pct<3?'low':(r.pct>97?'high':'mid'); pctHtml=`<span class="pct ${cls}">${r.band} · ${r.z>=0?'+':''}${r.z.toFixed(2)} DE</span>`; }
     else pctHtml='<span class="pct na">fuera del rango de edad (OMS)</span>';
+  } else if(value>0 && measure==='weight' && ageY!=null && ageY>(maxAge||10) && ageY<=19){
+    pctHtml='<span class="pct na">peso/edad OMS solo 0-10 a → valora por IMC</span>';
   } else if(value>0 && sx && measure!=='hc' && ageY!=null && ageY>19){
     const a=adultPct(measure, sx, value);
-    if(a){ const band=a.pct<3?'< P3':(a.pct>97?'> P97':'P'+Math.round(a.pct)); const cls=a.pct<3?'low':(a.pct>97?'high':'mid'); pctHtml=`<span class="pct ${cls}">${band} · z ${a.z>=0?'+':''}${a.z.toFixed(2)}</span>`; }
+    if(a){ const band=a.pct<3?'< P3':(a.pct>97?'> P97':'P'+Math.round(a.pct)); const cls=a.pct<3?'low':(a.pct>97?'high':'mid'); pctHtml=`<span class="pct ${cls}">${band} · ${a.z>=0?'+':''}${a.z.toFixed(2)} DE</span>`; }
     else if(measure==='hc') pctHtml='<span class="pct na">PC: estándar OMS solo 0-5 a</span>';
   } else if(value>0 && measure==='hc' && ageY!=null && ageY>5){ pctHtml='<span class="pct na">PC: estándar OMS solo 0-5 a</span>';
   } else if(value>0 && (!sx||ageY==null)){ pctHtml='<span class="pct na">indica edad y sexo</span>'; }
@@ -2018,10 +2021,10 @@ function renderAnthroResult(){
   const env=parseFloat(String(patient.envergaduraCm).replace(',','.'));
   const ageY=patientAgeYears(); const sx=sexKeyOf();
   let bmi=null; if(talla>0&&peso>0) bmi=peso/Math.pow(talla/100,2);
-  let rows = anthroPctCard('Talla',talla,'cm','height') + anthroPctCard('Peso',peso,'kg','weight');
+  let rows = anthroPctCard('Talla',talla,'cm','height') + anthroPctCard('Peso',peso,'kg','weight',10);
   if(bmi){
     let p='';
-    if(sx && ageY!=null && ageY<=19){ const r=fmtPct(lmsZ('bmi',sx,ageY,bmi)); if(r){ const cls=r.pct<3?'low':(r.pct>97?'high':'mid'); p=`<span class="pct ${cls}">${r.band} · z ${r.z>=0?'+':''}${r.z.toFixed(2)}</span>`; } }
+    if(sx && ageY!=null && ageY<=19){ const r=fmtPct(lmsZ('bmi',sx,ageY,bmi)); if(r){ const cls=r.pct<3?'low':(r.pct>97?'high':'mid'); p=`<span class="pct ${cls}">${r.band} · ${r.z>=0?'+':''}${r.z.toFixed(2)} DE</span>`; } }
     else if(ageY!=null && ageY>19){ const bc=bmiClass(bmi); if(bc) p=`<span class="pct ${bc.c}">${bc.t} (OMS)</span>`; }
     rows += `<div class="am-row"><span class="am-t">IMC</span><span class="am-v">${bmi.toFixed(1)} kg/m²</span>${p}</div>`;
   }
@@ -2235,7 +2238,7 @@ const FICHA_SYSTEM_PROMPT = `Eres genetista clínico experto en fenotipado HPO. 
     "fuentes": [{"titulo":"...","url":"https://...","anio":"AAAA"}]
   }
 }
-Reglas: usa códigos HPO REALES y vigentes (formato HP:0000000, 7 dígitos); ordena dominios y preguntas por lógica clínica, NUNCA alfabético; sé exhaustivo según los criterios diagnósticos vigentes (busca en la web las guías/criterios actuales y cítalos en "fuentes"); en "poblacion" decide: si los criterios diagnósticos, los genes o el manejo difieren de forma RELEVANTE entre paciente pediátrico y adulto, genera la variante ("pediatrica" o "adulta") y comparte el mismo "grupo" entre ambas variantes (indica que conviene crear también la complementaria); si no difieren, usa "unica"; en "estudio_genetico" indica con apoyo de guías CUÁNDO está indicado el estudio, en qué circunstancias y QUÉ tipo de estudio (panel dirigido/exoma/genoma…) en primera línea y el escalado si es negativo; "logica" es "and" si exige mayores Y menores, "or" si basta uno de los dos umbrales; activa modulos.beighton o modulos.antropometria solo si son clínicamente pertinentes. ${SOURCE_PRIORITY} Devuelve SOLO el JSON.`;
+Reglas: usa códigos HPO REALES y vigentes (formato HP:0000000, 7 dígitos). **CADA código HPO DEBE corresponder EXACTAMENTE al concepto que quieres expresar**: el nombre oficial del término en HPO tiene que coincidir con la "nombre" que pones; NUNCA uses un código que signifique otra cosa (p. ej. NO pongas un código de "ascitis" para "hernia umbilical"). En la duda, prefiere el término HPO más específico cuyo nombre oficial encaje con el concepto; los códigos se VERIFICAN contra JAX y los que no correspondan se rechazan o corrigen. Ordena dominios y preguntas por lógica clínica, NUNCA alfabético; sé exhaustivo según los criterios diagnósticos vigentes (busca en la web las guías/criterios actuales y cítalos en "fuentes"); en "poblacion" decide: si los criterios diagnósticos, los genes o el manejo difieren de forma RELEVANTE entre paciente pediátrico y adulto, genera la variante ("pediatrica" o "adulta") y comparte el mismo "grupo" entre ambas variantes (indica que conviene crear también la complementaria); si no difieren, usa "unica"; en "estudio_genetico" indica con apoyo de guías CUÁNDO está indicado el estudio, en qué circunstancias y QUÉ tipo de estudio (panel dirigido/exoma/genoma…) en primera línea y el escalado si es negativo; "logica" es "and" si exige mayores Y menores, "or" si basta uno de los dos umbrales; activa modulos.beighton o modulos.antropometria solo si son clínicamente pertinentes. ${SOURCE_PRIORITY} Devuelve SOLO el JSON.`;
 
 function slugify(s){ return (normTxt(s).replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'').slice(0,40).replace(/^-+|-+$/g,'')) || 'ficha'; }
 function collectHpoIds(f){
@@ -2690,9 +2693,10 @@ async function generarFichaIA(motivo, guiaContext){
     let user='Motivo de consulta: "'+(motivo||'')+'". Genera la ficha JSON más completa y vigente para esta entidad o grupo nosológico, con sus criterios diagnósticos actuales.';
     if(guiaContext){ user += '\n\nGUÍA APORTADA POR EL CLÍNICO (úsala como FUENTE PRINCIPAL y cítala en "fuentes"):\n'+guiaContext; }
     if(Object.keys(ragDocs).length){ if(box) box.innerHTML='<div class="loading">Recuperando lo relevante de tus documentos (RAG)…</div>'; const rag=await ragContext(4, motivo); if(rag) user += '\n\nDOCUMENTOS DE MI REPOSITORIO (tenlos en cuenta ADEMÁS de la búsqueda web — la COMPLEMENTAN, no la sustituyen — y cítalos en "fuentes"):\n'+rag; }
-    const resp=await callLLM({system:FICHA_SYSTEM_PROMPT, user, webSearch:true, maxTokens:8000, task:'author'});
-    const f=extractJSON(resp);
-    if(!f){ if(box) box.innerHTML='<div class="err">La IA no devolvió un JSON válido. Reintenta.</div>'; return; }
+    let resp=await callLLM({system:FICHA_SYSTEM_PROMPT, user, webSearch:true, maxTokens:16000, task:'author'});
+    let f=extractJSON(resp);
+    if(!f){ resp=await callLLM({system:FICHA_SYSTEM_PROMPT, user:user+'\n\nIMPORTANTE: devuelve SOLO el JSON, compacto y COMPLETO (sin texto fuera del JSON).', webSearch:true, maxTokens:16000, task:'author'}); f=extractJSON(resp); }  // reintento
+    if(!f){ if(box) box.innerHTML='<div class="err">La IA no devolvió un JSON válido tras 2 intentos (posible respuesta cortada). Prueba con un motivo más concreto.<div class="dx-meta" style="margin-top:6px;white-space:pre-wrap;max-height:120px;overflow:auto">'+escHtml(String(resp||'').slice(0,400))+'…</div></div>'; return; }
     openFichaReview(f, {autoVerify:true});
   }catch(e){ if(box) box.innerHTML='<div class="err">Error generando la ficha: '+e.message+'</div>'; }
 }
@@ -4352,30 +4356,38 @@ let _libCache=[];
 async function renderBiblioteca(filter){
   const box=document.getElementById('bibliotecaView'); if(!box) return;
   if(filter===undefined){ box.innerHTML='<div class="loading">Cargando biblioteca…</div>'; const idx=await getIndex(); _libCache=idx.fichas||[]; }
-  const q=accLower(filter||'');
-  const fichas=_libCache.filter(f=>!q || accLower(f.nombre||'').includes(q) || accLower(f.id||'').includes(q) || accLower((f.sinonimos||[]).join(' ')).includes(q));
-  const prenat=allPrenatalSyndromes().filter(s=>!q || accLower(s.name||'').includes(q) || normSyndName(s.name).includes(normSyndName(q)));
   box.innerHTML=`
     <div class="lib-head">
       <h2>📚 Protocolos <span style="font-size:12px;color:var(--ink3)">(${_libCache.length} fichas · ${allPrenatalSyndromes().length} prenatales)</span></h2>
       <input class="lib-search" id="libSearch" placeholder="Buscar por nombre, id o sinónimo…" value="${(filter||'').replace(/"/g,'&quot;')}">
       <button class="btn" id="libRefresh">↻ Refrescar</button>
+      <button class="btn" id="libImport">⬆ Importar JSON</button>
       <button class="btn" id="libValidate">🔧 Validar HPO de todos</button>
       <button class="btn primary" id="libNueva">✨ Nueva ficha</button>
     </div>
     <div id="libValidateOut" style="margin:0 0 12px"></div>
-    ${fichas.length? `<div class="lib-grid">${fichas.map(libCardHtml).join('')}</div>`
-       : `<div class="placeholder">${_libCache.length?'Sin fichas para el filtro.':'Aún no tienes fichas. Créalas desde Fenotipado.'}</div>`}
-    ${prenat.length? `<div class="cart-group-title" style="margin:18px 0 8px">🤰 Síndromes prenatales <span class="dx-meta">(${prenat.length})</span></div><div class="lib-grid">${prenat.map(prenatalCardHtml).join('')}</div>`:''}`;
+    <div id="libResults">${libResultsHtml(filter||'')}</div>`;
   const si=document.getElementById('libSearch');
-  si.addEventListener('input', ()=>renderBiblioteca(si.value));
+  si.addEventListener('input', ()=>{ const lr=document.getElementById('libResults'); if(lr){ lr.innerHTML=libResultsHtml(si.value); wireLibCards(lr); } });   // solo actualiza resultados → el cajón no pierde el foco
   document.getElementById('libRefresh').addEventListener('click', ()=>renderBiblioteca());
+  document.getElementById('libImport').addEventListener('click', importarFichaJson);
   document.getElementById('libValidate').addEventListener('click', validarTodosProtocolos);
   document.getElementById('libNueva').addEventListener('click', ()=>{ showSection('fenotipado'); const m=document.getElementById('inMotivo'); if(m) m.focus(); });
-  box.querySelectorAll('[data-ver]').forEach(b=>b.addEventListener('click', ()=>abrirFichaBiblioteca(b.dataset.ver, false)));
-  box.querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click', ()=>abrirFichaBiblioteca(b.dataset.edit, true)));
-  box.querySelectorAll('[data-prenver]').forEach(b=>b.addEventListener('click', ()=>verSindromePrenatal(b.dataset.prenver)));
-  box.querySelectorAll('[data-prengo]').forEach(b=>b.addEventListener('click', ()=>showSection('prenatal')));
+  wireLibCards(box);
+}
+function libResultsHtml(filter){
+  const q=accLower(filter||'');
+  const fichas=_libCache.filter(f=>!q || accLower(f.nombre||'').includes(q) || accLower(f.id||'').includes(q) || accLower((f.sinonimos||[]).join(' ')).includes(q));
+  const prenat=allPrenatalSyndromes().filter(s=>!q || accLower(s.name||'').includes(q) || normSyndName(s.name).includes(normSyndName(q)));
+  return (fichas.length? `<div class="lib-grid">${fichas.map(libCardHtml).join('')}</div>`
+       : `<div class="placeholder">${_libCache.length?'Sin fichas para el filtro.':'Aún no tienes fichas. Créalas desde Fenotipado o impórtalas con «⬆ Importar JSON».'}</div>`)
+    + (prenat.length? `<div class="cart-group-title" style="margin:18px 0 8px">🤰 Síndromes prenatales <span class="dx-meta">(${prenat.length})</span></div><div class="lib-grid">${prenat.map(prenatalCardHtml).join('')}</div>`:'');
+}
+function wireLibCards(scope){
+  scope.querySelectorAll('[data-ver]').forEach(b=>b.addEventListener('click', ()=>abrirFichaBiblioteca(b.dataset.ver, false)));
+  scope.querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click', ()=>abrirFichaBiblioteca(b.dataset.edit, true)));
+  scope.querySelectorAll('[data-prenver]').forEach(b=>b.addEventListener('click', ()=>verSindromePrenatal(b.dataset.prenver)));
+  scope.querySelectorAll('[data-prengo]').forEach(b=>b.addEventListener('click', ()=>showSection('prenatal')));
 }
 function prenatalCardHtml(s){
   return `<div class="lib-card">
@@ -4400,6 +4412,27 @@ function verSindromePrenatal(name){
   ov.querySelector('#pvClose').addEventListener('click',()=>ov.remove());
   ov.querySelector('#pvGo').addEventListener('click',()=>{ ov.remove(); showSection('prenatal'); });
   ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); });
+}
+/* Importar una ficha JSON propia → pasa por la MISMA revisión + verificación de HPO que las creadas por la IA. */
+function importarFichaJson(){
+  const ov=document.createElement('div'); ov.className='overlay'; ov.id='importOverlay';
+  ov.innerHTML=`<div class="modal" style="max-width:640px"><h2>⬆ Importar ficha (JSON)</h2>
+    <div class="msub">Pega aquí el JSON de tu ficha/protocolo. Al revisar, pasa por las <b>mismas comprobaciones</b> que una ficha creada por la IA (validación de estructura y verificación de cada HPO contra JAX), y la guardas igual.</div>
+    <textarea id="impJson" spellcheck="false" placeholder='{ "nombre_es": "…", "dominios": [...], "entidades": [...], "panel_genes": [...] }' style="width:100%;min-height:240px;box-sizing:border-box;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:12.5px;font-family:var(--mono,monospace)"></textarea>
+    <div class="test-out" id="impOut"></div>
+    <div class="modal-actions"><button class="btn ghost" id="impCancel">Cancelar</button><button class="btn primary" id="impGo">Revisar e importar</button></div></div>`;
+  document.body.appendChild(ov);
+  const close=()=>ov.remove();
+  ov.querySelector('#impCancel').addEventListener('click', close);
+  ov.addEventListener('click', e=>{ if(e.target===ov) close(); });
+  ov.querySelector('#impGo').addEventListener('click', ()=>{
+    const out=ov.querySelector('#impOut'); const raw=ov.querySelector('#impJson').value;
+    const j=extractJSON(raw);
+    if(!j || typeof j!=='object'){ out.className='test-out bad'; out.textContent='No es un JSON válido. Revísalo.'; return; }
+    if(!j.nombre_es && !j.nombre && !j.id){ out.className='test-out bad'; out.textContent='Falta al menos "nombre_es" (o "nombre"/"id").'; return; }
+    close();
+    openFichaReview(j, {autoVerify:true, origin:'biblioteca'});   // misma revisión + verificación de HPO que la autoría IA
+  });
 }
 async function validarTodosProtocolos(){
   const out=document.getElementById('libValidateOut'); if(!out) return;
