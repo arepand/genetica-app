@@ -283,6 +283,7 @@
   .am-row{display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px dotted var(--line); font-size:13.5px;}
   .am-row:last-child{border-bottom:none;}
   .am-t{color:var(--ink2); min-width:120px; font-weight:600;}
+  .am-src{font-size:10px; color:var(--ink3); cursor:help; white-space:nowrap;}
   .am-v{font-weight:700; font-family:"IBM Plex Mono",ui-monospace,monospace;}
   .pct{margin-left:auto; font-size:11.5px; font-weight:700; border-radius:999px; padding:3px 10px; border:1px solid var(--line);}
   .pct.mid{background:#173d2a; color:#7fe0a6; border-color:#2f6b48;}
@@ -458,8 +459,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.24.1';
+const APP_VERSION='1.25.0';
 const CHANGELOG=[
+  {v:'1.25.0', d:'2026-07-01', c:['Datos del paciente: nueva «Fecha de nacimiento» que calcula la edad al día de hoy (en meses si <2 a); puedes seguir ajustando la edad a mano.','Antropometría: cada medida muestra su FUENTE con tooltip (OMS 2006, Orbegozo 1988, Rollins 2010, SEEDO, Mosteller), avisando ⚠ cuando la referencia idónea de IANUS aún no está integrada.','IMC del adulto clasificado según SEEDO (bajo peso · normopeso · sobrepeso I/II · obesidad I–IV).','Preparada la integración (pendiente de datos verificados) de las tablas LMS de Orbegozo 1988 (>5 a) y Rollins 2010 (perímetro cefálico 0–21 a).']},
   {v:'1.24.1', d:'2026-07-01', c:['Editor de protocolos: resaltado enlazado — al seleccionar texto en el JSON se resalta al momento la parte equivalente en la vista previa y en el editor visual del formulario (y al revés), para ver dónde aplica cada cambio.']},
   {v:'1.24.0', d:'2026-07-01', c:['Diferencial cruzado: cuando un protocolo tuyo (aunque no esté abierto) encaja, se resaltan LAS SUB-ENTIDADES concretas que cumplen dentro de él (p. ej. dentro de «Talla baja» → Turner y haploinsuficiencia SHOX), en una tarjeta destacada.','Botón «Aplicar protocolo y seguir anamnesis» en cada sugerencia del diferencial: carga ese protocolo como activo y salta a su anamnesis dirigida conservando el fenotipo ya marcado.','PubCaseFinder ahora EN DIRECTO (se actualiza solo al marcar rasgos, con espera de 1,5 s; hasta 10 resultados), sin botón.','Nuevo «Panel de genes sugerido» de PubCaseFinder (panelsearch): a partir de los HPO propone genes rankeados, marca los que ya están en tus paneles (✓) y permite crear un panel nuevo con ellos.']},
   {v:'1.23.0', d:'2026-07-01', c:['Editor de protocolos — sincronización en vivo total: editar el JSON refresca al momento la vista previa Y el editor visual del formulario (y viceversa).','Versionado + copias de seguridad: cada guardado sube el número de revisión del protocolo, guarda una nota en su changelog y crea una copia de seguridad; nuevo panel «🕘 Versiones guardadas» para revertir a una versión anterior cargándola en el editor.','Ficha: los paneles génicos aplicables se eligen con un buscador multiselección (nombre/código/técnica) en vez de una lista larga de casillas.','Paneles génicos: nuevo campo «Técnica» (Panel NGS / Panel virtual por exoma).']},
@@ -880,7 +882,7 @@ function attachSearchRowHandlers(box, regionLabel){
 
 /* ---- Estado de la sesión (scope de módulo, NO en window) ---- */
 let selections = {};                 // id -> {hpo, es, en, region, origen, verified}
-let patient = {motivo:'', edadValor:'', edadUnidad:'años', sexo:'', tallaCm:'', pesoKg:'', envergaduraCm:'', perimetroCranealCm:'', gestacion:false, gestSemanas:'', gestDias:'', edad:''};
+let patient = {motivo:'', edadValor:'', edadUnidad:'años', fnac:'', sexo:'', tallaCm:'', pesoKg:'', envergaduraCm:'', perimetroCranealCm:'', gestacion:false, gestSemanas:'', gestDias:'', edad:''};
 let beighton = {};
 
 function patientAgeYears(){
@@ -888,6 +890,14 @@ function patientAgeYears(){
   const v=parseFloat(String(patient.edadValor).replace(',','.'));
   if(isNaN(v)) return null;
   return patient.edadUnidad==='meses' ? v/12 : v;
+}
+/* Edad a día de hoy a partir de la fecha de nacimiento (YYYY-MM-DD). <2 a → en meses. */
+function ageFromDob(dob){
+  if(!dob) return null; const d=new Date(dob+'T00:00:00'); if(isNaN(d.getTime())) return null;
+  const now=new Date(); if(d>now) return null;
+  const years=(now-d)/(365.2425*24*3600*1000);
+  if(years<2){ const months=Math.floor(years*12); return {value:String(months), unit:'meses'}; }
+  return {value:String(Math.round(years*10)/10), unit:'años'};
 }
 /* Etiqueta del paciente: adulto/a · niño/a · feto varón/mujer (gestación sem+días). */
 function patientLabel(){
@@ -929,7 +939,9 @@ function renderPatientBar(){
     ${gest ? `<div class="pb-group"><span class="pb-l">EG</span>
         <input id="pbSem" class="pb-in" type="text" inputmode="numeric" value="${patient.gestSemanas||''}" placeholder="sem" style="width:52px"><span>+</span>
         <input id="pbDia" class="pb-in" type="text" inputmode="numeric" value="${patient.gestDias||''}" placeholder="d" style="width:42px"></div>`
-      : `<div class="pb-group"><span class="pb-l">Edad</span>
+      : `<div class="pb-group"><span class="pb-l">F. nac.</span>
+        <input id="pbFnac" class="pb-in" type="date" value="${patient.fnac||''}" max="${new Date().toISOString().slice(0,10)}" title="Fecha de nacimiento: calcula la edad al día de hoy (puedes seguir editando la edad a mano)" style="width:140px"></div>
+      <div class="pb-group"><span class="pb-l">Edad</span>
         <input id="pbEdad" class="pb-in" type="text" inputmode="decimal" value="${patient.edadValor||''}" placeholder="0" style="width:62px">
         <select id="pbEdadU" class="pb-sel"><option value="años" ${patient.edadUnidad!=='meses'?'selected':''}>años</option><option value="meses" ${patient.edadUnidad==='meses'?'selected':''}>meses</option></select></div>`}
     <span class="pb-label" id="pbLabel">${patientLabel()}</span>
@@ -939,11 +951,12 @@ function renderPatientBar(){
   const g=document.getElementById('pbGest'); if(g) g.addEventListener('change', ()=>{ patient.gestacion=g.checked; renderPatientBar(); afterPatientChange(); });
   const bind=(id,key,ev)=>{ const e=document.getElementById(id); if(e) e.addEventListener(ev||'input', ()=>{ patient[key]=e.value; afterPatientChange(); }); };
   bind('pbEdad','edadValor'); bind('pbEdadU','edadUnidad','change'); bind('pbSem','gestSemanas'); bind('pbDia','gestDias');
+  const fn=document.getElementById('pbFnac'); if(fn) fn.addEventListener('change', ()=>{ patient.fnac=fn.value; const a=ageFromDob(fn.value); if(a){ patient.edadValor=a.value; patient.edadUnidad=a.unit; } renderPatientBar(); afterPatientChange(); });
   const r=document.getElementById('pbReset'); if(r) r.addEventListener('click', resetPatient);
 }
 function resetPatient(){
   if(typeof confirm==='function' && !confirm('¿Borrar TODOS los datos del paciente actual (sexo, edad, motivo, fenotipo, ficha) e iniciar uno nuevo?')) return;
-  patient = {motivo:'', edadValor:'', edadUnidad:'años', sexo:'', tallaCm:'', pesoKg:'', envergaduraCm:'', perimetroCranealCm:'', gestacion:false, gestSemanas:'', gestDias:'', edad:''};
+  patient = {motivo:'', edadValor:'', edadUnidad:'años', fnac:'', sexo:'', tallaCm:'', pesoKg:'', envergaduraCm:'', perimetroCranealCm:'', gestacion:false, gestSemanas:'', gestDias:'', edad:''};
   for(const k in selections) delete selections[k];
   for(const k in qOwned) delete qOwned[k];
   activeFicha=null; studyEval=null;
@@ -1929,20 +1942,48 @@ function adultPct(measure, sexKey, value){
   const z = zNormal(value, r.mean, r.sd);
   return {z, pct:pctFromZ(z)};
 }
+/* Clasificación del IMC en adulto según SEEDO (Sociedad Española para el Estudio de la Obesidad). */
 function bmiClass(bmi){
   if(!(bmi>0)) return null;
   if(bmi<18.5) return {t:'Bajo peso', c:'low'};
   if(bmi<25)   return {t:'Normopeso', c:'mid'};
-  if(bmi<30)   return {t:'Sobrepeso', c:'low'};
+  if(bmi<27)   return {t:'Sobrepeso I', c:'low'};
+  if(bmi<30)   return {t:'Sobrepeso II (preobesidad)', c:'low'};
   if(bmi<35)   return {t:'Obesidad I', c:'high'};
   if(bmi<40)   return {t:'Obesidad II', c:'high'};
-  return {t:'Obesidad III', c:'high'};
+  if(bmi<50)   return {t:'Obesidad III (mórbida)', c:'high'};
+  return {t:'Obesidad IV (extrema)', c:'high'};
 }
 function fmtPct(o){
   if(!o) return null;
   const p=o.pct;
   let band = p<3?'< P3':(p>97?'> P97':('P'+Math.round(p)));
   return {band, z:o.z, pct:p};
+}
+/* Tablas LMS pendientes de datos VERIFICADOS (no se inventan): Orbegozo 1988 (>5 a) y Rollins 2010 (PC 0–21 a).
+   Cuando se carguen, lmsZ/measureSource los usarán automáticamente para esos tramos. */
+const ORBEGOZO_LMS={};   // {height:{male:[[ageY,L,M,S],…],female:…}, weight:…, bmi:…}
+const ROLLINS_HC_LMS={}; // {male:[[ageY,L,M,S],…], female:…}
+function hasRef(obj, measure, sex){ const a=obj&&(measure?obj[measure]:obj); const arr=a&&(sex&&!measure?a[sex]:(sex?a[sex]:a)); return Array.isArray(arr)&&arr.length; }
+/* Devuelve la FUENTE real usada para esa medida/edad + nota honesta si la referencia idónea (IANUS) aún no está cargada. */
+function measureSource(measure, ageY){
+  if(ageY==null) return null;
+  if(measure==='hc'){
+    if(hasRef(ROLLINS_HC_LMS, null, sexKeyOf())) return {src:'Rollins 2010 (LMS)', note:''};
+    if(ageY<=5) return {src:'OMS 2006 (LMS)', note:''};
+    return {src:'OMS 0–5 a (fuera de rango)', note:'IANUS/genética usa Rollins 2010 (0–21 a) para el PC — integración pendiente de datos verificados'};
+  }
+  if(ageY>19){
+    if(measure==='bmi') return {src:'SEEDO', note:'clasificación de IMC del adulto por rangos fijos'};
+    return {src:'población española adulta', note:'referencia aproximada (INE/encuestas), no es percentil pediátrico'};
+  }
+  if(ageY<=5) return {src:'OMS 2006 (LMS)', note:''};
+  if(hasRef(ORBEGOZO_LMS, measure, sexKeyOf())) return {src:'Orbegozo 1988 (LMS)', note:''};
+  return {src:'OMS 2006 (LMS)', note:'IANUS usa Orbegozo 1988 en >5 a — integración de sus tablas LMS pendiente de datos verificados'};
+}
+function measureSrcHtml(measure, ageY){
+  const s=measureSource(measure, ageY); if(!s) return '';
+  return ` <span class="am-src" title="Fuente: ${escHtml(s.src)}${s.note?'. '+escHtml(s.note):''}">· ${escHtml(s.src)}${s.note?' ⚠':''}</span>`;
 }
 function toggleQuickPheno(id, es, region){
   if(selections[id]){ delete selections[id]; }
@@ -1983,7 +2024,8 @@ function anthroPctCard(title, value, unit, measure, maxAge){
     else if(measure==='hc') pctHtml='<span class="pct na">PC: estándar OMS solo 0-5 a</span>';
   } else if(value>0 && measure==='hc' && ageY!=null && ageY>5){ pctHtml='<span class="pct na">PC: estándar OMS solo 0-5 a</span>';
   } else if(value>0 && (!sx||ageY==null)){ pctHtml='<span class="pct na">indica edad y sexo</span>'; }
-  return `<div class="am-row"><span class="am-t">${title}</span><span class="am-v">${value>0?value+' '+unit:'—'}</span>${pctHtml}</div>`;
+  const srcHtml = value>0 ? measureSrcHtml(measure, ageY) : '';
+  return `<div class="am-row"><span class="am-t">${title}</span><span class="am-v">${value>0?value+' '+unit:'—'}</span>${pctHtml}${srcHtml}</div>`;
 }
 function renderAnthroResult(boxId){
   const box=document.getElementById(boxId||'anthroTabResult'); if(!box) return;
@@ -1998,12 +2040,12 @@ function renderAnthroResult(boxId){
     let p='';
     if(sx && ageY!=null && ageY<=19){ const r=fmtPct(lmsZ('bmi',sx,ageY,bmi)); if(r){ const cls=r.pct<3?'low':(r.pct>97?'high':'mid'); p=`<span class="pct ${cls}">${r.band} · ${r.z>=0?'+':''}${r.z.toFixed(2)} DE</span>`; } }
     else if(ageY!=null && ageY>19){ const bc=bmiClass(bmi); if(bc) p=`<span class="pct ${bc.c}">${bc.t} (OMS)</span>`; }
-    rows += `<div class="am-row"><span class="am-t">IMC</span><span class="am-v">${bmi.toFixed(1)} kg/m²</span>${p}</div>`;
+    rows += `<div class="am-row"><span class="am-t">IMC</span><span class="am-v">${bmi.toFixed(1)} kg/m²</span>${p}${measureSrcHtml('bmi', ageY)}</div>`;
   }
   // Superficie corporal (Mosteller) — misma fórmula en pediatría y adulto; útil para dosificación
   if(talla>0 && peso>0){
     const bsa=Math.sqrt(talla*peso/3600);
-    rows += `<div class="am-row"><span class="am-t">Superficie corporal</span><span class="am-v">${bsa.toFixed(2)} m²</span><span class="pct na" title="Fórmula de Mosteller: √(talla[cm] × peso[kg] / 3600). No usa percentiles; se calcula del peso y la talla actuales (dosificación farmacológica).">Mosteller</span></div>`;
+    rows += `<div class="am-row"><span class="am-t">Superficie corporal</span><span class="am-v">${bsa.toFixed(2)} m²</span><span class="pct na" title="Fórmula de Mosteller: √(talla[cm] × peso[kg] / 3600). No usa percentiles; se calcula del peso y la talla actuales (dosificación farmacológica).">Mosteller</span> <span class="am-src" title="Fuente: fórmula de Mosteller (BSA)">· Mosteller</span></div>`;
   }
   rows += anthroPctCard('Perímetro cefálico',pc,'cm','hc',5);
   // Envergadura + cociente envergadura/talla
