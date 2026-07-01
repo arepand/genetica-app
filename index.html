@@ -226,6 +226,13 @@
   .pill{margin-left:auto; font-size:10.5px; font-weight:700; border-radius:999px; padding:2px 9px;}
   .pill.sug{background:#173d2a; color:#7fe0a6; border:1px solid #2f6b48;}
   .dx-meta{font-size:11px; color:var(--ink3); margin-top:6px;}
+  .hp-chip{display:inline-block; font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11px; background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:0 5px; margin:1px 2px; cursor:pointer;}
+  .hp-chip:hover{border-color:var(--accent);}
+  .hp-fix-pop{display:block; margin:4px 0 6px; padding:6px; background:#0a0f14; border:1px solid var(--accent2); border-radius:8px;}
+  .hp-fix-pop .hp-fix-q{width:100%; box-sizing:border-box; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--panel2); color:var(--ink); font-size:12px;}
+  .hp-fix-res{max-height:190px; overflow:auto; margin-top:4px;}
+  .hp-fix-row{padding:4px 6px; border-radius:6px; cursor:pointer; font-size:12px;}
+  .hp-fix-row:hover{background:var(--panel2);}
   .dx-rule{font-size:11px; color:var(--ink2); margin-top:6px; padding:7px 9px; background:var(--panel); border:1px dashed var(--line); border-radius:7px;}
   .gp-genes{display:flex; flex-wrap:wrap; gap:5px;}
   .gene{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11px; font-weight:600; background:var(--chip); border:1px solid var(--line); border-radius:5px; padding:2px 7px; color:var(--accent); text-decoration:none;}
@@ -439,8 +446,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.17.0';
+const APP_VERSION='1.18.0';
 const CHANGELOG=[
+  {v:'1.18.0', d:'2026-07-01', c:['Revisor de fichas — corrector de HPO en la vista previa: cada código HPO se muestra como un chip con su NOMBRE OFICIAL (JAX) al lado, y avisa con «≠» cuando el nombre oficial no coincide con la etiqueta que puso la IA (código válido pero de otro concepto). Al hacer clic en el chip se abre un buscador AJAX (español, inglés o código HP:…) para localizar el término correcto y reemplazar el código en el JSON con un clic.']},
   {v:'1.17.0', d:'2026-07-01', c:['Transparencia IA: mientras la IA trabaja, aparece un indicador arriba con la tarea en curso; y en «Estado» hay un interruptor «Debug IA» que —solo cuando lo activas— registra TODAS las operaciones de IA (system, prompt, razonamiento y respuesta) y te las descarga en un .txt. Por defecto no registra nada.','Revisor de fichas: nuevo cajetín para pedir a la IA modificaciones en lenguaje natural (edita el JSON de forma iterativa, manteniendo el esquema y verificando HPO) y VISTA PREVIA en vivo que muestra cómo «se traduce» el JSON a la ficha según lo editas.']},
   {v:'1.16.0', d:'2026-06-30', c:['Creador/editor de protocolos: nuevo diálogo con motivo + un campo de INSTRUCCIONES libres (admite un JSON de plantilla a respetar) + posibilidad de aportar UNO O VARIOS PDF (subidos o elegidos de tu repositorio documental) como fuente principal. La generación sigue verificando cada HPO contra JAX.']},
   {v:'1.15.0', d:'2026-06-30', c:['Paneles génicos (HAC): ahora es many-to-many — un panel puede aplicarse a varios protocolos y un protocolo puede tener varios paneles (con checkboxes). Cada panel tiene campo «código» de laboratorio. En la ficha, los genes del panel se colorean VERDE (recomendados por el protocolo) o AZUL («a mayores») y un aviso ROJO lista los recomendados que faltan en tus paneles.']},
@@ -2698,8 +2706,8 @@ function fichaPreviewHtml(f){
   const g=escHtml;
   const dom=(f.dominios||[]).map(d=>{
     const preg=(d.preguntas||[]).map(q=>{
-      const hpos=(q.opciones||[]).flatMap(o=>(o.hpo||[])).map(h=>`<span class="hp">${g(h.id||'')}</span>`).join(' ');
-      return `<li>${g(q.texto||'')} ${hpos}</li>`;
+      const chips=(q.opciones||[]).flatMap(o=>(o.hpo||[]).map(h=>hpoChip(h.id, h.nombre||o.etiqueta||q.texto))).join(' ');
+      return `<li>${g(q.texto||'')} ${chips}</li>`;
     }).join('');
     return `<div style="margin:5px 0"><b>${g(d.nombre||'')}</b><ul style="margin:2px 0 0 16px;padding:0">${preg||'<li class="dx-meta">(sin preguntas)</li>'}</ul></div>`;
   }).join('');
@@ -2707,7 +2715,9 @@ function fichaPreviewHtml(f){
     const logica=(e.logica||'and')==='or'?' o ':' y ';
     const crit=e.umbral || `≥${e.min_mayores||0} mayores${logica}≥${e.min_menores||0} menores`;
     const genes=(e.genes||[]).length?` · genes: ${g((e.genes||[]).join(', '))}`:'';
-    return `<div style="margin:4px 0"><b>${g(e.nombre||'')}</b>${genes}<br><span class="dx-meta">Criterio: ${g(crit)} · mayores: ${g((e.mayores||[]).join(', ')||'—')} · menores: ${g((e.menores||[]).join(', ')||'—')}</span></div>`;
+    const may=(e.mayores||[]).map(x=>hpoChip(x,'')).join(' ')||'—';
+    const men=(e.menores||[]).map(x=>hpoChip(x,'')).join(' ')||'—';
+    return `<div style="margin:4px 0"><b>${g(e.nombre||'')}</b>${genes}<br><span class="dx-meta">Criterio: ${g(crit)}</span><br><span class="dx-meta">mayores:</span> ${may}<br><span class="dx-meta">menores:</span> ${men}</div>`;
   }).join('');
   const eg=f.estudio_genetico;
   const egHtml=eg&&typeof eg==='object' ? `<div class="dx-meta">${eg.indicado===false?'No indicado de rutina. ':''}${g(eg.tipo||'')}${eg.detalle?'. '+g(eg.detalle):''}${(eg.indicaciones||[]).length?'<br>Indicaciones: '+g((eg.indicaciones||[]).join('; ')):''}</div>` : '';
@@ -2720,6 +2730,91 @@ function fichaPreviewHtml(f){
     ${(f.panel_genes||[]).length?`<div class="cart-group-title" style="margin-top:8px">Panel génico (${(f.panel_genes||[]).length})</div><div>${g((f.panel_genes||[]).join(' · '))}</div>`:''}
     ${egHtml?`<div class="cart-group-title" style="margin-top:8px">Estudio genético</div>${egHtml}`:''}
   </div>`;
+}
+
+// Chip HPO interactivo del preview: código + hueco para el nombre oficial (se rellena async)
+function hpoChip(id, label){
+  if(!id) return '';
+  const l=escHtml(label||'').replace(/"/g,'&quot;');
+  return `<span class="hp-chip" data-hpo="${escHtml(id)}" data-lbl="${l}" title="Clic para ver el nombre oficial (JAX) y buscar/corregir el código">${escHtml(id)}<span class="hp-nm" data-hpo-nm="${escHtml(id)}"> · …</span></span>`;
+}
+const _hpoOff={};
+async function hpoOfficialName(id){
+  if(id in _hpoOff) return _hpoOff[id];
+  const t=await verifyHpo(id);
+  let r=null;
+  if(t){ const es=(window.__esLabels&&window.__esLabels[id]) || await hpoEsName(id) || t.name; r={en:t.name, es}; }
+  _hpoOff[id]=r; return r;
+}
+// Rellena el nombre oficial de cada chip y avisa (≠) si no coincide con la etiqueta que puso la IA
+async function annotateHpoChips(container){
+  if(!container) return;
+  const slots=[...container.querySelectorAll('.hp-nm[data-hpo-nm]')];
+  const cache={};
+  for(const slot of slots){
+    const id=slot.dataset.hpoNm;
+    if(!(id in cache)) cache[id]=await hpoOfficialName(id);
+    const info=cache[id];
+    const chip=slot.closest('.hp-chip'); const lbl=chip?(chip.dataset.lbl||''):'';
+    if(!info){ slot.innerHTML=' · <span style="color:var(--danger)">⚠ código inexistente — clic para corregir</span>'; if(chip) chip.style.borderColor='var(--danger)'; continue; }
+    const es=info.es||info.en||'';
+    let flag='';
+    if(lbl && es && !nmMatch(es,lbl) && (!info.en || !nmMatch(info.en,lbl)))
+      flag=' <span style="color:#e8a13a" title="El nombre oficial no coincide con «'+escHtml(lbl)+'» — verifica el código">≠</span>';
+    slot.innerHTML=' · <span style="color:var(--ink3)">'+escHtml(es)+'</span>'+flag;
+  }
+}
+// Buscador AJAX compacto (código directo · español babelon · inglés JAX)
+async function previewHpoSearch(term){
+  const esLabels=await loadEsLabels(); window.__esLabels=esLabels;
+  const out=[]; const seen=new Set();
+  const add=(id,es,en)=>{ if(!id||seen.has(id)) return; seen.add(id); out.push({id, es:es||en||id, en:en||''}); };
+  const q=term.toLowerCase().trim();
+  const code=q.match(/^(hp:)?(\d{1,7})$/i);
+  if(code){ const id='HP:'+code[2].padStart(7,'0'); const t=await verifyHpo(id); if(t) add(t.id, esLabels[t.id], t.name); }
+  const qa=accLower(term).trim();
+  for(const id in esLabels){ if(out.length>=10) break; if(qa && accLower(esLabels[id]).includes(qa)) add(id, esLabels[id]); }
+  try{ const r=await fetch(HPO_API+'/search?q='+encodeURIComponent(term)+'&max=8'); const d=await r.json(); (d.terms||d.data||[]).forEach(t=>{ if(out.length<16) add(t.id, esLabels[t.id], t.name); }); }catch(e){}
+  return out.slice(0,12);
+}
+function toggleHpoFixPop(chip){
+  const cont=chip.closest('#fichaPreview');
+  const existing=chip.nextElementSibling;
+  if(existing && existing.classList && existing.classList.contains('hp-fix-pop')){ existing.remove(); return; }
+  if(cont) cont.querySelectorAll('.hp-fix-pop').forEach(p=>p.remove());
+  const oldId=chip.dataset.hpo;
+  const pop=document.createElement('div'); pop.className='hp-fix-pop';
+  pop.innerHTML=`<input class="hp-fix-q" type="text" placeholder="Buscar el término correcto (español, inglés o código HP:…)" autocomplete="off"><div class="hp-fix-res"></div>`;
+  chip.after(pop);
+  const inp=pop.querySelector('.hp-fix-q'), res=pop.querySelector('.hp-fix-res');
+  let t=null; inp.addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(()=>runFixSearch(oldId, inp.value, res), 250); });
+  inp.addEventListener('keydown', e=>{ if(e.key==='Escape') pop.remove(); });
+  inp.focus();
+}
+async function runFixSearch(oldId, term, res){
+  term=(term||'').trim();
+  if(term.length<2){ res.innerHTML=''; return; }
+  res.innerHTML='<div class="dx-meta" style="padding:4px 2px">Buscando…</div>';
+  const hits=await previewHpoSearch(term);
+  if(!hits.length){ res.innerHTML='<div class="dx-meta" style="padding:4px 2px">Sin resultados.</div>'; return; }
+  res.innerHTML=hits.map(h=>{
+    const nm=escHtml(h.es||h.en||'').replace(/"/g,'&quot;');
+    const en=(h.en && h.en!==h.es)?` <span class="dx-meta">${escHtml(h.en)}</span>`:'';
+    return `<div class="hp-fix-row" data-to="${escHtml(h.id)}" data-nm="${nm}"><b>${escHtml(h.es||h.en)}</b> <span class="hp">${escHtml(h.id)}</span>${en}</div>`;
+  }).join('');
+  res.querySelectorAll('.hp-fix-row').forEach(r=>r.addEventListener('click', ()=>replaceHpoInReview(oldId, r.dataset.to, r.dataset.nm)));
+}
+function replaceHpoInReview(oldId, newId, name){
+  const ov=document.getElementById('fichaReviewOverlay'); if(!ov) return;
+  const ta=ov.querySelector('#fichaJson'); if(!ta) return;
+  let j; try{ j=JSON.parse(ta.value); }catch(e){ return; }
+  if(oldId!==newId) applyHpoFixes(j, {[oldId]:{to:newId, es:name}});
+  else { // mismo código, solo reetiquetar el nombre en las opciones
+    (j.dominios||[]).forEach(d=>(d.preguntas||[]).forEach(q=>(q.opciones||[]).forEach(o=>(o.hpo||[]).forEach(h=>{ if(h.id===oldId && name) h.nombre=name; }))));
+  }
+  ta.value=JSON.stringify(j,null,2);
+  ta.dispatchEvent(new Event('input',{bubbles:true})); // re-renderiza el preview (con debounce)
+  const eo=ov.querySelector('#fichaEditOut'); if(eo){ eo.className=''; eo.innerHTML='<div style="color:var(--ok)">✓ HPO '+escHtml(oldId)+(oldId!==newId?' → '+escHtml(newId):'')+' · '+escHtml(name||'')+'. Revisa y guarda.</div>'; }
 }
 
 function openFichaReview(f, opts){
@@ -2767,9 +2862,11 @@ function openFichaReview(f, opts){
 
   // Vista previa en vivo: cómo "traduce" el JSON a ficha
   const prev=ov.querySelector('#fichaPreview');
-  const renderPrev=()=>{ if(!prev) return; let j=null; try{ j=JSON.parse(ta.value); }catch(e){} prev.innerHTML=fichaPreviewHtml(j); };
+  const renderPrev=()=>{ if(!prev) return; let j=null; try{ j=JSON.parse(ta.value); }catch(e){} prev.innerHTML=fichaPreviewHtml(j); annotateHpoChips(prev); };
   renderPrev();
   let _pvT=null; ta.addEventListener('input', ()=>{ clearTimeout(_pvT); _pvT=setTimeout(renderPrev, 300); });
+  // Clic en un chip HPO del preview → abre el buscador AJAX para verificar/corregir el código
+  if(prev) prev.addEventListener('click', e=>{ if(e.target.closest('.hp-fix-pop')) return; const chip=e.target.closest('.hp-chip'); if(chip && prev.contains(chip)) toggleHpoFixPop(chip); });
 
   // Editar el JSON con IA por instrucción libre (iterativo)
   ov.querySelector('#btnEditIA').addEventListener('click', async ()=>{
