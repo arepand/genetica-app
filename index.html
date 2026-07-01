@@ -241,6 +241,7 @@
   .hp-fix-res{max-height:190px; overflow:auto; margin-top:4px;}
   .hp-fix-row{padding:4px 6px; border-radius:6px; cursor:pointer; font-size:12px;}
   .hp-fix-row:hover{background:var(--panel2);}
+  .link-hl{outline:2px solid var(--accent); outline-offset:1px; border-radius:4px; background:rgba(122,224,166,.14); transition:background .15s;}
   .dx-rule{font-size:11px; color:var(--ink2); margin-top:6px; padding:7px 9px; background:var(--panel); border:1px dashed var(--line); border-radius:7px;}
   .gp-genes{display:flex; flex-wrap:wrap; gap:5px;}
   .gene{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11px; font-weight:600; background:var(--chip); border:1px solid var(--line); border-radius:5px; padding:2px 7px; color:var(--accent); text-decoration:none;}
@@ -457,8 +458,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.24.0';
+const APP_VERSION='1.24.1';
 const CHANGELOG=[
+  {v:'1.24.1', d:'2026-07-01', c:['Editor de protocolos: resaltado enlazado — al seleccionar texto en el JSON se resalta al momento la parte equivalente en la vista previa y en el editor visual del formulario (y al revés), para ver dónde aplica cada cambio.']},
   {v:'1.24.0', d:'2026-07-01', c:['Diferencial cruzado: cuando un protocolo tuyo (aunque no esté abierto) encaja, se resaltan LAS SUB-ENTIDADES concretas que cumplen dentro de él (p. ej. dentro de «Talla baja» → Turner y haploinsuficiencia SHOX), en una tarjeta destacada.','Botón «Aplicar protocolo y seguir anamnesis» en cada sugerencia del diferencial: carga ese protocolo como activo y salta a su anamnesis dirigida conservando el fenotipo ya marcado.','PubCaseFinder ahora EN DIRECTO (se actualiza solo al marcar rasgos, con espera de 1,5 s; hasta 10 resultados), sin botón.','Nuevo «Panel de genes sugerido» de PubCaseFinder (panelsearch): a partir de los HPO propone genes rankeados, marca los que ya están en tus paneles (✓) y permite crear un panel nuevo con ellos.']},
   {v:'1.23.0', d:'2026-07-01', c:['Editor de protocolos — sincronización en vivo total: editar el JSON refresca al momento la vista previa Y el editor visual del formulario (y viceversa).','Versionado + copias de seguridad: cada guardado sube el número de revisión del protocolo, guarda una nota en su changelog y crea una copia de seguridad; nuevo panel «🕘 Versiones guardadas» para revertir a una versión anterior cargándola en el editor.','Ficha: los paneles génicos aplicables se eligen con un buscador multiselección (nombre/código/técnica) en vez de una lista larga de casillas.','Paneles génicos: nuevo campo «Técnica» (Panel NGS / Panel virtual por exoma).']},
   {v:'1.22.0', d:'2026-07-01', c:['Logo de Ariadna con fondo transparente en la cabecera (ya no destaca sobre la hoja).','Buscador HPO: el desplegable de resultados se cierra al marcar un término (antes se quedaba abierto).','PubCaseFinder: la puntuación se muestra en porcentaje con 1 decimal.','Solapamiento HPO (JAX): al pasar el ratón sobre «N/M rasgos» se ve QUÉ HPO coinciden y cuáles no.','En los resultados del diferencial, los genes que están en uno de tus paneles registrados se marcan en verde con ✓ (tooltip con el/los panel/es).','Antropometría: nueva Superficie Corporal (fórmula de Mosteller) con tooltip de la fuente.','Botones de pantalla completa del editor convertidos en iconos (entrar/salir).']},
@@ -3015,6 +3017,30 @@ function openFichaReview(f, opts){
       else if(fe==='addh'){ buildHpoSearchPop(b, (id,name)=>{ const jj=feModel(); if(!jj) return; const arr=(jj.dominios[di].preguntas[qi].opciones[oi].hpo=jj.dominios[di].preguntas[qi].opciones[oi].hpo||[]); if(!arr.some(h=>h.id===id)) arr.push({id, nombre:name}); feWrite(jj,true); }, 'Buscar HPO para añadir a esta respuesta…'); }
     });
   }
+
+  // ---- Resaltado enlazado: seleccionar texto en el JSON resalta la parte correspondiente en la vista previa y el editor visual, y viceversa ----
+  const linkScopes=()=>[prev, fbox].filter(Boolean);
+  const linkClear=()=>ov.querySelectorAll('.link-hl').forEach(e=>e.classList.remove('link-hl'));
+  const linkNorm=s=>(s||'').replace(/^[\s"',:]+|[\s"',:]+$/g,'').trim();  // limpia comillas/comas del JSON
+  function highlightInViews(text){
+    linkClear(); text=linkNorm(text); if(text.length<2||text.length>140) return; const t=text.toLowerCase();
+    let first=null;
+    linkScopes().forEach(scope=>{
+      scope.querySelectorAll('input, textarea, select').forEach(inp=>{ if((inp.value||'').toLowerCase().includes(t)){ inp.classList.add('link-hl'); if(!first) first=inp; } });
+      scope.querySelectorAll('.hp-chip, li, .gene, b, .dx-meta, span, div').forEach(el=>{ if(el.querySelector('.link-hl')) return; if(el.childElementCount<=3 && (el.textContent||'').toLowerCase().includes(t)){ el.classList.add('link-hl'); if(!first) first=el; } });
+    });
+    if(first && first.scrollIntoView) first.scrollIntoView({block:'nearest'});
+  }
+  function selectInJson(text){ text=linkNorm(text); if(text.length<2) return; const i=ta.value.toLowerCase().indexOf(text.toLowerCase()); if(i<0) return; ta.focus(); ta.setSelectionRange(i, i+text.length); const line=ta.value.slice(0,i).split('\n').length; ta.scrollTop=Math.max(0,(line-3)*ta.clientHeight/((ta.value.split('\n').length)||1)); }
+  const onTaSel=()=>{ const s=ta.value.substring(ta.selectionStart, ta.selectionEnd); if(linkNorm(s).length>=2) highlightInViews(s); else linkClear(); };
+  ta.addEventListener('mouseup', onTaSel);
+  ta.addEventListener('keyup', e=>{ if(e.shiftKey || e.key==='Shift' || /Arrow|Home|End/.test(e.key)) onTaSel(); });
+  linkScopes().forEach(scope=>scope.addEventListener('mouseup', (e)=>{
+    let s=''; const inp=e.target.closest('input, textarea');
+    if(inp){ s=(inp.value||'').substring(inp.selectionStart||0, inp.selectionEnd||0) || inp.value; }
+    else { s=(window.getSelection&&window.getSelection().toString())||''; }
+    if(linkNorm(s).length>=2){ selectInJson(s); highlightInViews(s); }
+  }));
 
   // ---- Versiones guardadas (copias de seguridad locales) + revertir ----
   const histDet=ov.querySelector('#fichaHistDet'), histBox=ov.querySelector('#fichaHistBox');
