@@ -457,8 +457,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.22.0';
+const APP_VERSION='1.23.0';
 const CHANGELOG=[
+  {v:'1.23.0', d:'2026-07-01', c:['Editor de protocolos — sincronización en vivo total: editar el JSON refresca al momento la vista previa Y el editor visual del formulario (y viceversa).','Versionado + copias de seguridad: cada guardado sube el número de revisión del protocolo, guarda una nota en su changelog y crea una copia de seguridad; nuevo panel «🕘 Versiones guardadas» para revertir a una versión anterior cargándola en el editor.','Ficha: los paneles génicos aplicables se eligen con un buscador multiselección (nombre/código/técnica) en vez de una lista larga de casillas.','Paneles génicos: nuevo campo «Técnica» (Panel NGS / Panel virtual por exoma).']},
   {v:'1.22.0', d:'2026-07-01', c:['Logo de Ariadna con fondo transparente en la cabecera (ya no destaca sobre la hoja).','Buscador HPO: el desplegable de resultados se cierra al marcar un término (antes se quedaba abierto).','PubCaseFinder: la puntuación se muestra en porcentaje con 1 decimal.','Solapamiento HPO (JAX): al pasar el ratón sobre «N/M rasgos» se ve QUÉ HPO coinciden y cuáles no.','En los resultados del diferencial, los genes que están en uno de tus paneles registrados se marcan en verde con ✓ (tooltip con el/los panel/es).','Antropometría: nueva Superficie Corporal (fórmula de Mosteller) con tooltip de la fuente.','Botones de pantalla completa del editor convertidos en iconos (entrar/salir).']},
   {v:'1.21.0', d:'2026-07-01', c:['Criterios condicionados por edad y sexo: las entidades de un protocolo pueden declarar «sexo» y/o rango de edad («edad_min_anios»/«edad_max_anios»); la app usa la edad y el sexo que ya tienes del paciente y marca la entidad como «✕ No aplica (edad/sexo)» cuando queda fuera, o avisa si falta ese dato. La IA rellena estos campos solo cuando el criterio diagnóstico depende de edad/sexo.','Botón «⛶ Pantalla completa» del revisor: ahora resaltado (botón sólido) para que se vea bien.']},
   {v:'1.20.0', d:'2026-07-01', c:['Diferencial más claro y en vivo: a medida que marcas rasgos, cada entidad del protocolo muestra su estado — «✓ Cumple criterios» (verde) o «Falta 1 mayor / Faltan 2 criterios» (ámbar), con barra de progreso hacia el umbral y un tooltip que detalla el criterio exigido (mayores/menores, lógica y/o) y lo que ya tienes presente. Las entidades con rasgos pero sin cumplir ya no se ocultan: aparecen en «En seguimiento» para ver cuánto falta.']},
@@ -2350,6 +2351,22 @@ function downloadJson(f){
     document.body.appendChild(a); a.click(); a.remove();
   }catch(e){ showToast('No se pudo descargar'); }
 }
+/* ---- Versionado + copias de seguridad de fichas (local, para revertir) ---- */
+function fichaBackups(id){ try{ return JSON.parse(localStorage.getItem('fh_fichabak_'+id))||[]; }catch(e){ return []; } }
+/* Antes de guardar: sube rev, registra la nota en el historial de la ficha y guarda un snapshot completo local. */
+function bumpFichaRev(f, nota){
+  f.rev=(parseInt(f.rev)||0)+1;
+  f.historial=Array.isArray(f.historial)?f.historial:[];
+  f.historial.unshift({rev:f.rev, fecha:new Date().toISOString(), nota:(nota||'').trim()});
+  f.historial=f.historial.slice(0,50);
+  try{
+    const key='fh_fichabak_'+f.id;
+    const stack=fichaBackups(f.id);
+    stack.unshift({rev:f.rev, fecha:new Date().toISOString(), nota:(nota||'').trim(), json:JSON.stringify(f)});
+    localStorage.setItem(key, JSON.stringify(stack.slice(0,20)));
+  }catch(e){}
+  return f;
+}
 
 /* Lee el texto de un PDF en el navegador (pdf.js). Devuelve '' si no carga. */
 async function extractPdfTextFromBuffer(buf){
@@ -2884,6 +2901,14 @@ function openFichaReview(f, opts){
       <div id="revGuiaOut" style="font-size:12px; margin-top:8px"></div>
     </div>
 
+    <details id="fichaHistDet" style="margin-top:10px"><summary class="cart-group-title" style="cursor:pointer">🕘 Versiones guardadas <span class="dx-meta">(copias de seguridad · revertir)</span></summary>
+      <div id="fichaHistBox" style="border:1px solid var(--line); border-radius:9px; padding:8px 10px; margin-top:6px; max-height:220px; overflow:auto"></div>
+    </details>
+
+    <div style="display:flex; gap:8px; margin-top:10px; align-items:center; flex-wrap:wrap">
+      <input id="fichaNota" type="text" placeholder="Nota de cambios (opcional) — se guarda en el changelog de esta versión" style="flex:1; min-width:240px; padding:8px 11px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink); font-size:12.5px">
+    </div>
+
     <div class="modal-actions">
       <button class="btn ghost" id="btnFichaCancel">Cancelar</button>
       <button class="btn primary" id="btnFichaSave">Guardar y commitear</button>
@@ -2910,7 +2935,7 @@ function openFichaReview(f, opts){
   const prev=ov.querySelector('#fichaPreview');
   const renderPrev=()=>{ if(!prev) return; let j=null; try{ j=JSON.parse(ta.value); }catch(e){} prev.innerHTML=fichaPreviewHtml(j); annotateHpoChips(prev); };
   renderPrev();
-  let _pvT=null; ta.addEventListener('input', ()=>{ clearTimeout(_pvT); _pvT=setTimeout(renderPrev, 300); });
+  let _pvT=null; ta.addEventListener('input', ()=>{ clearTimeout(_pvT); _pvT=setTimeout(()=>{ renderPrev(); if(feDet && feDet.open && !ov.querySelector('#formEditor .hp-fix-pop')) renderForm(); }, 300); });
   // Clic en un chip HPO del preview → abre el buscador AJAX para verificar/corregir el código
   if(prev) prev.addEventListener('click', e=>{ if(e.target.closest('.hp-fix-pop')) return; const chip=e.target.closest('.hp-chip'); if(chip && prev.contains(chip)) toggleHpoFixPop(chip); });
 
@@ -2990,6 +3015,23 @@ function openFichaReview(f, opts){
     });
   }
 
+  // ---- Versiones guardadas (copias de seguridad locales) + revertir ----
+  const histDet=ov.querySelector('#fichaHistDet'), histBox=ov.querySelector('#fichaHistBox');
+  function renderHist(){
+    if(!histBox) return;
+    let id; try{ id=JSON.parse(ta.value).id; }catch(e){}
+    const baks=id?fichaBackups(id):[];
+    if(!baks.length){ histBox.innerHTML='<div class="dx-meta">Sin versiones guardadas todavía. Cada vez que guardas se crea una copia de seguridad que podrás recuperar aquí.</div>'; return; }
+    histBox.innerHTML=baks.map((b,i)=>`<div style="display:flex;align-items:center;gap:8px;${i?'border-top:1px solid var(--line);':''}padding:5px 0;font-size:12.5px"><b>rev ${b.rev}</b> <span class="dx-meta">${String(b.fecha||'').slice(0,16).replace('T',' ')}</span>${b.nota?' · '+escHtml(b.nota):''}<button class="btn ghost fichaRevert" data-i="${i}" style="margin-left:auto;padding:2px 8px;font-size:11px">Cargar en el editor</button></div>`).join('');
+    histBox.querySelectorAll('.fichaRevert').forEach(btn=>btn.addEventListener('click', ()=>{
+      const b=baks[+btn.dataset.i]; if(!b) return;
+      try{ ta.value=JSON.stringify(JSON.parse(b.json), null, 2); }catch(e){ return; }
+      renderPrev(); if(feDet&&feDet.open) renderForm();
+      showToast('Versión rev '+b.rev+' cargada en el editor. Revisa y pulsa Guardar para aplicarla.');
+    }));
+  }
+  if(histDet) histDet.addEventListener('toggle', ()=>{ if(histDet.open) renderHist(); });
+
   // Editar el JSON con IA por instrucción libre (iterativo)
   ov.querySelector('#btnEditIA').addEventListener('click', async ()=>{
     const eout=ov.querySelector('#fichaEditOut'); const instr=ov.querySelector('#fichaEditInstr').value.trim();
@@ -3066,6 +3108,7 @@ function openFichaReview(f, opts){
     if(badHpo.length){ out.className='test-out bad'; out.textContent='Códigos HPO con formato inválido: '+badHpo.join(', ')+'. Corrígelos (formato HP:0000000) o usa "🔧 Validar HPO" en la vista de ficha.'; return; }
     out.className='test-out'; out.textContent='Guardando…';
     try{
+      bumpFichaRev(j, (ov.querySelector('#fichaNota')||{}).value||'');   // sube rev + changelog + copia de seguridad local
       const mode=await persistFicha(j);
       close();
       const savedMsg='Ficha guardada'+(mode==='commit'?' y commiteada a GitHub':' (caché local · GitHub sin configurar)');
@@ -3644,7 +3687,8 @@ function renderSegResult(j, fromCache){
 let PANELES=[]; let _panelSel=null;
 function panelGenes(s){ return [...new Set((s||'').split(/[\s,;]+/).map(g=>g.trim().toUpperCase()).filter(Boolean))]; }
 function bumpVer(v){ const m=String(v||'1.0').match(/^(\d+)\.(\d+)/); return m? (m[1]+'.'+(parseInt(m[2])+1)) : '1.1'; }
-function normPanel(p){ p.fichaIds = Array.isArray(p.fichaIds)?p.fichaIds:(p.fichaId?[p.fichaId]:[]); if('fichaId' in p) delete p.fichaId; if(typeof p.codigo!=='string') p.codigo=''; return p; }
+function normPanel(p){ p.fichaIds = Array.isArray(p.fichaIds)?p.fichaIds:(p.fichaId?[p.fichaId]:[]); if('fichaId' in p) delete p.fichaId; if(typeof p.codigo!=='string') p.codigo=''; if(typeof p.tecnica!=='string') p.tecnica=''; return p; }
+const PANEL_TECNICAS=['Panel NGS','Panel virtual (exoma)'];
 function panelsForFicha(fid){ return PANELES.filter(p=>(p.fichaIds||[]).includes(fid)); }   // un protocolo puede tener VARIOS paneles
 async function persistPaneles(msg){
   try{ localStorage.setItem('fh_paneles', JSON.stringify(PANELES)); }catch(e){}
@@ -3680,6 +3724,11 @@ async function setPanelCodigo(id, codigo){
   p.codigo=(codigo||'').trim(); p.modified=new Date().toISOString();
   await persistPaneles('paneles: código '+p.name);
 }
+async function setPanelTecnica(id, tecnica){
+  const p=PANELES.find(x=>x.id===id); if(!p) return;
+  p.tecnica=(tecnica||'').trim(); p.modified=new Date().toISOString();
+  await persistPaneles('paneles: técnica '+p.name);
+}
 async function eliminarPanel(id){
   const p=PANELES.find(x=>x.id===id); if(!p) return;
   if(!confirm('¿Eliminar el panel «'+p.name+'»?')) return;
@@ -3697,7 +3746,7 @@ function renderPaneles(){
       <button class="btn primary" id="panCreate">+ Nuevo panel</button>
     </div>
     ${PANELES.length?`<div class="lib-grid">${PANELES.map(p=>{ const n=(p.fichaIds||[]).length;
-      return `<div class="lib-card" data-panopen="${escHtml(p.id)}" style="cursor:pointer"><div class="nm">${escHtml(p.name)} <span class="pop-badge">v${escHtml(p.version)}</span>${p.codigo?` <span class="dx-meta">[${escHtml(p.codigo)}]</span>`:''}</div><div class="meta">${(p.genes||[]).length} genes · mod. ${String(p.modified||'').slice(0,10)} · ${n?(n+' protocolo'+(n>1?'s':'')):'sin protocolo'}</div></div>`; }).join('')}</div>`
+      return `<div class="lib-card" data-panopen="${escHtml(p.id)}" style="cursor:pointer"><div class="nm">${escHtml(p.name)} <span class="pop-badge">v${escHtml(p.version)}</span>${p.codigo?` <span class="dx-meta">[${escHtml(p.codigo)}]</span>`:''}</div><div class="meta">${(p.genes||[]).length} genes${p.tecnica?' · '+escHtml(p.tecnica):''} · mod. ${String(p.modified||'').slice(0,10)} · ${n?(n+' protocolo'+(n>1?'s':'')):'sin protocolo'}</div></div>`; }).join('')}</div>`
       :'<div class="placeholder">Aún no tienes paneles. Crea el primero arriba.</div>'}`;
   const ni=document.getElementById('panNew'), cb=document.getElementById('panCreate');
   const doCreate=()=>{ const p=crearPanel(ni.value); if(p){ _panelSel=p.id; renderPaneles(); } };
@@ -3715,6 +3764,11 @@ function renderPanelDetalle(box, p){
       <div class="fsub">Creado ${String(p.created||'').slice(0,10)} · Modificado ${String(p.modified||'').slice(0,10)} · ${(p.genes||[]).length} genes</div>
       <h3>Código de laboratorio</h3>
       <input id="panCodigo" type="text" value="${escHtml(p.codigo||'').replace(/"/g,'&quot;')}" placeholder="Código del panel en tu sistema de laboratorio (LIS)" style="width:100%;max-width:320px;box-sizing:border-box;padding:8px 11px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
+      <h3>Técnica</h3>
+      <select id="panTecnica" style="width:100%;max-width:320px;box-sizing:border-box;padding:8px 11px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
+        <option value="" ${!p.tecnica?'selected':''}>— sin especificar —</option>
+        ${PANEL_TECNICAS.map(t=>`<option value="${escHtml(t)}" ${p.tecnica===t?'selected':''}>${escHtml(t)}</option>`).join('')}
+      </select>
       <h3>Protocolos asociados <span class="dx-meta">(puede ser más de uno)</span></h3>
       <div style="margin:4px 0">${fichaChecks}</div>
       <h3>Genes (${(p.genes||[]).length})</h3>
@@ -3730,6 +3784,7 @@ function renderPanelDetalle(box, p){
   box.querySelector('#panDel').addEventListener('click', ()=>eliminarPanel(p.id));
   box.querySelector('#panRename').addEventListener('click', ()=>{ const n=prompt('Nuevo nombre del panel:', p.name); if(n&&n.trim()){ p.name=n.trim(); p.modified=new Date().toISOString(); persistPaneles('paneles: renombrar'); renderPaneles(); } });
   box.querySelector('#panCodigo').addEventListener('change', e=>setPanelCodigo(p.id, e.target.value));
+  box.querySelector('#panTecnica').addEventListener('change', e=>setPanelTecnica(p.id, e.target.value));
   box.querySelectorAll('.panFichaTog').forEach(cb=>cb.addEventListener('change', async ()=>{ await togglePanelFicha(p.id, cb.dataset.fid, cb.checked); }));
   box.querySelector('#panSaveGenes').addEventListener('click', async ()=>{ await editarPanelGenes(p.id, box.querySelector('#panGenes').value); renderPaneles(); });
 }
@@ -3744,7 +3799,7 @@ function fichaPanelHtml(f){
   }
   if(panels.length){
     panels.forEach(p=>{
-      html+=`<div style="margin:6px 0"><b>${escHtml(p.name)}</b> <span class="pop-badge">v${escHtml(p.version)}</span>${p.codigo?` <span class="dx-meta">[${escHtml(p.codigo)}]</span>`:''} <span class="dx-meta">· ${(p.genes||[]).length} genes · <a class="tip-ai" data-panview="${escHtml(p.id)}">ver/editar</a></span>`
+      html+=`<div style="margin:6px 0"><b>${escHtml(p.name)}</b> <span class="pop-badge">v${escHtml(p.version)}</span>${p.codigo?` <span class="dx-meta">[${escHtml(p.codigo)}]</span>`:''}${p.tecnica?` <span class="dx-meta">· ${escHtml(p.tecnica)}</span>`:''} <span class="dx-meta">· ${(p.genes||[]).length} genes · <a class="tip-ai" data-panview="${escHtml(p.id)}">ver/editar</a></span>`
         +`<div style="margin:3px 0">${(p.genes||[]).map(g=>{ const inRec=recU.includes(String(g).toUpperCase()); const col=inRec?'var(--ok)':'#5b9bd5'; return `<a class="gene" href="${geneLinks(g).Franklin}" target="_blank" rel="noopener" style="text-decoration:none;border-color:${col};color:${col}" title="${inRec?'Recomendado':'A mayores (no en el recomendado)'}">${escHtml(g)}</a>`; }).join(' ')||'<span class="dx-meta">Sin genes.</span>'}</div></div>`;
     });
     if(rec.length){ const falt=rec.filter(g=>!hacU.has(String(g).toUpperCase()));
@@ -3756,10 +3811,22 @@ function fichaPanelHtml(f){
     html+='<div class="dx-meta" style="margin:2px 0">Sin paneles HAC asociados. Marca abajo los que apliquen a este protocolo.</div>';
     if(rec.length) html+=`<div style="margin:4px 0">Recomendados: ${rec.map(g=>`<a class="gene" href="${geneLinks(g).Franklin}" target="_blank" rel="noopener" style="text-decoration:none">${escHtml(g)}</a>`).join(' ')}</div>`;
   }
-  // Asociar/quitar paneles (varios) a este protocolo
-  const checks=(PANELES||[]).map(p=>`<label class="q-opt" style="display:inline-flex;margin:2px 10px 2px 0;font-size:12px"><input type="checkbox" class="panTog" data-pid="${escHtml(p.id)}" ${(p.fichaIds||[]).includes(f.id)?'checked':''}> ${escHtml(p.name)}${p.codigo?' ['+escHtml(p.codigo)+']':''}</label>`).join('') || '<span class="dx-meta">No tienes paneles. Créalos en 🧩 Paneles.</span>';
-  html+=`<div class="dx-meta" style="margin-top:6px">Paneles aplicables a este protocolo:</div><div style="margin:2px 0">${checks}</div>`;
+  // Asociar/quitar paneles (varios) a este protocolo — buscador multiselección
+  html+=`<div class="dx-meta" style="margin-top:8px">Paneles aplicables a este protocolo <span style="opacity:.8">(busca y marca varios)</span>:</div>
+    <input id="panAssocSearch" type="text" placeholder="Buscar panel por nombre o código…" autocomplete="off" style="width:100%;max-width:360px;box-sizing:border-box;margin:4px 0;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink);font-size:12.5px">
+    <div id="panAssocResults" style="max-height:180px;overflow:auto;margin:2px 0">${panelAssocResultsHtml(f,'')}</div>`;
   return html;
+}
+function panelAssocResultsHtml(f, query){
+  if(!(PANELES||[]).length) return '<span class="dx-meta">No tienes paneles. Créalos en 🧩 Paneles.</span>';
+  const q=accLower(query||'').trim();
+  let list=PANELES.filter(p=>!q || accLower(p.name).includes(q) || accLower(p.codigo||'').includes(q) || accLower(p.tecnica||'').includes(q));
+  // asociados primero
+  list=list.slice().sort((a,b)=>((b.fichaIds||[]).includes(f.id)?1:0)-((a.fichaIds||[]).includes(f.id)?1:0));
+  if(!list.length) return '<span class="dx-meta">Ningún panel coincide con «'+escHtml(query)+'».</span>';
+  return list.slice(0,25).map(p=>{ const on=(p.fichaIds||[]).includes(f.id);
+    return `<label class="q-opt" style="display:flex;align-items:center;gap:6px;font-size:12.5px;padding:3px 2px"><input type="checkbox" class="panTog" data-pid="${escHtml(p.id)}" ${on?'checked':''}> ${escHtml(p.name)}${p.codigo?' <span class="dx-meta">['+escHtml(p.codigo)+']</span>':''}${p.tecnica?' <span class="dx-meta">· '+escHtml(p.tecnica)+'</span>':''}${on?' <span style="color:var(--ok);font-weight:600">✓ asociado</span>':''}</label>`;
+  }).join('');
 }
 
 /* ===========================================================================
@@ -4858,7 +4925,8 @@ async function renderFichaView(f){
     </div>
     <div class="fview" id="fviewDoc">
       <h1>${f.nombre_es||f.id}</h1>
-      <div class="fsub">${f.poblacion&&f.poblacion!=='unica'?(f.poblacion==='pediatrica'?'Población pediátrica · ':'Población adulta · '):''}${f.version?'v'+f.version+' · ':''}${(f.sinonimos||[]).join(', ')}</div>
+      <div class="fsub">${f.poblacion&&f.poblacion!=='unica'?(f.poblacion==='pediatrica'?'Población pediátrica · ':'Población adulta · '):''}${f.version?'v'+f.version+' · ':''}${f.rev?'rev '+f.rev+' · ':''}${(f.sinonimos||[]).join(', ')}</div>
+      ${(f.historial&&f.historial.length)?`<details style="margin:4px 0 8px"><summary class="dx-meta" style="cursor:pointer">🕘 Changelog del protocolo (${f.historial.length})</summary><div style="margin-top:4px">${f.historial.slice(0,20).map(h=>`<div style="font-size:12px;border-top:1px solid var(--line);padding:4px 0"><b>rev ${h.rev}</b> <span class="dx-meta">${String(h.fecha||'').slice(0,16).replace('T',' ')}</span>${h.nota?' · '+escHtml(h.nota):''}</div>`).join('')}</div></details>`:''}
       ${doms?`<h3>Dominios y anamnesis</h3>${doms}`:''}
       ${ents?`<h3>Diferencial y criterios</h3>${ents}`:''}
       ${fichaPanelHtml(f)}
@@ -4870,7 +4938,10 @@ async function renderFichaView(f){
   document.getElementById('fvEdit').addEventListener('click', ()=>openFichaReview(f, {origin:'biblioteca'}));
   document.getElementById('fvValidate').addEventListener('click', ()=>openValidarHpo(f));
   document.getElementById('fvPrint').addEventListener('click', ()=>window.print());
-  box.querySelectorAll('.panTog').forEach(cb=>cb.addEventListener('change', async ()=>{ await togglePanelFicha(cb.dataset.pid, f.id, cb.checked); renderFichaView(f); }));
+  const bindPanTog=(scope)=>scope.querySelectorAll('.panTog').forEach(cb=>{ if(cb._bound) return; cb._bound=1; cb.addEventListener('change', async ()=>{ await togglePanelFicha(cb.dataset.pid, f.id, cb.checked); renderFichaView(f); }); });
+  bindPanTog(box);
+  const pas=box.querySelector('#panAssocSearch'), par=box.querySelector('#panAssocResults');
+  if(pas&&par) pas.addEventListener('input', ()=>{ par.innerHTML=panelAssocResultsHtml(f, pas.value); bindPanTog(par); });
   box.querySelectorAll('[data-panview]').forEach(a=>a.addEventListener('click', ()=>{ _panelSel=a.dataset.panview; showSection('paneles'); }));
 }
 
