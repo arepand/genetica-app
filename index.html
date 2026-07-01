@@ -70,7 +70,7 @@
     padding:12px 28px; display:flex; align-items:center; gap:14px; flex-wrap:wrap;
   }
   .brand{display:flex; align-items:center; gap:11px; min-width:0;}
-  .logo{width:46px; height:46px; flex:none; border-radius:11px; background:#f4f2ec url('ariadna-logo.png') no-repeat; background-size:88px auto; background-position:-21px -6px;}
+  .logo{width:48px; height:48px; flex:none; background:url('ariadna-icon.png') center/contain no-repeat;}
   .brand h1{font-size:17px; margin:0; line-height:1.15; font-weight:700; letter-spacing:.2px;}
   .brand .sub{font-size:11.5px; color:var(--ink3); margin-top:2px;}
   .top .spacer{flex:1;}
@@ -244,6 +244,9 @@
   .dx-rule{font-size:11px; color:var(--ink2); margin-top:6px; padding:7px 9px; background:var(--panel); border:1px dashed var(--line); border-radius:7px;}
   .gp-genes{display:flex; flex-wrap:wrap; gap:5px;}
   .gene{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11px; font-weight:600; background:var(--chip); border:1px solid var(--line); border-radius:5px; padding:2px 7px; color:var(--accent); text-decoration:none;}
+  .gene.inpanel{border-color:#2f6b48; background:#132a20; color:#7fe0a6; cursor:help;}
+  .gene .gene-mark{margin-left:4px; font-size:9px; color:#7fe0a6;}
+  .gene-inpanel{color:#7fe0a6; cursor:help;}
   a.gene:hover{border-color:var(--accent);}
   .study{background:var(--panel2); border:1px solid var(--accent2); border-radius:9px; padding:11px 12px; margin-bottom:12px; font-size:12px; line-height:1.5;}
   .study-h{font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--accent); font-weight:700; margin-bottom:6px;}
@@ -454,8 +457,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.21.0';
+const APP_VERSION='1.22.0';
 const CHANGELOG=[
+  {v:'1.22.0', d:'2026-07-01', c:['Logo de Ariadna con fondo transparente en la cabecera (ya no destaca sobre la hoja).','Buscador HPO: el desplegable de resultados se cierra al marcar un término (antes se quedaba abierto).','PubCaseFinder: la puntuación se muestra en porcentaje con 1 decimal.','Solapamiento HPO (JAX): al pasar el ratón sobre «N/M rasgos» se ve QUÉ HPO coinciden y cuáles no.','En los resultados del diferencial, los genes que están en uno de tus paneles registrados se marcan en verde con ✓ (tooltip con el/los panel/es).','Antropometría: nueva Superficie Corporal (fórmula de Mosteller) con tooltip de la fuente.','Botones de pantalla completa del editor convertidos en iconos (entrar/salir).']},
   {v:'1.21.0', d:'2026-07-01', c:['Criterios condicionados por edad y sexo: las entidades de un protocolo pueden declarar «sexo» y/o rango de edad («edad_min_anios»/«edad_max_anios»); la app usa la edad y el sexo que ya tienes del paciente y marca la entidad como «✕ No aplica (edad/sexo)» cuando queda fuera, o avisa si falta ese dato. La IA rellena estos campos solo cuando el criterio diagnóstico depende de edad/sexo.','Botón «⛶ Pantalla completa» del revisor: ahora resaltado (botón sólido) para que se vea bien.']},
   {v:'1.20.0', d:'2026-07-01', c:['Diferencial más claro y en vivo: a medida que marcas rasgos, cada entidad del protocolo muestra su estado — «✓ Cumple criterios» (verde) o «Falta 1 mayor / Faltan 2 criterios» (ámbar), con barra de progreso hacia el umbral y un tooltip que detalla el criterio exigido (mayores/menores, lógica y/o) y lo que ya tienes presente. Las entidades con rasgos pero sin cumplir ya no se ocultan: aparecen en «En seguimiento» para ver cuánto falta.']},
   {v:'1.19.1', d:'2026-07-01', c:['Revisor/editor de protocolos: botón «⛶ Pantalla completa» (y «↙ Volver a como estaba») para editar el JSON, la vista previa y el formulario con mucho más espacio.']},
@@ -857,6 +861,9 @@ function attachSearchRowHandlers(box, regionLabel){
       const esLabel = (window.__esLabels && window.__esLabels[id]) || name;
       addSelection(id, esLabel, name, (regionLabel||'Búsqueda'), true);
       check.classList.toggle('active', !!selections[id]);
+      // Cerrar el cajón de resultados tras marcar y limpiar la caja de búsqueda
+      const inp=document.getElementById(box.id.replace('Results','')); if(inp) inp.value='';
+      box.innerHTML='';
     });
   });
 }
@@ -1989,6 +1996,11 @@ function renderAnthroResult(boxId){
     else if(ageY!=null && ageY>19){ const bc=bmiClass(bmi); if(bc) p=`<span class="pct ${bc.c}">${bc.t} (OMS)</span>`; }
     rows += `<div class="am-row"><span class="am-t">IMC</span><span class="am-v">${bmi.toFixed(1)} kg/m²</span>${p}</div>`;
   }
+  // Superficie corporal (Mosteller) — misma fórmula en pediatría y adulto; útil para dosificación
+  if(talla>0 && peso>0){
+    const bsa=Math.sqrt(talla*peso/3600);
+    rows += `<div class="am-row"><span class="am-t">Superficie corporal</span><span class="am-v">${bsa.toFixed(2)} m²</span><span class="pct na" title="Fórmula de Mosteller: √(talla[cm] × peso[kg] / 3600). No usa percentiles; se calcula del peso y la talla actuales (dosificación farmacológica).">Mosteller</span></div>`;
+  }
   rows += anthroPctCard('Perímetro cefálico',pc,'cm','hc',5);
   // Envergadura + cociente envergadura/talla
   let envRatio=null;
@@ -2840,7 +2852,7 @@ function openFichaReview(f, opts){
   <div class="modal" role="dialog" aria-label="Revisar ficha generada" style="max-width:760px">
     <div style="display:flex; align-items:center; justify-content:space-between; gap:10px">
       <h2>Revisar ficha generada por IA</h2>
-      <button class="btn" id="btnFichaFull" style="padding:4px 11px; font-size:12px; white-space:nowrap; flex:none">⛶ Pantalla completa</button>
+      <button class="btn ghost" id="btnFichaFull" title="Pantalla completa" aria-label="Pantalla completa" style="padding:4px 8px; flex:none; line-height:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg></button>
     </div>
     <div class="msub">Revisa y edita el JSON. Al guardar se valida, se verifica una muestra de HPO contra JAX y se commitea a tu GitHub (o a caché local si GitHub no está configurado).</div>
     <textarea id="fichaJson" spellcheck="false" style="width:100%; min-height:340px; font-family:'IBM Plex Mono',ui-monospace,monospace; font-size:12px; line-height:1.5; padding:12px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink)">${JSON.stringify(f,null,2).replace(/</g,'&lt;')}</textarea>
@@ -2885,9 +2897,13 @@ function openFichaReview(f, opts){
 
   // Pantalla completa / volver a como estaba
   const modalEl=ov.querySelector('.modal'), btnFull=ov.querySelector('#btnFichaFull');
+  const ICON_FULL='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>';
+  const ICON_EXIT='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3a2 2 0 0 0 2-2V3M20 8h-3a2 2 0 0 1-2-2V3M4 16h3a2 2 0 0 1 2 2v3M20 16h-3a2 2 0 0 0-2 2v3"/></svg>';
   if(btnFull) btnFull.addEventListener('click', ()=>{
     const full=modalEl.classList.toggle('modal-full');
-    btnFull.textContent = full ? '↙ Volver a como estaba' : '⛶ Pantalla completa';
+    btnFull.innerHTML = full ? ICON_EXIT : ICON_FULL;
+    btnFull.title = full ? 'Volver a como estaba' : 'Pantalla completa';
+    btnFull.setAttribute('aria-label', btnFull.title);
   });
 
   // Vista previa en vivo: cómo "traduce" el JSON a ficha
@@ -3127,7 +3143,20 @@ function critDetalle(e, st){
   const cond = (st.cond && st.cond.msg) ? ' Condición edad/sexo: '+st.cond.msg+'.' : '';
   return `Criterio: ${umbral} (${via}). Presentes: ${st.maj.length}/${st.needMaj} mayores · ${st.min.length}/${st.needMin} menores.${cond}`;
 }
-function geneChip(g){ return `<span class="gene">${g}</span>`; }
+/* Paneles registrados (PANELES) que contienen este gen. */
+function genePanelsOf(g){ const G=String(g||'').trim().toUpperCase(); if(!G) return []; return (PANELES||[]).filter(p=>(p.genes||[]).includes(G)).map(p=>p.name+(p.codigo?' ['+p.codigo+']':'')); }
+function geneChip(g){
+  const pl=genePanelsOf(g);
+  if(pl.length) return `<span class="gene inpanel" title="En tu(s) panel(es): ${escHtml(pl.join(' · '))}">${escHtml(g)}<span class="gene-mark" aria-hidden="true">✓</span></span>`;
+  return `<span class="gene">${escHtml(g)}</span>`;
+}
+/* Para textos "GEN1, GEN2" (PCF/Monarch): marca los que estén en un panel. */
+function geneChipsInline(genesStr){
+  return String(genesStr||'').split(/[,\s]+/).filter(Boolean).map(g=>{
+    const pl=genePanelsOf(g);
+    return pl.length ? `<b class="gene-inpanel" title="En tu(s) panel(es): ${escHtml(pl.join(' · '))}">${escHtml(g)} ✓</b>` : escHtml(g);
+  }).join(', ');
+}
 function geneLinks(g){
   const e=encodeURIComponent(g);
   return {
@@ -3328,10 +3357,15 @@ async function fetchDiseasesFor(id){
     const ds=(d.diseases||[]).map(x=>({id:x.id, name:x.name})); jaxDiseaseCache[id]=ds; return ds;
   }catch(e){ return []; }
 }
+/* Nombre corto de un HPO para tooltips: español (babelon) → id. */
+function hpoShort(id){ return ((window.__esLabels&&window.__esLabels[id])||(selections[id]&&selections[id].es)||id); }
 function jaxRowHtml(r){
+  const matched=r.matched||[]; const noMatch=(r.subset||[]).filter(x=>!matched.includes(x));
+  const tip='Coinciden ('+matched.length+'): '+(matched.map(hpoShort).join(', ')||'—')
+    +(noMatch.length?'  |  No coinciden: '+noMatch.map(hpoShort).join(', '):'');
   return `<div class="dx">
-    <div class="dx-hd"><span class="dx-nm">${escHtml(r.name||r.id)}</span><span class="pill sug" title="Nº de TUS HPO anotados en esta enfermedad (solapamiento curado en HPO). NO es probabilidad ni grado de evidencia.">${r.count}/${r.total} rasgos</span></div>
-    <div class="dx-meta">${diseaseLinks(r.id).join(' · ')}</div>
+    <div class="dx-hd"><span class="dx-nm">${escHtml(r.name||r.id)}</span><span class="pill sug" title="${escHtml(tip)}">${r.count}/${r.total} rasgos</span></div>
+    <div class="dx-meta" title="${escHtml(tip)}">${diseaseLinks(r.id).join(' · ')} · <span style="cursor:help;text-decoration:underline dotted">qué rasgos coinciden</span></div>
   </div>`;
 }
 // Categoría del paciente para el ajuste del diferencial (gestación → prenatal).
@@ -3362,9 +3396,9 @@ async function runJaxDx(){
     const subset=ids.slice(0,8);
     const lists=await Promise.all(subset.map(fetchDiseasesFor));
     if(jaxForIds!==Object.keys(selections).join(',')){ jaxLoading=false; return; } // cambió mientras
-    const counts={}, names={};
-    lists.forEach(list=> list.forEach(x=>{ counts[x.id]=(counts[x.id]||0)+1; names[x.id]=x.name; }));
-    const ranked=Object.keys(counts).map(id=>({id, name:names[id], count:counts[id], total:subset.length})).filter(d=>d.count>=2);
+    const counts={}, names={}, matched={};
+    lists.forEach((list,i)=> list.forEach(x=>{ counts[x.id]=(counts[x.id]||0)+1; names[x.id]=x.name; (matched[x.id]=matched[x.id]||[]).push(subset[i]); }));
+    const ranked=Object.keys(counts).map(id=>({id, name:names[id], count:counts[id], total:subset.length, matched:matched[id]||[], subset})).filter(d=>d.count>=2);
     jaxResults=applyPatientWeighting(ranked).slice(0,DX_TOP);
   }catch(e){ jaxError='No se pudo consultar JAX ('+e.message+').'; }
   jaxLoading=false; renderMonarch();
@@ -3413,8 +3447,8 @@ function pcfRowHtml(r){
   if(r.omim) links.push(`<a href="https://omim.org/entry/${r.omim}" target="_blank" rel="noopener">OMIM:${r.omim}</a>`);
   if(r.mondo) links.push(`<a href="https://monarchinitiative.org/${r.mondo}" target="_blank" rel="noopener">${r.mondo}</a>`);
   return `<div class="dx">
-    <div class="dx-hd"><span class="dx-nm">${escHtml(r.name||r.id)}</span><span class="pill sug" title="Puntuación de ranking de PubCaseFinder. NO es probabilidad ni grado de evidencia.">${r.score!=null?(+r.score).toFixed(2):('#'+(r.rank||'?'))}</span></div>
-    <div class="dx-meta">${r.gene?'gen '+escHtml(r.gene)+' · ':''}${r.inh?escHtml(r.inh)+' · ':''}${links.join(' · ')}</div>
+    <div class="dx-hd"><span class="dx-nm">${escHtml(r.name||r.id)}</span><span class="pill sug" title="Puntuación de ranking de PubCaseFinder (0–1) expresada en %. NO es probabilidad ni grado de evidencia.">${r.score!=null?(+r.score*100).toFixed(1)+'%':('#'+(r.rank||'?'))}</span></div>
+    <div class="dx-meta">${r.gene?'gen '+geneChipsInline(r.gene)+' · ':''}${r.inh?escHtml(r.inh)+' · ':''}${links.join(' · ')}</div>
   </div>`;
 }
 async function runPcfDx(){
