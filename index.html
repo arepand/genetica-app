@@ -446,8 +446,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.18.0';
+const APP_VERSION='1.19.0';
 const CHANGELOG=[
+  {v:'1.19.0', d:'2026-07-01', c:['Editor visual del formulario de anamnesis (en el revisor, «✎ Editar»): añade/quita dominios, preguntas y respuestas con botones +/🗑, alterna respuesta única/múltiple, y añade o quita códigos HPO en cada respuesta con un buscador integrado (con nombre oficial JAX) — todo sin escribir JSON a mano. El mismo array «dominios» alimenta a la vez este formulario y la anamnesis dirigida que rellenas por paciente.']},
   {v:'1.18.0', d:'2026-07-01', c:['Revisor de fichas — corrector de HPO en la vista previa: cada código HPO se muestra como un chip con su NOMBRE OFICIAL (JAX) al lado, y avisa con «≠» cuando el nombre oficial no coincide con la etiqueta que puso la IA (código válido pero de otro concepto). Al hacer clic en el chip se abre un buscador AJAX (español, inglés o código HP:…) para localizar el término correcto y reemplazar el código en el JSON con un clic.']},
   {v:'1.17.0', d:'2026-07-01', c:['Transparencia IA: mientras la IA trabaja, aparece un indicador arriba con la tarea en curso; y en «Estado» hay un interruptor «Debug IA» que —solo cuando lo activas— registra TODAS las operaciones de IA (system, prompt, razonamiento y respuesta) y te las descarga en un .txt. Por defecto no registra nada.','Revisor de fichas: nuevo cajetín para pedir a la IA modificaciones en lenguaje natural (edita el JSON de forma iterativa, manteniendo el esquema y verificando HPO) y VISTA PREVIA en vivo que muestra cómo «se traduce» el JSON a la ficha según lo editas.']},
   {v:'1.16.0', d:'2026-06-30', c:['Creador/editor de protocolos: nuevo diálogo con motivo + un campo de INSTRUCCIONES libres (admite un JSON de plantilla a respetar) + posibilidad de aportar UNO O VARIOS PDF (subidos o elegidos de tu repositorio documental) como fuente principal. La generación sigue verificando cada HPO contra JAX.']},
@@ -2777,32 +2778,35 @@ async function previewHpoSearch(term){
   try{ const r=await fetch(HPO_API+'/search?q='+encodeURIComponent(term)+'&max=8'); const d=await r.json(); (d.terms||d.data||[]).forEach(t=>{ if(out.length<16) add(t.id, esLabels[t.id], t.name); }); }catch(e){}
   return out.slice(0,12);
 }
-function toggleHpoFixPop(chip){
-  const cont=chip.closest('#fichaPreview');
-  const existing=chip.nextElementSibling;
+// Popover de búsqueda HPO reutilizable: se inserta tras `anchor`; al elegir llama onPick(id, nombre)
+function buildHpoSearchPop(anchor, onPick, placeholder){
+  const existing=anchor.nextElementSibling;
   if(existing && existing.classList && existing.classList.contains('hp-fix-pop')){ existing.remove(); return; }
-  if(cont) cont.querySelectorAll('.hp-fix-pop').forEach(p=>p.remove());
-  const oldId=chip.dataset.hpo;
+  const ov=anchor.closest('#fichaReviewOverlay'); if(ov) ov.querySelectorAll('.hp-fix-pop').forEach(p=>p.remove());
   const pop=document.createElement('div'); pop.className='hp-fix-pop';
-  pop.innerHTML=`<input class="hp-fix-q" type="text" placeholder="Buscar el término correcto (español, inglés o código HP:…)" autocomplete="off"><div class="hp-fix-res"></div>`;
-  chip.after(pop);
+  pop.innerHTML=`<input class="hp-fix-q" type="text" placeholder="${escHtml(placeholder||'Buscar el término correcto (español, inglés o código HP:…)')}" autocomplete="off"><div class="hp-fix-res"></div>`;
+  anchor.after(pop);
   const inp=pop.querySelector('.hp-fix-q'), res=pop.querySelector('.hp-fix-res');
-  let t=null; inp.addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(()=>runFixSearch(oldId, inp.value, res), 250); });
+  const doSearch=async ()=>{
+    const term=(inp.value||'').trim();
+    if(term.length<2){ res.innerHTML=''; return; }
+    res.innerHTML='<div class="dx-meta" style="padding:4px 2px">Buscando…</div>';
+    const hits=await previewHpoSearch(term);
+    if(!hits.length){ res.innerHTML='<div class="dx-meta" style="padding:4px 2px">Sin resultados.</div>'; return; }
+    res.innerHTML=hits.map(h=>{
+      const nm=escHtml(h.es||h.en||'').replace(/"/g,'&quot;');
+      const en=(h.en && h.en!==h.es)?` <span class="dx-meta">${escHtml(h.en)}</span>`:'';
+      return `<div class="hp-fix-row" data-to="${escHtml(h.id)}" data-nm="${nm}"><b>${escHtml(h.es||h.en)}</b> <span class="hp">${escHtml(h.id)}</span>${en}</div>`;
+    }).join('');
+    res.querySelectorAll('.hp-fix-row').forEach(r=>r.addEventListener('click', ()=>{ onPick(r.dataset.to, r.dataset.nm); pop.remove(); }));
+  };
+  let t=null; inp.addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(doSearch, 250); });
   inp.addEventListener('keydown', e=>{ if(e.key==='Escape') pop.remove(); });
   inp.focus();
 }
-async function runFixSearch(oldId, term, res){
-  term=(term||'').trim();
-  if(term.length<2){ res.innerHTML=''; return; }
-  res.innerHTML='<div class="dx-meta" style="padding:4px 2px">Buscando…</div>';
-  const hits=await previewHpoSearch(term);
-  if(!hits.length){ res.innerHTML='<div class="dx-meta" style="padding:4px 2px">Sin resultados.</div>'; return; }
-  res.innerHTML=hits.map(h=>{
-    const nm=escHtml(h.es||h.en||'').replace(/"/g,'&quot;');
-    const en=(h.en && h.en!==h.es)?` <span class="dx-meta">${escHtml(h.en)}</span>`:'';
-    return `<div class="hp-fix-row" data-to="${escHtml(h.id)}" data-nm="${nm}"><b>${escHtml(h.es||h.en)}</b> <span class="hp">${escHtml(h.id)}</span>${en}</div>`;
-  }).join('');
-  res.querySelectorAll('.hp-fix-row').forEach(r=>r.addEventListener('click', ()=>replaceHpoInReview(oldId, r.dataset.to, r.dataset.nm)));
+function toggleHpoFixPop(chip){
+  const oldId=chip.dataset.hpo;
+  buildHpoSearchPop(chip, (newId,name)=>replaceHpoInReview(oldId,newId,name));
 }
 function replaceHpoInReview(oldId, newId, name){
   const ov=document.getElementById('fichaReviewOverlay'); if(!ov) return;
@@ -2841,6 +2845,10 @@ function openFichaReview(f, opts){
       <div id="fichaPreview" style="border:1px solid var(--line); border-radius:9px; padding:10px 12px; margin-top:6px; max-height:300px; overflow:auto"></div>
     </details>
 
+    <details id="feDetails" style="margin-top:10px"><summary class="cart-group-title" style="cursor:pointer">🧩 Editor visual del formulario (anamnesis) — sin tocar JSON</summary>
+      <div id="formEditor" style="border:1px solid var(--line); border-radius:9px; padding:10px 12px; margin-top:6px; max-height:360px; overflow:auto"></div>
+    </details>
+
     <div style="border:1px solid var(--line); border-radius:9px; padding:10px 12px; margin-top:12px; background:var(--panel2)">
       <div style="font-size:12px; font-weight:700; color:var(--accent); margin-bottom:6px">📎 Aplicar una guía a esta ficha (opcional) + re-buscar</div>
       <div class="field" style="margin:0 0 8px"><label>URL de la guía</label><input id="revGuiaUrl" type="text" placeholder="https://…" autocomplete="off"></div>
@@ -2867,6 +2875,82 @@ function openFichaReview(f, opts){
   let _pvT=null; ta.addEventListener('input', ()=>{ clearTimeout(_pvT); _pvT=setTimeout(renderPrev, 300); });
   // Clic en un chip HPO del preview → abre el buscador AJAX para verificar/corregir el código
   if(prev) prev.addEventListener('click', e=>{ if(e.target.closest('.hp-fix-pop')) return; const chip=e.target.closest('.hp-chip'); if(chip && prev.contains(chip)) toggleHpoFixPop(chip); });
+
+  // ---- Editor visual del formulario (anamnesis): dominios → preguntas → opciones → HPO, sin tocar JSON ----
+  const fbox=ov.querySelector('#formEditor'), feDet=ov.querySelector('#feDetails');
+  const feModel=()=>{ try{ return JSON.parse(ta.value); }catch(e){ return null; } };
+  const feWrite=(j, rerender)=>{ ta.value=JSON.stringify(j,null,2); renderPrev(); if(rerender) renderForm(); };
+  const feIn='padding:4px 7px;border:1px solid var(--line);border-radius:6px;background:var(--panel2);color:var(--ink);font-size:12px';
+  const feBtn='padding:2px 8px;font-size:11px';
+  const A=s=>escHtml(s||'').replace(/"/g,'&quot;');
+  function renderForm(){
+    if(!fbox) return;
+    const j=feModel();
+    if(!j){ fbox.innerHTML='<div class="dx-meta">El JSON no es válido ahora mismo — corrígelo para editar el formulario visualmente.</div>'; return; }
+    const doms=(j.dominios||[]).map((d,di)=>`
+      <div style="border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0">
+        <div style="display:flex;gap:6px;align-items:center">
+          <input class="fe-i" data-fe="domname" data-di="${di}" value="${A(d.nombre)}" placeholder="Nombre del dominio" style="flex:1;font-weight:600;${feIn}">
+          <button class="btn ghost" data-fe="deldom" data-di="${di}" title="Eliminar dominio" style="${feBtn}">🗑</button>
+        </div>
+        ${(d.preguntas||[]).map((q,qi)=>`
+          <div style="border-left:2px solid var(--accent2);margin:7px 0 7px 4px;padding-left:8px">
+            <div style="display:flex;gap:6px;align-items:center">
+              <input class="fe-i" data-fe="qtext" data-di="${di}" data-qi="${qi}" value="${A(q.texto)}" placeholder="Enunciado de la pregunta" style="flex:1;${feIn}">
+              <label class="dx-meta" style="display:flex;align-items:center;gap:3px;white-space:nowrap;margin:0"><input type="checkbox" data-fe="qmult" data-di="${di}" data-qi="${qi}" ${q.multiple?'checked':''}> varias</label>
+              <button class="btn ghost" data-fe="delq" data-di="${di}" data-qi="${qi}" title="Eliminar pregunta" style="${feBtn}">🗑</button>
+            </div>
+            ${(q.opciones||[]).map((o,oi)=>`
+              <div style="margin:5px 0 5px 8px">
+                <div style="display:flex;gap:6px;align-items:center">
+                  <span class="dx-meta" style="margin:0" title="${q.multiple?'casilla':'opción única'}">${q.multiple?'☑':'◉'}</span>
+                  <input class="fe-i" data-fe="oetq" data-di="${di}" data-qi="${qi}" data-oi="${oi}" value="${A(o.etiqueta)}" placeholder="Respuesta" style="flex:1;${feIn}">
+                  <button class="btn ghost" data-fe="delo" data-di="${di}" data-qi="${qi}" data-oi="${oi}" title="Eliminar opción" style="${feBtn}">🗑</button>
+                </div>
+                <div style="margin:3px 0 0 20px">
+                  ${(o.hpo||[]).map((h,hi)=>`<span class="hp-chip" style="cursor:default">${escHtml(h.id)}<span class="hp-nm" data-hpo-nm="${escHtml(h.id)}"> · …</span> <a data-fe="delh" data-di="${di}" data-qi="${qi}" data-oi="${oi}" data-hi="${hi}" title="Quitar este HPO" style="cursor:pointer;color:var(--danger);font-weight:700">×</a></span>`).join(' ')}
+                  <button class="btn ghost" data-fe="addh" data-di="${di}" data-qi="${qi}" data-oi="${oi}" style="${feBtn}">+ HPO</button>
+                </div>
+              </div>`).join('')}
+            <button class="btn ghost" data-fe="addo" data-di="${di}" data-qi="${qi}" style="${feBtn};margin-left:8px">+ respuesta</button>
+          </div>`).join('')}
+        <button class="btn ghost" data-fe="addq" data-di="${di}" style="${feBtn}">+ pregunta</button>
+      </div>`).join('');
+    fbox.innerHTML=(doms||'<div class="dx-meta" style="margin-bottom:6px">Esta ficha aún no tiene dominios de anamnesis.</div>')
+      +`<button class="btn" data-fe="adddom" style="${feBtn};margin-top:4px">+ dominio</button>`;
+    annotateHpoChips(fbox);
+  }
+  if(feDet) feDet.addEventListener('toggle', ()=>{ if(feDet.open) renderForm(); });
+  if(fbox){
+    fbox.addEventListener('input', e=>{
+      const el=e.target.closest('[data-fe]'); if(!el) return; const fe=el.dataset.fe;
+      if(fe!=='domname'&&fe!=='qtext'&&fe!=='oetq') return;
+      const j=feModel(); if(!j) return; const di=+el.dataset.di, qi=+el.dataset.qi, oi=+el.dataset.oi;
+      if(fe==='domname') j.dominios[di].nombre=el.value;
+      else if(fe==='qtext') j.dominios[di].preguntas[qi].texto=el.value;
+      else if(fe==='oetq') j.dominios[di].preguntas[qi].opciones[oi].etiqueta=el.value;
+      feWrite(j, false); // no re-render: conserva el foco mientras se teclea
+    });
+    fbox.addEventListener('change', e=>{
+      const el=e.target.closest('[data-fe="qmult"]'); if(!el) return;
+      const j=feModel(); if(!j) return; j.dominios[+el.dataset.di].preguntas[+el.dataset.qi].multiple=el.checked; feWrite(j, true);
+    });
+    fbox.addEventListener('click', e=>{
+      const b=e.target.closest('[data-fe]'); if(!b) return; const fe=b.dataset.fe;
+      if(fe==='domname'||fe==='qtext'||fe==='oetq'||fe==='qmult') return;
+      const j=feModel(); if(!j){ showToast('Corrige el JSON antes de editar el formulario'); return; }
+      if(!Array.isArray(j.dominios)) j.dominios=[];
+      const di=+b.dataset.di, qi=+b.dataset.qi, oi=+b.dataset.oi, hi=+b.dataset.hi; const D=j.dominios;
+      if(fe==='adddom'){ D.push({nombre:'Nuevo dominio', preguntas:[]}); feWrite(j,true); }
+      else if(fe==='deldom'){ D.splice(di,1); feWrite(j,true); }
+      else if(fe==='addq'){ (D[di].preguntas=D[di].preguntas||[]).push({id:'q'+Math.random().toString(36).slice(2,6), texto:'Nueva pregunta', multiple:false, opciones:[{etiqueta:'Sí',hpo:[]},{etiqueta:'No',hpo:[]}]}); feWrite(j,true); }
+      else if(fe==='delq'){ D[di].preguntas.splice(qi,1); feWrite(j,true); }
+      else if(fe==='addo'){ (D[di].preguntas[qi].opciones=D[di].preguntas[qi].opciones||[]).push({etiqueta:'Nueva respuesta', hpo:[]}); feWrite(j,true); }
+      else if(fe==='delo'){ D[di].preguntas[qi].opciones.splice(oi,1); feWrite(j,true); }
+      else if(fe==='delh'){ D[di].preguntas[qi].opciones[oi].hpo.splice(hi,1); feWrite(j,true); }
+      else if(fe==='addh'){ buildHpoSearchPop(b, (id,name)=>{ const jj=feModel(); if(!jj) return; const arr=(jj.dominios[di].preguntas[qi].opciones[oi].hpo=jj.dominios[di].preguntas[qi].opciones[oi].hpo||[]); if(!arr.some(h=>h.id===id)) arr.push({id, nombre:name}); feWrite(jj,true); }, 'Buscar HPO para añadir a esta respuesta…'); }
+    });
+  }
 
   // Editar el JSON con IA por instrucción libre (iterativo)
   ov.querySelector('#btnEditIA').addEventListener('click', async ()=>{
