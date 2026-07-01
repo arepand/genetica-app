@@ -457,8 +457,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.23.0';
+const APP_VERSION='1.24.0';
 const CHANGELOG=[
+  {v:'1.24.0', d:'2026-07-01', c:['Diferencial cruzado: cuando un protocolo tuyo (aunque no esté abierto) encaja, se resaltan LAS SUB-ENTIDADES concretas que cumplen dentro de él (p. ej. dentro de «Talla baja» → Turner y haploinsuficiencia SHOX), en una tarjeta destacada.','Botón «Aplicar protocolo y seguir anamnesis» en cada sugerencia del diferencial: carga ese protocolo como activo y salta a su anamnesis dirigida conservando el fenotipo ya marcado.','PubCaseFinder ahora EN DIRECTO (se actualiza solo al marcar rasgos, con espera de 1,5 s; hasta 10 resultados), sin botón.','Nuevo «Panel de genes sugerido» de PubCaseFinder (panelsearch): a partir de los HPO propone genes rankeados, marca los que ya están en tus paneles (✓) y permite crear un panel nuevo con ellos.']},
   {v:'1.23.0', d:'2026-07-01', c:['Editor de protocolos — sincronización en vivo total: editar el JSON refresca al momento la vista previa Y el editor visual del formulario (y viceversa).','Versionado + copias de seguridad: cada guardado sube el número de revisión del protocolo, guarda una nota en su changelog y crea una copia de seguridad; nuevo panel «🕘 Versiones guardadas» para revertir a una versión anterior cargándola en el editor.','Ficha: los paneles génicos aplicables se eligen con un buscador multiselección (nombre/código/técnica) en vez de una lista larga de casillas.','Paneles génicos: nuevo campo «Técnica» (Panel NGS / Panel virtual por exoma).']},
   {v:'1.22.0', d:'2026-07-01', c:['Logo de Ariadna con fondo transparente en la cabecera (ya no destaca sobre la hoja).','Buscador HPO: el desplegable de resultados se cierra al marcar un término (antes se quedaba abierto).','PubCaseFinder: la puntuación se muestra en porcentaje con 1 decimal.','Solapamiento HPO (JAX): al pasar el ratón sobre «N/M rasgos» se ve QUÉ HPO coinciden y cuáles no.','En los resultados del diferencial, los genes que están en uno de tus paneles registrados se marcan en verde con ✓ (tooltip con el/los panel/es).','Antropometría: nueva Superficie Corporal (fórmula de Mosteller) con tooltip de la fuente.','Botones de pantalla completa del editor convertidos en iconos (entrar/salir).']},
   {v:'1.21.0', d:'2026-07-01', c:['Criterios condicionados por edad y sexo: las entidades de un protocolo pueden declarar «sexo» y/o rango de edad («edad_min_anios»/«edad_max_anios»); la app usa la edad y el sexo que ya tienes del paciente y marca la entidad como «✕ No aplica (edad/sexo)» cuando queda fuera, o avisa si falta ese dato. La IA rellena estos campos solo cuando el criterio diagnóstico depende de edad/sexo.','Botón «⛶ Pantalla completa» del revisor: ahora resaltado (botón sólido) para que se vea bien.']},
@@ -3317,18 +3318,42 @@ function crossProtocolMatches(){
   const out=[]; const activeId=activeFicha&&activeFicha.id;
   for(const fc of (_fichaDxIndex||[])){
     if(fc.id===activeId) continue;
-    let best=null; for(const e of (fc.entidades||[])){ const st=entidadStatus(e); if(st.cumple && (st.maj.length+st.min.length)>0){ if(!best||st.score>best.st.score) best={e, st}; } }
-    if(best) out.push({id:fc.id, nombre:fc.nombre, ent:best.e.nombre, st:best.st});
+    const ents=[];
+    for(const e of (fc.entidades||[])){ const st=entidadStatus(e); if(st.cumple && (st.maj.length+st.min.length)>0) ents.push({nombre:e.nombre, st}); }
+    if(ents.length){ ents.sort((a,b)=>b.st.score-a.st.score); out.push({id:fc.id, nombre:fc.nombre, ents, score:Math.max(...ents.map(x=>x.st.score))}); }
   }
-  return out.sort((a,b)=>b.st.score-a.st.score);
+  return out.sort((a,b)=>b.score-a.score);
 }
 function crossProtocolHtml(topMargin){
   if(currentSection==='prenatal') return '';
   const cross=crossProtocolMatches(); if(!cross.length) return '';
-  return `<div class="cart-group-title" style="color:var(--accent)${topMargin?';margin-top:12px':''}">También encaja con tus protocolos <span class="dx-meta">(${cross.length})</span></div>`
-    + cross.map(m=>`<div class="study" style="margin:5px 0"><a class="tip-ai" data-openficha="${escHtml(m.id)}"><b>${escHtml(m.nombre)}</b></a> <span class="dx-meta">· ${escHtml(m.ent)} — ${m.st.maj.length}/${m.st.needMaj} mayores · ${m.st.min.length}/${m.st.needMin} menores</span></div>`).join('');
+  return `<div class="cart-group-title" style="color:var(--accent)${topMargin?';margin-top:12px':''}">🎯 También encaja con tus protocolos <span class="dx-meta">(${cross.length})</span></div>`
+    + cross.map(m=>{
+      const complejo=m.ents.length>1;
+      const subs=m.ents.map(x=>`<div class="dx-meta" style="margin:2px 0 0 8px;color:var(--ink2)">↳ <b style="color:var(--ok)">${escHtml(x.nombre)}</b> <span class="dx-meta">— ${x.st.maj.length}/${x.st.needMaj} mayores · ${x.st.min.length}/${x.st.needMin} menores</span></div>`).join('');
+      return `<div style="border:1px solid var(--accent2);border-left:3px solid var(--accent);border-radius:9px;padding:8px 10px;margin:6px 0;background:linear-gradient(180deg,#16302c,#141d1b)">
+        <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap"><a class="tip-ai" data-openficha="${escHtml(m.id)}"><b>${escHtml(m.nombre)}</b></a>${complejo?`<span class="pill sug" title="Cumplen varias entidades dentro de este protocolo">${m.ents.length} entidades</span>`:''}</div>
+        ${complejo?`<div class="dx-meta" style="margin-top:2px">Dentro de este protocolo cumplen:</div>`:''}
+        ${subs}
+        <button class="btn primary aplicarProto" data-aplicar="${escHtml(m.id)}" style="margin-top:7px;padding:3px 10px;font-size:12px">Aplicar protocolo y seguir anamnesis ›</button>
+      </div>`;
+    }).join('');
 }
-function wireCrossProto(box){ box.querySelectorAll('[data-openficha]').forEach(a=>a.addEventListener('click', ()=>{ showSection('biblioteca'); setTimeout(()=>abrirFichaBiblioteca(a.dataset.openficha, false), 50); })); }
+function wireCrossProto(box){
+  box.querySelectorAll('[data-openficha]').forEach(a=>a.addEventListener('click', ()=>{ showSection('biblioteca'); setTimeout(()=>abrirFichaBiblioteca(a.dataset.openficha, false), 50); }));
+  box.querySelectorAll('.aplicarProto').forEach(b=>b.addEventListener('click', (e)=>{ e.stopPropagation(); aplicarProtocolo(b.dataset.aplicar); }));
+}
+/* Cargar un protocolo del diferencial como ficha activa y saltar directo a su anamnesis (conserva el fenotipo actual). */
+async function aplicarProtocolo(id){
+  try{
+    const f=await getFicha(id); if(!f){ showToast('No se pudo cargar el protocolo'); return; }
+    const idx=await getIndex();
+    showSection('fenotipado');
+    setActiveFicha(f, {via:'manual', confianza:1}, idx.fichas||[]);
+    renderAnamnesis();
+    showToast('Protocolo aplicado: '+(f.nombre_es||id)+'. Sigue la anamnesis dirigida.');
+  }catch(e){ showToast('No se pudo aplicar el protocolo'); }
+}
 function renderDifferential(){
   const dbox=document.getElementById('differentialBox');
   const gbox=document.getElementById('genePanelBox');
@@ -3380,10 +3405,13 @@ function renderDifferential(){
    =========================================================================== */
 const MONARCH_SEMSIM='https://api-v3.monarchinitiative.org/v3/api/semsim/search';
 const PCF_API='https://pubcasefinder.dbcls.jp/api/pcf_get_ranked_list?target=omim&format=json&hpo_id=';
+const PCF_GENE_API='https://pubcasefinder.dbcls.jp/api/pcf_get_ranked_list?target=gene&format=json&hpo_id=';
 const JAX_ANNOT='https://ontology.jax.org/api/network/annotation/';
 const DX_TOP=5;   // mostrar solo las 5 mejores de cada fuente
+const PCF_TOP=10; // PubCaseFinder en directo: hasta 10
 let monarchResults=null, monarchLoading=false, monarchError=null, monarchForIds='', monarchTimer=null;
-let pcfResults=null, pcfLoading=false, pcfError=null, pcfForIds='';
+let pcfResults=null, pcfLoading=false, pcfError=null, pcfForIds='', pcfTimer=null;
+let pcfGenes=null, pcfGenesLoading=false, pcfGenesError=null, pcfGenesForIds='';
 let jaxResults=null, jaxLoading=false, jaxError=null, jaxForIds='';
 const jaxDiseaseCache={};
 function diseaseLinks(id){
@@ -3496,12 +3524,14 @@ function pcfRowHtml(r){
 }
 async function runPcfDx(){
   const ids=Object.keys(selections); if(ids.length<2) return;
-  pcfLoading=true; pcfError=null; pcfForIds=ids.join(','); renderMonarch();
+  const forIds=ids.join(','); if(pcfForIds===forIds && (pcfResults||pcfError) && !pcfLoading) return;
+  pcfLoading=true; pcfError=null; pcfForIds=forIds; renderMonarch();
   try{
-    const resp=await fetch(PCF_API+ids.join(','));
+    const resp=await fetch(PCF_API+forIds);
     if(!resp.ok) throw new Error('HTTP '+resp.status);
     const data=await resp.json();
-    pcfResults=(Array.isArray(data)?data:[]).slice(0,DX_TOP).map(r=>({
+    if(pcfForIds!==Object.keys(selections).join(',')){ pcfLoading=false; return; }
+    pcfResults=(Array.isArray(data)?data:[]).slice(0,PCF_TOP).map(r=>({
       name:r.omim_disease_name_en||r.id, omim:(r.id||'').replace('OMIM:',''),
       mondo:(r.mondo_id&&r.mondo_id[0])||'',
       gene:(r.hgnc_gene_symbol&&r.hgnc_gene_symbol.join(', '))||'',
@@ -3511,16 +3541,36 @@ async function runPcfDx(){
   }catch(e){ pcfError='No se pudo consultar PubCaseFinder ('+e.message+').'; }
   pcfLoading=false; renderMonarch();
 }
+/* PubCaseFinder panelsearch: HPO → genes rankeados (panel de genes sugerido). */
+async function runPcfGenes(){
+  const ids=Object.keys(selections); if(ids.length<2) return;
+  const forIds=ids.join(','); if(pcfGenesForIds===forIds && (pcfGenes||pcfGenesError) && !pcfGenesLoading) return;
+  pcfGenesLoading=true; pcfGenesError=null; pcfGenesForIds=forIds; renderMonarch();
+  try{
+    const resp=await fetch(PCF_GENE_API+forIds);
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    const data=await resp.json();
+    if(pcfGenesForIds!==Object.keys(selections).join(',')){ pcfGenesLoading=false; return; }
+    pcfGenes=(Array.isArray(data)?data:[]).slice(0,PCF_TOP).map(r=>({
+      gene:(r.hgnc_gene_symbol&&(Array.isArray(r.hgnc_gene_symbol)?r.hgnc_gene_symbol[0]:r.hgnc_gene_symbol))||r.gene_symbol||r.id||'',
+      score:r.score, rank:r.rank
+    })).filter(r=>r.gene);
+  }catch(e){ pcfGenesError='No se pudo consultar el panel de genes ('+e.message+').'; }
+  pcfGenesLoading=false; renderMonarch();
+}
 function renderMonarch(){
   const box=document.getElementById('monarchBox'); if(!box) return;
   const ids=Object.keys(selections);
   if(ids.length<2){ box.style.display='none'; monarchTimer&&clearTimeout(monarchTimer); return; }
   box.style.display='block';
   const cur=ids.join(',');
-  // En vivo (debounce): solapamiento JAX (≥3 HPO) + Monarch. PubCaseFinder a demanda (payload grande).
+  // En vivo (debounce 600ms): solapamiento JAX (≥3 HPO) + Monarch (ligeros).
   const needM=!monarchLoading && monarchForIds!==cur;
   const needJ=ids.length>=3 && !jaxLoading && jaxForIds!==cur;
   if(needM || needJ){ monarchTimer&&clearTimeout(monarchTimer); monarchTimer=setTimeout(()=>{ runMonarchDx(); if(ids.length>=3) runJaxDx(); }, 600); }
+  // PubCaseFinder (enfermedades + panel de genes) en directo con debounce largo (1,5 s) por su payload grande.
+  const needP=(!pcfLoading && pcfForIds!==cur) || (!pcfGenesLoading && pcfGenesForIds!==cur);
+  if(needP){ pcfTimer&&clearTimeout(pcfTimer); pcfTimer=setTimeout(()=>{ runPcfDx(); runPcfGenes(); }, 1500); }
   // JAX (solapamiento de enfermedades anotadas en HPO)
   let jBody;
   if(ids.length<3) jBody='<div class="empty">Marca ≥3 rasgos para el solapamiento.</div>';
@@ -3534,21 +3584,39 @@ function renderMonarch(){
   else if(monarchResults && monarchResults.length) mBody=monarchResults.map(monarchRowHtml).join('');
   else if(monarchLoading || monarchForIds!==cur) mBody='<div class="loading">Buscando en Monarch…</div>';
   else mBody='<div class="empty">Sin coincidencias.</div>';
-  // PubCaseFinder (a demanda)
-  const pStale=pcfForIds && pcfForIds!==cur;
+  // PubCaseFinder · OMIM (en directo)
   let pBody='';
-  if(pcfLoading) pBody='<div class="loading">Consultando PubCaseFinder… (puede tardar)</div>';
-  else if(pcfError) pBody='<div class="err">'+pcfError+'</div>';
-  else if(pcfResults&&pcfResults.length) pBody=pcfResults.map(pcfRowHtml).join('')+(pStale?'<div class="dx-meta" style="color:#b8860b">Rasgos cambiados — recalcula.</div>':'');
-  const pBtn=`<button class="btn" id="btnPcf" style="margin-top:6px">${pcfResults?'↻ Recalcular':'🔎 Buscar en PubCaseFinder (OMIM)'}</button>`;
-  const ext=`<div class="dx-meta" style="margin-top:10px">También: <a href="https://pubcasefinder.dbcls.jp/?hpo_id=${cur}" target="_blank" rel="noopener">PubCaseFinder web</a>. (El clásico <b>Phenomizer/Orphamizer</b> de Charité está descontinuado; su algoritmo lo provee hoy Monarch.)</div>`;
+  if(pcfError) pBody='<div class="err">'+pcfError+'</div>';
+  else if(pcfResults&&pcfResults.length) pBody=pcfResults.map(pcfRowHtml).join('');
+  else if(pcfLoading || pcfForIds!==cur) pBody='<div class="loading">Consultando PubCaseFinder…</div>';
+  else pBody='<div class="empty">Sin coincidencias.</div>';
+  // PubCaseFinder · panel de genes sugerido (panelsearch)
+  let gBody='';
+  if(pcfGenesError) gBody='<div class="err">'+pcfGenesError+'</div>';
+  else if(pcfGenes&&pcfGenes.length){
+    gBody=`<div style="margin:3px 0">${pcfGenes.map(g=>{ const pl=genePanelsOf(g.gene); const pct=g.score!=null?(+g.score*100).toFixed(1)+'%':''; const mark=pl.length?` <span class="gene-mark" title="En tu(s) panel(es): ${escHtml(pl.join(' · '))}">✓</span>`:''; return `<span class="gene${pl.length?' inpanel':''}" title="${pl.length?'En tu(s) panel(es): '+escHtml(pl.join(' · ')):'Gen sugerido'}${pct?' · ranking '+pct:''}">${escHtml(g.gene)}${mark}</span>`; }).join(' ')}</div>`
+      +`<button class="btn ghost" id="btnPcfPanel" style="margin-top:6px;padding:3px 9px;font-size:11px">+ Crear panel con estos genes</button>`;
+  }
+  else if(pcfGenesLoading || pcfGenesForIds!==cur) gBody='<div class="loading">Sugeriendo panel de genes…</div>';
+  else gBody='<div class="empty">Sin genes sugeridos.</div>';
+  const ext=`<div class="dx-meta" style="margin-top:10px">También: <a href="https://pubcasefinder.dbcls.jp/?hpo_id=${cur}" target="_blank" rel="noopener">PubCaseFinder web</a> · <a href="https://pubcasefinder.dbcls.jp/panelsearch" target="_blank" rel="noopener">panelsearch</a>. (El clásico <b>Phenomizer/Orphamizer</b> de Charité está descontinuado; su algoritmo lo provee hoy Monarch.)</div>`;
   box.innerHTML=`<div class="cart-group-title">Diferencial por fenotipo (fenotipo → enfermedad)</div>`
-    +`<div class="dx-meta" style="margin:-2px 0 8px">Las cifras son <b>solapamiento/similitud/ranking</b> de cada herramienta — <b>no</b> son probabilidad ni grado de evidencia clínica. Orientativo, máx. ${DX_TOP} por fuente.</div>`
+    +`<div class="dx-meta" style="margin:-2px 0 8px">Las cifras son <b>solapamiento/similitud/ranking</b> de cada herramienta — <b>no</b> son probabilidad ni grado de evidencia clínica. En directo, orientativo.</div>`
     +`<div class="dx-src">Solapamiento HPO · JAX (OMIM/Orphanet)${patientLabel()?` <span style="color:var(--ink3);font-weight:400">· ajustado: ${patientLabel()}</span>`:''}</div>`+jBody
     +`<div class="dx-src" style="margin-top:12px">Similitud semántica · Monarch (MONDO)</div>`+mBody
-    +`<div class="dx-src" style="margin-top:12px">PubCaseFinder · OMIM</div>`+pBody+pBtn
+    +`<div class="dx-src" style="margin-top:12px">PubCaseFinder · OMIM <span class="dx-meta" style="font-weight:400">(en directo · máx. ${PCF_TOP})</span></div>`+pBody
+    +`<div class="dx-src" style="margin-top:12px">Panel de genes sugerido · PubCaseFinder <span class="dx-meta" style="font-weight:400">(✓ = ya en un panel tuyo)</span></div>`+gBody
     +ext;
-  const b=box.querySelector('#btnPcf'); if(b) b.addEventListener('click', runPcfDx);
+  const bp=box.querySelector('#btnPcfPanel'); if(bp) bp.addEventListener('click', ()=>crearPanelDesdePcf());
+}
+/* Crea un panel nuevo con los genes sugeridos por PubCaseFinder. */
+function crearPanelDesdePcf(){
+  const genes=(pcfGenes||[]).map(g=>g.gene).filter(Boolean);
+  if(!genes.length){ showToast('No hay genes sugeridos'); return; }
+  const name=prompt('Nombre del nuevo panel:', 'Sugerido PubCaseFinder ('+(patient.motivo||'fenotipo')+')');
+  if(!name||!name.trim()) return;
+  const p=crearPanel(name.trim());
+  if(p){ editarPanelGenes(p.id, genes.join(', ')).then(()=>{ showToast('Panel creado con '+genes.length+' genes'); renderMonarch(); }); }
 }
 
 /* ===========================================================================
