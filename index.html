@@ -459,8 +459,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.26.0';
+const APP_VERSION='1.27.0';
 const CHANGELOG=[
+  {v:'1.27.0', d:'2026-07-01', c:['Antropometría con referencia española: para >5 años, talla, peso e IMC se valoran ahora con las tablas de Orbegozo (estudio transversal, ed. AEPap 2004) — datos EXACTOS del PDF oficial (sin OCR), Z calculado anclando a P3/P50/P97. Hasta 5 años se sigue usando OMS 2006. Cada medida indica su fuente. Esto reproduce el criterio de IANUS/SERGAS. (El peso >10 a ya no queda «fuera de rango».)','El perímetro cefálico >5 a sigue sin referencia cargada (el PDF de Orbegozo solo llega a 2 a en PC); se avisa con ⚠.']},
   {v:'1.26.0', d:'2026-07-01', c:['Prenatal: tus síndromes propios ahora son EDITABLES («✎ editar») — nombre, test, mínimo de hallazgos, ORPHA, bibliografía y la lista de hallazgos ecográficos (añadir con buscador HPO o quitar), con número de versión y changelog de cambios (y copia de seguridad local para revertir).','Prenatal: al editar y guardar un síndrome puedes «Marcar como revisado» para quitarle la etiqueta «IA».']},
   {v:'1.25.0', d:'2026-07-01', c:['Datos del paciente: nueva «Fecha de nacimiento» que calcula la edad al día de hoy (en meses si <2 a); puedes seguir ajustando la edad a mano.','Antropometría: cada medida muestra su FUENTE con tooltip (OMS 2006, Orbegozo 1988, Rollins 2010, SEEDO, Mosteller), avisando ⚠ cuando la referencia idónea de IANUS aún no está integrada.','IMC del adulto clasificado según SEEDO (bajo peso · normopeso · sobrepeso I/II · obesidad I–IV).','Preparada la integración (pendiente de datos verificados) de las tablas LMS de Orbegozo 1988 (>5 a) y Rollins 2010 (perímetro cefálico 0–21 a).']},
   {v:'1.24.1', d:'2026-07-01', c:['Editor de protocolos: resaltado enlazado — al seleccionar texto en el JSON se resalta al momento la parte equivalente en la vista previa y en el editor visual del formulario (y al revés), para ver dónde aplica cada cambio.']},
@@ -1962,30 +1963,53 @@ function fmtPct(o){
   let band = p<3?'< P3':(p>97?'> P97':('P'+Math.round(p)));
   return {band, z:o.z, pct:p};
 }
-/* Tablas LMS pendientes de datos VERIFICADOS (no se inventan): Orbegozo 1988 (>5 a) y Rollins 2010 (PC 0–21 a).
-   Cuando se carguen, lmsZ/measureSource los usarán automáticamente para esos tramos. */
-const ORBEGOZO_LMS={};   // {height:{male:[[ageY,L,M,S],…],female:…}, weight:…, bmi:…}
-const ROLLINS_HC_LMS={}; // {male:[[ageY,L,M,S],…], female:…}
-function hasRef(obj, measure, sex){ const a=obj&&(measure?obj[measure]:obj); const arr=a&&(sex&&!measure?a[sex]:(sex?a[sex]:a)); return Array.isArray(arr)&&arr.length; }
-/* Devuelve la FUENTE real usada para esa medida/edad + nota honesta si la referencia idónea (IANUS) aún no está cargada. */
+/* Orbegozo — estudio TRANSVERSAL (Fundación Faustino Orbegozo, ed. AEPap 2004; Sobradillo et al.).
+   Datos EXACTOS extraídos del texto del PDF de AEPap (no OCR). Por edad (años, 5–18) y sexo: [ageY, P3, P50, P97].
+   El Z se calcula anclando a P3/P50/P97 (P50→z0, P97→+1.8808, P3→−1.8808), respetando la asimetría. Talla y peso "a partir de 3 años". */
+const ORBEGOZO_REF={"height":{"male":[[5.0,102.88,110.86,118.84],[5.5,106.05,114.75,123.44],[6.0,107.87,117.05,126.24],[6.5,110.84,120.34,129.83],[7.0,114.84,124.01,133.19],[7.5,116.14,126.57,137.01],[8.0,116.96,128.84,140.71],[8.5,121.54,132.09,142.63],[9.0,122.53,133.98,145.43],[9.5,127.6,138.77,149.94],[10.0,127.68,140.05,152.41],[10.5,130.24,142.07,153.9],[11.0,132.56,144.17,155.78],[11.5,135.29,147.49,159.68],[12.0,137.13,150.1,163.07],[12.5,140.01,153.95,167.9],[13.0,139.72,156.87,174.01],[13.5,145.48,160.97,176.46],[14.0,148.67,164.13,179.59],[14.5,149.21,165.04,180.86],[15.0,153.16,168.79,184.41],[15.5,157.92,170.94,183.96],[16.0,160.5,172.98,185.47],[16.5,163.02,175.32,187.62],[17.0,162.22,176.04,189.87],[17.5,163.36,176.69,190.03],[18.0,165.56,176.27,186.98]],"female":[[5.0,101.7,109.97,118.25],[5.5,105.68,113.47,121.25],[6.0,108.41,116.99,125.57],[6.5,110.28,119.73,129.18],[7.0,114.79,122.69,130.6],[7.5,113.48,124.61,135.73],[8.0,118.58,129.21,139.85],[8.5,120.11,130.79,141.47],[9.0,123.17,134.71,146.26],[9.5,127.22,136.82,146.42],[10.0,127.33,138.73,150.14],[10.5,132.93,144.45,155.97],[11.0,134.46,146.13,157.79],[11.5,137.59,149.97,162.36],[12.0,139.04,152.25,165.45],[12.5,139.86,153.4,166.94],[13.0,144.99,156.74,168.5],[13.5,146.64,159.13,171.61],[14.0,149.27,161.03,172.79],[14.5,151.13,162.35,173.58],[15.0,149.43,161.0,172.57],[15.5,151.74,162.28,172.82],[16.0,149.88,161.68,173.49],[16.5,150.37,162.14,173.92],[17.0,151.9,162.56,173.21],[17.5,152.18,163.04,173.91],[18.0,152.23,163.83,175.42]]},"weight":{"male":[[5.0,13.81,19.87,25.93],[5.5,14.45,21.5,28.55],[6.0,15.55,22.34,29.13],[6.5,16.86,23.83,30.8],[7.0,19.65,25.69,31.74],[7.5,18.44,27.27,36.1],[8.0,18.5,28.28,38.07],[8.5,20.26,30.97,41.67],[9.0,21.04,33.52,46.0],[9.5,23.12,36.39,49.65],[10.0,22.28,36.05,49.83],[10.5,21.33,38.85,56.37],[11.0,25.0,39.58,54.16],[11.5,27.28,41.61,55.93],[12.0,26.88,44.54,62.2],[12.5,31.89,46.87,61.85],[13.0,31.21,49.32,67.42],[13.5,33.43,53.27,73.12],[14.0,36.46,55.96,75.45],[14.5,35.16,57.95,80.73],[15.0,37.8,59.71,81.63],[15.5,45.47,65.36,85.24],[16.0,42.74,64.98,87.21],[16.5,46.02,68.27,90.53],[17.0,49.5,70.76,92.03],[17.5,50.25,69.25,88.25],[18.0,52.67,71.26,89.86]],"female":[[5.0,14.23,19.57,24.91],[5.5,15.53,20.49,25.44],[6.0,15.1,21.66,28.22],[6.5,16.61,23.87,31.13],[7.0,17.68,24.94,32.2],[7.5,16.92,26.67,36.41],[8.0,18.89,29.36,39.83],[8.5,20.27,29.71,39.15],[9.0,21.39,32.73,44.07],[9.5,22.08,32.86,43.64],[10.0,24.35,36.11,47.88],[10.5,24.6,38.93,53.25],[11.0,26.15,41.29,56.42],[11.5,28.17,42.32,56.47],[12.0,30.24,44.0,57.76],[12.5,28.3,44.99,61.69],[13.0,33.31,49.21,65.11],[13.5,36.93,52.13,67.32],[14.0,37.34,52.32,67.3],[14.5,37.99,54.14,70.13],[15.0,37.57,55.29,73.01],[15.5,40.91,54.69,68.48],[16.0,40.99,57.84,74.68],[16.5,44.01,56.62,69.24],[17.0,40.41,56.35,72.29],[17.5,42.54,58.16,73.78],[18.0,43.66,57.57,71.48]]},"bmi":{"male":[[5.0,12.68,16.19,19.7],[5.5,12.53,16.26,19.99],[6.0,12.93,16.23,19.53],[6.5,12.96,16.37,19.77],[7.0,13.66,16.68,19.7],[7.5,12.85,16.97,21.09],[8.0,12.62,16.96,21.3],[8.5,12.92,17.69,22.47],[9.0,13.5,18.54,23.59],[9.5,13.82,18.77,23.72],[10.0,13.08,18.34,23.61],[10.5,12.5,19.08,25.65],[11.0,13.71,18.93,24.14],[11.5,13.88,19.04,24.21],[12.0,13.65,19.64,25.64],[12.5,14.89,19.71,24.53],[13.0,14.65,19.98,25.31],[13.5,14.5,20.32,26.14],[14.0,15.22,20.67,26.11],[14.5,14.76,21.12,27.48],[15.0,15.46,20.89,26.32],[15.5,16.51,22.33,28.14],[16.0,14.94,21.68,28.42],[16.5,16.17,22.13,28.1],[17.0,16.44,22.83,29.22],[17.5,17.53,22.13,26.72],[18.0,17.08,22.94,28.8]],"female":[[5.0,13.11,16.12,19.12],[5.5,12.66,15.9,19.14],[6.0,12.27,15.75,19.24],[6.5,12.83,16.55,20.27],[7.0,12.77,16.51,20.24],[7.5,12.38,17.07,21.77],[8.0,12.87,17.48,22.09],[8.5,13.3,17.32,21.33],[9.0,13.81,17.91,22.0],[9.5,12.51,17.51,22.5],[10.0,14.24,18.67,23.11],[10.5,13.17,18.57,23.97],[11.0,13.7,19.23,24.76],[11.5,14.07,18.71,23.35],[12.0,14.3,18.91,23.51],[12.5,13.61,19.02,24.42],[13.0,14.71,19.96,25.21],[13.5,15.46,20.55,25.64],[14.0,15.08,20.15,25.22],[14.5,14.96,20.52,26.09],[15.0,15.35,21.29,27.24],[15.5,16.32,20.75,25.18],[16.0,17.18,22.06,26.94],[16.5,16.88,21.56,26.24],[17.0,15.91,21.32,26.73],[17.5,16.06,21.89,27.73],[18.0,16.75,21.45,26.15]]}};
+try{ if(typeof window!=='undefined') window.ORBEGOZO_REF=ORBEGOZO_REF; }catch(e){}  // expuesto para pruebas de integridad
+function interpAnchor(arr, ageY){
+  if(!arr||!arr.length) return null;
+  if(ageY<=arr[0][0]) return arr[0].slice(1);
+  if(ageY>=arr[arr.length-1][0]) return arr[arr.length-1].slice(1);
+  for(let i=1;i<arr.length;i++){ if(ageY<=arr[i][0]){ const a0=arr[i-1],a1=arr[i],t=(ageY-a0[0])/(a1[0]-a0[0]); return [1,2,3].map(k=>a0[k]+t*(a1[k]-a0[k])); } }
+  return arr[arr.length-1].slice(1);
+}
+/* Z de Orbegozo por interpolación de P3/P50/P97 (respeta asimetría). Devuelve {z, M, pct} o null si fuera de rango. */
+function orbegozoZ(measure, sx, ageY, value){
+  const arr=ORBEGOZO_REF[measure] && ORBEGOZO_REF[measure][sx];
+  if(!arr||!arr.length||!(value>0)) return null;
+  if(ageY<arr[0][0]-1e-6 || ageY>arr[arr.length-1][0]+1e-6) return null;
+  const a=interpAnchor(arr, ageY); if(!a) return null;
+  const [p3,p50,p97]=a;
+  const z = value>=p50 ? 1.8808*(value-p50)/(p97-p50) : 1.8808*(value-p50)/(p50-p3);
+  return {z, M:p50, pct:pctFromZ(z)};
+}
+/* Motor unificado: OMS (LMS) hasta 5 a; Orbegozo 2004 (transversal) para talla/peso/IMC en >5 a. */
+function growthZ(measure, sx, ageY, value){
+  if(ageY!=null && ageY>5 && ORBEGOZO_REF[measure] && ORBEGOZO_REF[measure][sx]){
+    const o=orbegozoZ(measure, sx, ageY, value); if(o) return o;
+  }
+  return lmsZ(measure, sx, ageY, value);
+}
+/* Fuente real usada para cada medida/edad (para el tooltip). */
 function measureSource(measure, ageY){
   if(ageY==null) return null;
   if(measure==='hc'){
-    if(hasRef(ROLLINS_HC_LMS, null, sexKeyOf())) return {src:'Rollins 2010 (LMS)', note:''};
-    if(ageY<=5) return {src:'OMS 2006 (LMS)', note:''};
-    return {src:'OMS 0–5 a (fuera de rango)', note:'IANUS/genética usa Rollins 2010 (0–21 a) para el PC — integración pendiente de datos verificados'};
+    if(ageY<=5) return {src:'OMS 2006 (LMS)'};
+    return {src:'OMS 0–5 a (fuera de rango)', note:'PC >5 a: sin referencia cargada (Orbegozo 2011/Rollins 2010)', pend:true};
   }
-  if(ageY>19){
+  if(ageY>18){
     if(measure==='bmi') return {src:'SEEDO', note:'clasificación de IMC del adulto por rangos fijos'};
-    return {src:'población española adulta', note:'referencia aproximada (INE/encuestas), no es percentil pediátrico'};
+    return {src:'población española adulta', note:'referencia aproximada (INE/encuestas)', pend:true};
   }
-  if(ageY<=5) return {src:'OMS 2006 (LMS)', note:''};
-  if(hasRef(ORBEGOZO_LMS, measure, sexKeyOf())) return {src:'Orbegozo 1988 (LMS)', note:''};
-  return {src:'OMS 2006 (LMS)', note:'IANUS usa Orbegozo 1988 en >5 a — integración de sus tablas LMS pendiente de datos verificados'};
+  if(ageY<=5) return {src:'OMS 2006 (LMS)'};
+  if(ORBEGOZO_REF[measure] && ORBEGOZO_REF[measure][sexKeyOf()]) return {src:'Orbegozo 2004 (AEPap)', note:'estudio transversal · P3/P50/P97 → Z por interpolación'};
+  return {src:'OMS 2006 (LMS)', note:'Orbegozo no disponible para esta medida', pend:true};
 }
 function measureSrcHtml(measure, ageY){
   const s=measureSource(measure, ageY); if(!s) return '';
-  return ` <span class="am-src" title="Fuente: ${escHtml(s.src)}${s.note?'. '+escHtml(s.note):''}">· ${escHtml(s.src)}${s.note?' ⚠':''}</span>`;
+  return ` <span class="am-src" title="Fuente: ${escHtml(s.src)}${s.note?'. '+escHtml(s.note):''}">· ${escHtml(s.src)}${s.pend?' ⚠':''}</span>`;
 }
 function toggleQuickPheno(id, es, region){
   if(selections[id]){ delete selections[id]; }
@@ -2014,16 +2038,14 @@ function toggleAnthroPheno(id, es){
 }
 function anthroPctCard(title, value, unit, measure, maxAge){
   const ageY=patientAgeYears(); const sx=sexKeyOf(); let pctHtml='';
-  if(value>0 && sx && ageY!=null && ageY<=(maxAge||19)){
-    const r=fmtPct(lmsZ(measure, sx, ageY, value));
+  const pedMax = measure==='hc' ? 5 : 18;   // PC: OMS 0–5; talla/peso/IMC: OMS 0–5 + Orbegozo 5–18
+  if(value>0 && sx && ageY!=null && ageY<=pedMax){
+    const r=fmtPct(growthZ(measure, sx, ageY, value));
     if(r){ const cls=r.pct<3?'low':(r.pct>97?'high':'mid'); pctHtml=`<span class="pct ${cls}">${r.band} · ${r.z>=0?'+':''}${r.z.toFixed(2)} DE</span>`; }
-    else pctHtml='<span class="pct na">fuera del rango de edad (OMS)</span>';
-  } else if(value>0 && measure==='weight' && ageY!=null && ageY>(maxAge||10) && ageY<=19){
-    pctHtml='<span class="pct na">peso/edad OMS solo 0-10 a → valora por IMC</span>';
-  } else if(value>0 && sx && measure!=='hc' && ageY!=null && ageY>19){
+    else pctHtml='<span class="pct na">fuera del rango de edad</span>';
+  } else if(value>0 && sx && measure!=='hc' && ageY!=null && ageY>18){
     const a=adultPct(measure, sx, value);
     if(a){ const band=a.pct<3?'< P3':(a.pct>97?'> P97':'P'+Math.round(a.pct)); const cls=a.pct<3?'low':(a.pct>97?'high':'mid'); pctHtml=`<span class="pct ${cls}">${band} · ${a.z>=0?'+':''}${a.z.toFixed(2)} DE</span>`; }
-    else if(measure==='hc') pctHtml='<span class="pct na">PC: estándar OMS solo 0-5 a</span>';
   } else if(value>0 && measure==='hc' && ageY!=null && ageY>5){ pctHtml='<span class="pct na">PC: estándar OMS solo 0-5 a</span>';
   } else if(value>0 && (!sx||ageY==null)){ pctHtml='<span class="pct na">indica edad y sexo</span>'; }
   const srcHtml = value>0 ? measureSrcHtml(measure, ageY) : '';
@@ -2037,11 +2059,11 @@ function renderAnthroResult(boxId){
   const env=parseFloat(String(patient.envergaduraCm).replace(',','.'));
   const ageY=patientAgeYears(); const sx=sexKeyOf();
   let bmi=null; if(talla>0&&peso>0) bmi=peso/Math.pow(talla/100,2);
-  let rows = anthroPctCard('Talla',talla,'cm','height') + anthroPctCard('Peso',peso,'kg','weight',10);
+  let rows = anthroPctCard('Talla',talla,'cm','height') + anthroPctCard('Peso',peso,'kg','weight');
   if(bmi){
     let p='';
-    if(sx && ageY!=null && ageY<=19){ const r=fmtPct(lmsZ('bmi',sx,ageY,bmi)); if(r){ const cls=r.pct<3?'low':(r.pct>97?'high':'mid'); p=`<span class="pct ${cls}">${r.band} · ${r.z>=0?'+':''}${r.z.toFixed(2)} DE</span>`; } }
-    else if(ageY!=null && ageY>19){ const bc=bmiClass(bmi); if(bc) p=`<span class="pct ${bc.c}">${bc.t} (OMS)</span>`; }
+    if(sx && ageY!=null && ageY<=18){ const r=fmtPct(growthZ('bmi',sx,ageY,bmi)); if(r){ const cls=r.pct<3?'low':(r.pct>97?'high':'mid'); p=`<span class="pct ${cls}">${r.band} · ${r.z>=0?'+':''}${r.z.toFixed(2)} DE</span>`; } }
+    else if(ageY!=null && ageY>18){ const bc=bmiClass(bmi); if(bc) p=`<span class="pct ${bc.c}">${bc.t} (SEEDO)</span>`; }
     rows += `<div class="am-row"><span class="am-t">IMC</span><span class="am-v">${bmi.toFixed(1)} kg/m²</span>${p}${measureSrcHtml('bmi', ageY)}</div>`;
   }
   // Superficie corporal (Mosteller) — misma fórmula en pediatría y adulto; útil para dosificación
@@ -2062,7 +2084,7 @@ function renderAnthroResult(boxId){
   let chips=''; let preg='';
   // Talla baja/alta con gravedad
   let zT=null;
-  if(talla>0 && sx){ if(ageY!=null&&ageY<=19){ const r=lmsZ('height',sx,ageY,talla); zT=r?r.z:null; } else if(ageY!=null&&ageY>19){ const a=adultPct('height',sx,talla); zT=a?a.z:null; } }
+  if(talla>0 && sx){ if(ageY!=null&&ageY<=18){ const r=growthZ('height',sx,ageY,talla); zT=r?r.z:null; } else if(ageY!=null&&ageY>18){ const a=adultPct('height',sx,talla); zT=a?a.z:null; } }
   if(zT!=null && zT<=-2){
     const sev = zT<=-4?['HP:0003510','Talla baja severa']:(zT<=-3?['HP:0008848','Talla baja moderada']:['HP:0003502','Talla baja leve']);
     chips += chipBtn('HP:0004322','Talla baja','Antropometría') + chipBtn(sev[0],sev[1],'Antropometría');
@@ -2073,7 +2095,7 @@ function renderAnthroResult(boxId){
   }
   // Peso / IMC (con grados de sobrepeso/obesidad)
   if(bmi && sx){
-    if(ageY!=null&&ageY<=19){ const r=lmsZ('bmi',sx,ageY,bmi); if(r){
+    if(ageY!=null&&ageY<=18){ const r=growthZ('bmi',sx,ageY,bmi); if(r){
       if(r.z<=-2) chips+=chipBtn('HP:0004325','Bajo peso','Antropometría');
       else if(r.z>=2) chips+=chipBtn('HP:0001513','Obesidad','Antropometría');
       else if(r.z>=1) chips+=chipBtn('HP:0025502','Sobrepeso','Antropometría');
