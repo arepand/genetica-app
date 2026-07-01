@@ -454,8 +454,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.20.0';
+const APP_VERSION='1.21.0';
 const CHANGELOG=[
+  {v:'1.21.0', d:'2026-07-01', c:['Criterios condicionados por edad y sexo: las entidades de un protocolo pueden declarar «sexo» y/o rango de edad («edad_min_anios»/«edad_max_anios»); la app usa la edad y el sexo que ya tienes del paciente y marca la entidad como «✕ No aplica (edad/sexo)» cuando queda fuera, o avisa si falta ese dato. La IA rellena estos campos solo cuando el criterio diagnóstico depende de edad/sexo.','Botón «⛶ Pantalla completa» del revisor: ahora resaltado (botón sólido) para que se vea bien.']},
   {v:'1.20.0', d:'2026-07-01', c:['Diferencial más claro y en vivo: a medida que marcas rasgos, cada entidad del protocolo muestra su estado — «✓ Cumple criterios» (verde) o «Falta 1 mayor / Faltan 2 criterios» (ámbar), con barra de progreso hacia el umbral y un tooltip que detalla el criterio exigido (mayores/menores, lógica y/o) y lo que ya tienes presente. Las entidades con rasgos pero sin cumplir ya no se ocultan: aparecen en «En seguimiento» para ver cuánto falta.']},
   {v:'1.19.1', d:'2026-07-01', c:['Revisor/editor de protocolos: botón «⛶ Pantalla completa» (y «↙ Volver a como estaba») para editar el JSON, la vista previa y el formulario con mucho más espacio.']},
   {v:'1.19.0', d:'2026-07-01', c:['Editor visual del formulario de anamnesis (en el revisor, «✎ Editar»): añade/quita dominios, preguntas y respuestas con botones +/🗑, alterna respuesta única/múltiple, y añade o quita códigos HPO en cada respuesta con un buscador integrado (con nombre oficial JAX) — todo sin escribir JSON a mano. El mismo array «dominios» alimenta a la vez este formulario y la anamnesis dirigida que rellenas por paciente.']},
@@ -2189,7 +2190,8 @@ const FICHA_SYSTEM_PROMPT = `Eres genetista clínico experto en fenotipado HPO. 
   ],
   "entidades": [
     { "nombre":"Entidad/subtipo", "genes":["GEN1"], "mayores":["HP:0000000"], "menores":["HP:0000000"],
-      "umbral":"texto del criterio", "logica":"and|or", "min_mayores":1, "min_menores":2 }
+      "umbral":"texto del criterio", "logica":"and|or", "min_mayores":1, "min_menores":2,
+      "sexo":"Femenino|Masculino", "edad_min_anios":0, "edad_max_anios":18 }
   ],
   "panel_genes": ["GEN1","GEN2"],
   "estudio_genetico": {
@@ -2200,7 +2202,7 @@ const FICHA_SYSTEM_PROMPT = `Eres genetista clínico experto en fenotipado HPO. 
     "fuentes": [{"titulo":"...","url":"https://...","anio":"AAAA"}]
   }
 }
-Reglas: usa códigos HPO REALES y vigentes (formato HP:0000000, 7 dígitos). **CADA código HPO DEBE corresponder EXACTAMENTE al concepto que quieres expresar**: el nombre oficial del término en HPO tiene que coincidir con la "nombre" que pones; NUNCA uses un código que signifique otra cosa (p. ej. NO pongas un código de "ascitis" para "hernia umbilical"). En la duda, prefiere el término HPO más específico cuyo nombre oficial encaje con el concepto; los códigos se VERIFICAN contra JAX y los que no correspondan se rechazan o corrigen. Ordena dominios y preguntas por lógica clínica, NUNCA alfabético; sé exhaustivo según los criterios diagnósticos vigentes (busca en la web las guías/criterios actuales y cítalos en "fuentes"); en "poblacion" decide: si los criterios diagnósticos, los genes o el manejo difieren de forma RELEVANTE entre paciente pediátrico y adulto, genera la variante ("pediatrica" o "adulta") y comparte el mismo "grupo" entre ambas variantes (indica que conviene crear también la complementaria); si no difieren, usa "unica"; en "estudio_genetico" indica con apoyo de guías CUÁNDO está indicado el estudio, en qué circunstancias y QUÉ tipo de estudio (panel dirigido/exoma/genoma…) en primera línea y el escalado si es negativo; "logica" es "and" si exige mayores Y menores, "or" si basta uno de los dos umbrales; activa modulos.beighton o modulos.antropometria solo si son clínicamente pertinentes. ${SOURCE_PRIORITY} Devuelve SOLO el JSON.`;
+Reglas: usa códigos HPO REALES y vigentes (formato HP:0000000, 7 dígitos). **CADA código HPO DEBE corresponder EXACTAMENTE al concepto que quieres expresar**: el nombre oficial del término en HPO tiene que coincidir con la "nombre" que pones; NUNCA uses un código que signifique otra cosa (p. ej. NO pongas un código de "ascitis" para "hernia umbilical"). En la duda, prefiere el término HPO más específico cuyo nombre oficial encaje con el concepto; los códigos se VERIFICAN contra JAX y los que no correspondan se rechazan o corrigen. Ordena dominios y preguntas por lógica clínica, NUNCA alfabético; sé exhaustivo según los criterios diagnósticos vigentes (busca en la web las guías/criterios actuales y cítalos en "fuentes"); en "poblacion" decide: si los criterios diagnósticos, los genes o el manejo difieren de forma RELEVANTE entre paciente pediátrico y adulto, genera la variante ("pediatrica" o "adulta") y comparte el mismo "grupo" entre ambas variantes (indica que conviene crear también la complementaria); si no difieren, usa "unica"; en "estudio_genetico" indica con apoyo de guías CUÁNDO está indicado el estudio, en qué circunstancias y QUÉ tipo de estudio (panel dirigido/exoma/genoma…) en primera línea y el escalado si es negativo; "logica" es "and" si exige mayores Y menores, "or" si basta uno de los dos umbrales; en cada entidad, SOLO si el criterio diagnóstico depende del sexo o de la edad, añade "sexo" ("Femenino"/"Masculino") y/o "edad_min_anios"/"edad_max_anios" (en años; usa fracciones para meses, p. ej. 0.5 = 6 meses) — OMÍTELOS si el criterio no depende de edad/sexo; la app ya conoce edad y sexo del paciente y marcará la entidad como "no aplica" fuera de rango; activa modulos.beighton o modulos.antropometria solo si son clínicamente pertinentes. ${SOURCE_PRIORITY} Devuelve SOLO el JSON.`;
 
 function slugify(s){ return (normTxt(s).replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'').slice(0,40).replace(/^-+|-+$/g,'')) || 'ficha'; }
 function collectHpoIds(f){
@@ -2838,7 +2840,7 @@ function openFichaReview(f, opts){
   <div class="modal" role="dialog" aria-label="Revisar ficha generada" style="max-width:760px">
     <div style="display:flex; align-items:center; justify-content:space-between; gap:10px">
       <h2>Revisar ficha generada por IA</h2>
-      <button class="btn ghost" id="btnFichaFull" style="padding:3px 9px; font-size:12px; white-space:nowrap">⛶ Pantalla completa</button>
+      <button class="btn" id="btnFichaFull" style="padding:4px 11px; font-size:12px; white-space:nowrap; flex:none">⛶ Pantalla completa</button>
     </div>
     <div class="msub">Revisa y edita el JSON. Al guardar se valida, se verifica una muestra de HPO contra JAX y se commitea a tu GitHub (o a caché local si GitHub no está configurado).</div>
     <textarea id="fichaJson" spellcheck="false" style="width:100%; min-height:340px; font-family:'IBM Plex Mono',ui-monospace,monospace; font-size:12px; line-height:1.5; padding:12px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink)">${JSON.stringify(f,null,2).replace(/</g,'&lt;')}</textarea>
@@ -3068,6 +3070,26 @@ function openFichaReview(f, opts){
 /* ===========================================================================
    PARTE F — Módulo 8: Diferencial por umbrales + panel génico + estudio genético
    =========================================================================== */
+/* Condiciones OPCIONALES de edad/sexo declaradas en la entidad (campos: sexo, edad_min_anios, edad_max_anios).
+   Usa los datos del paciente que ya tenemos (patient.sexo · patientAgeYears()). Devuelve si el criterio APLICA. */
+function entidadCond(e){
+  const notes=[]; let fail=false, unknown=false;
+  const sexReq=e.sexo||e.sex;
+  if(sexReq){
+    const reqs=(Array.isArray(sexReq)?sexReq:[sexReq]).map(s=>String(s).toLowerCase().trim()).filter(Boolean);
+    const sx=String(patient.sexo||'').toLowerCase().trim();
+    if(!sx){ unknown=true; notes.push('depende del sexo ('+reqs.join('/')+'; no indicado)'); }
+    else if(!reqs.some(r=> r===sx || (r[0]==='f'&&sx[0]==='f') || (r[0]==='m'&&sx[0]==='m'))){ fail=true; notes.push('solo aplica a sexo '+reqs.join('/')); }
+  }
+  const amin=(e.edad_min_anios!=null?+e.edad_min_anios:null), amax=(e.edad_max_anios!=null?+e.edad_max_anios:null);
+  if(amin!=null || amax!=null){
+    const ay=patientAgeYears();
+    const rango=(amin!=null?amin:'0')+'–'+(amax!=null?amax:'∞')+' a';
+    if(ay==null){ unknown=true; notes.push('depende de la edad ('+rango+'; no indicada)'); }
+    else if((amin!=null&&ay<amin)||(amax!=null&&ay>amax)){ fail=true; notes.push('rango de edad '+rango); }
+  }
+  return {ok:!fail, fail, unknown, msg:notes.join(' · ')};
+}
 function entidadStatus(e){
   const present = id => !!selections[id];
   const maj = (e.mayores||[]).filter(present);
@@ -3075,7 +3097,9 @@ function entidadStatus(e){
   const needMaj = e.min_mayores||0, needMin = e.min_menores||0;
   const majOk = maj.length>=needMaj, minOk = min.length>=needMin;
   const logica = (e.logica||'and').toLowerCase();
-  const cumple = (needMaj||needMin) ? (logica==='or' ? (majOk||minOk) : (majOk&&minOk)) : (maj.length+min.length>0);
+  const cond = entidadCond(e);
+  const cumpleFenot = (needMaj||needMin) ? (logica==='or' ? (majOk||minOk) : (majOk&&minOk)) : (maj.length+min.length>0);
+  const cumple = cumpleFenot && cond.ok; // no cumple si una condición de edad/sexo NO aplica
   const faltMaj = Math.max(0, needMaj - maj.length);
   const faltMin = Math.max(0, needMin - min.length);
   let faltan; // nº de criterios que aún faltan para cumplir (0 si ya cumple)
@@ -3083,10 +3107,11 @@ function entidadStatus(e){
   else if(!needMaj && !needMin) faltan = 1;
   else if(logica==='or'){ const c=[]; if(needMaj) c.push(faltMaj); if(needMin) c.push(faltMin); faltan = c.length ? Math.min(...c) : 1; }
   else faltan = faltMaj + faltMin;
-  return {maj, min, needMaj, needMin, logica, faltMaj, faltMin, faltan, cumple, score: maj.length*2 + min.length};
+  return {maj, min, needMaj, needMin, logica, faltMaj, faltMin, faltan, cumple, cumpleFenot, cond, score: maj.length*2 + min.length};
 }
 /* Etiqueta corta del estado: "Cumple criterios" · "Falta 1 mayor" · "Faltan 2 criterios". */
 function faltaLabel(st){
+  if(st.cond && st.cond.fail) return 'No aplica (edad/sexo)';
   if(st.cumple) return '✓ Cumple criterios';
   if(st.logica==='or') return 'Falta'+(st.faltan>1?'n':'')+' '+st.faltan+' criterio'+(st.faltan>1?'s':'');
   const bits=[];
@@ -3099,7 +3124,8 @@ function critDetalle(e, st){
   const conj = st.logica==='or' ? 'o' : 'y';
   const umbral = e.umbral || `≥${st.needMaj} mayores ${conj} ≥${st.needMin} menores`;
   const via = st.logica==='or' ? 'basta cumplir UNA vía' : 'exige mayores Y menores';
-  return `Criterio: ${umbral} (${via}). Presentes: ${st.maj.length}/${st.needMaj} mayores · ${st.min.length}/${st.needMin} menores.`;
+  const cond = (st.cond && st.cond.msg) ? ' Condición edad/sexo: '+st.cond.msg+'.' : '';
+  return `Criterio: ${umbral} (${via}). Presentes: ${st.maj.length}/${st.needMaj} mayores · ${st.min.length}/${st.needMin} menores.${cond}`;
 }
 function geneChip(g){ return `<span class="gene">${g}</span>`; }
 function geneLinks(g){
@@ -3119,16 +3145,23 @@ function geneRowHtml(g){
 function dxHtml(e, st){
   const genes=(e.genes||[]).map(geneChip).join(' ');
   const det=escHtml(critDetalle(e, st));
-  const pill = st.cumple
-    ? `<span class="pill ok" title="${det}">✓ Cumple criterios</span>`
-    : `<span class="pill near" title="${det}">${escHtml(faltaLabel(st))}</span>`;
-  // progreso: fracción hacia el umbral (mejor vía si es "o")
+  const condFail = st.cond && st.cond.fail;
+  const condWarn = st.cond && st.cond.unknown && st.cumpleFenot; // cumple el fenotipo pero falta dato de edad/sexo
+  const pill = condFail
+    ? `<span class="pill near" title="${det}">✕ No aplica (edad/sexo)</span>`
+    : (st.cumple
+      ? `<span class="pill ok" title="${det}">✓ Cumple criterios</span>`
+      : `<span class="pill near" title="${det}">${escHtml(faltaLabel(st))}</span>`);
   const need = st.needMaj + st.needMin || 1;
   const have = Math.min(st.maj.length, st.needMaj) + Math.min(st.min.length, st.needMin);
-  const pct = st.cumple ? 100 : Math.round(100*have/need);
-  return `<div class="dx ${st.cumple?'top':'near'}">
+  const pct = condFail ? 0 : (st.cumple ? 100 : Math.round(100*have/need));
+  const metaExtra = st.cumple ? '' : ` · ${escHtml(faltaLabel(st).replace(/^✓ /,''))}`;
+  const condLine = (st.cond && st.cond.msg)
+    ? `<div class="dx-meta" style="color:${condFail?'#e8a13a':'var(--ink3)'}">${condWarn?'⚠ ':''}${escHtml(st.cond.msg)}</div>` : '';
+  return `<div class="dx ${condFail?'':(st.cumple?'top':'near')}">
     <div class="dx-hd"><span class="dx-nm">${escHtml(e.nombre)}</span>${pill}</div>
-    <div class="dx-meta">Mayores ${st.maj.length}/${st.needMaj} · Menores ${st.min.length}/${st.needMin}${st.cumple?'':` · ${escHtml(faltaLabel(st).replace(/^✓ /,''))}`}</div>
+    <div class="dx-meta">Mayores ${st.maj.length}/${st.needMaj} · Menores ${st.min.length}/${st.needMin}${metaExtra}</div>
+    ${condLine}
     <div class="dx-prog" title="${det}"><span style="width:${pct}%"></span></div>
     ${e.umbral?`<div class="dx-rule">${escHtml(e.umbral)}</div>`:''}
     ${genes?`<div class="gp-genes" style="margin-top:6px">${genes}</div>`:''}
