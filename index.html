@@ -459,8 +459,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.25.0';
+const APP_VERSION='1.26.0';
 const CHANGELOG=[
+  {v:'1.26.0', d:'2026-07-01', c:['Prenatal: tus síndromes propios ahora son EDITABLES («✎ editar») — nombre, test, mínimo de hallazgos, ORPHA, bibliografía y la lista de hallazgos ecográficos (añadir con buscador HPO o quitar), con número de versión y changelog de cambios (y copia de seguridad local para revertir).','Prenatal: al editar y guardar un síndrome puedes «Marcar como revisado» para quitarle la etiqueta «IA».']},
   {v:'1.25.0', d:'2026-07-01', c:['Datos del paciente: nueva «Fecha de nacimiento» que calcula la edad al día de hoy (en meses si <2 a); puedes seguir ajustando la edad a mano.','Antropometría: cada medida muestra su FUENTE con tooltip (OMS 2006, Orbegozo 1988, Rollins 2010, SEEDO, Mosteller), avisando ⚠ cuando la referencia idónea de IANUS aún no está integrada.','IMC del adulto clasificado según SEEDO (bajo peso · normopeso · sobrepeso I/II · obesidad I–IV).','Preparada la integración (pendiente de datos verificados) de las tablas LMS de Orbegozo 1988 (>5 a) y Rollins 2010 (perímetro cefálico 0–21 a).']},
   {v:'1.24.1', d:'2026-07-01', c:['Editor de protocolos: resaltado enlazado — al seleccionar texto en el JSON se resalta al momento la parte equivalente en la vista previa y en el editor visual del formulario (y al revés), para ver dónde aplica cada cambio.']},
   {v:'1.24.0', d:'2026-07-01', c:['Diferencial cruzado: cuando un protocolo tuyo (aunque no esté abierto) encaja, se resaltan LAS SUB-ENTIDADES concretas que cumplen dentro de él (p. ej. dentro de «Talla baja» → Turner y haploinsuficiencia SHOX), en una tarjeta destacada.','Botón «Aplicar protocolo y seguir anamnesis» en cada sugerencia del diferencial: carga ese protocolo como activo y salta a su anamnesis dirigida conservando el fenotipo ya marcado.','PubCaseFinder ahora EN DIRECTO (se actualiza solo al marcar rasgos, con espera de 1,5 s; hasta 10 resultados), sin botón.','Nuevo «Panel de genes sugerido» de PubCaseFinder (panelsearch): a partir de los HPO propone genes rankeados, marca los que ya están en tus paneles (✓) y permite crear un panel nuevo con ellos.']},
@@ -615,6 +616,7 @@ function panelAppLink(label){
 }
 
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escA(s){ return escHtml(s).replace(/"/g,'&quot;'); }  // valor seguro para atributos
 // Mejor definición disponible para un HPO: {text, improvable}. improvable = procede del
 // Excel (Google Translate) → ofrece "mejorar con IA". STATIC y las IA previas son finales.
 function bestDef(id){
@@ -4432,6 +4434,70 @@ async function persistPrenatalCustom(msg){
   try{ let sha=null; try{ const ci=await ghGetFile('prenatal-syndromes.json'); sha=ci.sha; }catch(e){} await ghPutFile('prenatal-syndromes.json', PRENATAL_CUSTOM, msg||'prenatal: actualizar síndromes IA', sha); }catch(e){}
   try{ localStorage.setItem('fh_prenatal_custom', JSON.stringify(PRENATAL_CUSTOM)); }catch(e){}
 }
+/* ---- Versionado + copias de seguridad de síndromes prenatales (local, para revertir) ---- */
+function prenatalBackups(key){ try{ return JSON.parse(localStorage.getItem('fh_prenbak_'+key))||[]; }catch(e){ return []; } }
+function bumpPrenatalRev(s, nota){
+  s.rev=(parseInt(s.rev)||0)+1;
+  s.historial=Array.isArray(s.historial)?s.historial:[];
+  s.historial.unshift({rev:s.rev, fecha:new Date().toISOString(), nota:(nota||'').trim()});
+  s.historial=s.historial.slice(0,50);
+  try{ const key=normSyndName(s.name); const st=prenatalBackups(key); st.unshift({rev:s.rev, fecha:new Date().toISOString(), nota:(nota||'').trim(), json:JSON.stringify(s)}); localStorage.setItem('fh_prenbak_'+key, JSON.stringify(st.slice(0,20))); }catch(e){}
+  return s;
+}
+/* Asegura los metadatos de un hallazgo prenatal (label/sistema) para un HPO añadido a mano. */
+function ensurePrenatalFinding(id, label){
+  if(PRENATAL_FINDINGS.some(s=>s.terms.some(t=>t.id===id))) return; // ya es de serie
+  PRENATAL_CUSTOM.findings=PRENATAL_CUSTOM.findings||[];
+  if(!PRENATAL_CUSTOM.findings.some(t=>t.id===id)) PRENATAL_CUSTOM.findings.push({id, es:label||id, sistema:'Otros', verified:true, ia:false});
+}
+/* Editor completo de un síndrome prenatal PROPIO (no los de serie): campos + hallazgos + versión + quitar etiqueta IA. */
+function openPrenatalSyndEditor(name){
+  const s=(PRENATAL_CUSTOM.syndromes||[]).find(x=>normSyndName(x.name)===normSyndName(name));
+  if(!s){ showToast('Solo puedes editar tus síndromes propios (los de serie no)'); return; }
+  const ov=document.createElement('div'); ov.className='overlay'; ov.id='prenSynOverlay';
+  function render(){
+    const findings=(s.findings||[]).map((id,i)=>`<div style="display:flex;align-items:center;gap:6px;padding:2px 0"><span class="hp-chip" style="cursor:default">${escHtml(id)}<span class="hp-nm" data-hpo-nm="${escHtml(id)}"> · …</span></span> <span class="dx-meta">${escHtml(prenatalFindingLabel(id))}</span> <a data-rmf="${i}" title="Quitar hallazgo" style="cursor:pointer;color:var(--danger);margin-left:auto;font-weight:700">✕</a></div>`).join('');
+    ov.innerHTML=`<div class="modal" role="dialog" aria-label="Editar síndrome prenatal" style="max-width:640px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><h2>Editar síndrome prenatal</h2><span class="pop-badge">rev ${s.rev||0}</span></div>
+      <div class="field"><label>Nombre</label><input id="psName" value="${escA(s.name)}"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <div class="field" style="flex:1;min-width:160px"><label>Test / estudio</label><input id="psTest" value="${escA(s.test||'')}"></div>
+        <div class="field" style="width:110px"><label>Mín. hallazgos</label><input id="psMin" type="number" min="1" value="${s.min||2}"></div>
+        <div class="field" style="width:120px"><label>ORPHA</label><input id="psOrpha" value="${escA(String(s.orpha||''))}"></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <div class="field" style="flex:1;min-width:180px"><label>Referencia · título</label><input id="psRefT" value="${escA((s.ref&&s.ref.titulo)||'')}"></div>
+        <div class="field" style="flex:1;min-width:180px"><label>Referencia · URL</label><input id="psRefU" value="${escA((s.ref&&s.ref.url)||'')}"></div>
+      </div>
+      <h3>Hallazgos ecográficos (${(s.findings||[]).length})</h3>
+      <div id="psFindings">${findings||'<div class="dx-meta">Sin hallazgos.</div>'}</div>
+      <button class="btn ghost" id="psAddF" style="margin-top:6px;padding:3px 9px;font-size:12px">+ hallazgo (buscar HPO)</button>
+      <label class="q-opt" style="display:flex;align-items:center;gap:6px;margin-top:14px;font-size:13px"><input type="checkbox" id="psNoIA" ${!s.ia?'checked':''}> Marcar como revisado (quitar la etiqueta «IA»)</label>
+      <div class="field" style="margin-top:10px"><label>Nota de cambios (changelog)</label><input id="psNota" placeholder="opcional"></div>
+      ${(s.historial&&s.historial.length)?`<details style="margin-top:6px"><summary class="dx-meta" style="cursor:pointer">🕘 Changelog (${s.historial.length})</summary><div>${s.historial.slice(0,20).map(h=>`<div style="font-size:12px;border-top:1px solid var(--line);padding:3px 0"><b>rev ${h.rev}</b> <span class="dx-meta">${String(h.fecha||'').slice(0,16).replace('T',' ')}</span>${h.nota?' · '+escHtml(h.nota):''}</div>`).join('')}</div></details>`:''}
+      <div class="modal-actions"><button class="btn ghost" id="psCancel">Cancelar</button><button class="btn primary" id="psSave">Guardar (nueva versión)</button></div>
+    </div>`;
+    annotateHpoChips(ov);
+    ov.querySelector('#psCancel').addEventListener('click', ()=>ov.remove());
+    ov.querySelectorAll('[data-rmf]').forEach(a=>a.addEventListener('click', ()=>{ s.findings.splice(+a.dataset.rmf,1); render(); }));
+    ov.querySelector('#psAddF').addEventListener('click', (e)=>buildHpoSearchPop(e.target, (id,nm)=>{ s.findings=s.findings||[]; if(!s.findings.includes(id)){ s.findings.push(id); ensurePrenatalFinding(id, nm); } render(); }, 'Buscar hallazgo HPO para añadir…'));
+    ov.querySelector('#psSave').addEventListener('click', async ()=>{
+      s.name=ov.querySelector('#psName').value.trim()||s.name;
+      s.test=ov.querySelector('#psTest').value.trim();
+      s.min=parseInt(ov.querySelector('#psMin').value)||1;
+      const orpha=ov.querySelector('#psOrpha').value.trim(); s.orpha=orpha||null;
+      const rt=ov.querySelector('#psRefT').value.trim(), ru=ov.querySelector('#psRefU').value.trim();
+      if(rt||ru) s.ref={titulo:rt, url:ru};
+      if(ov.querySelector('#psNoIA').checked){ s.ia=false; s.verified=true; }
+      bumpPrenatalRev(s, ov.querySelector('#psNota').value);
+      await persistPrenatalCustom('prenatal: editar '+s.name);
+      ov.remove(); renderPrenatal(); showToast('Síndrome guardado (rev '+s.rev+')');
+    });
+  }
+  render();
+  document.body.appendChild(ov);
+  ov.addEventListener('click', e=>{ if(e.target===ov) ov.remove(); });
+}
 /* Verifica HPO de candidatos (verifyHpo + findHpoByText), añade los válidos y persiste. minF=mín hallazgos. */
 async function addPrenatalCands(cands, minF){
   const knownF=new Set([...PRENATAL_FINDINGS.flatMap(s=>s.terms.map(t=>t.id)), ...(PRENATAL_CUSTOM.findings||[]).map(t=>t.id)]);
@@ -4813,7 +4879,7 @@ function renderPrenatal(){
       <div style="margin-top:24px;border-top:1px solid var(--line);padding-top:16px">
         <div id="prenatalInd" style="margin:0 0 16px"></div>
         <details class="morfo-region"><summary>Síndromes incorporados <span style="color:var(--ink3);font-weight:400">· ${allPrenatalSyndromes().length}</span></summary>
-          <div style="font-size:12.5px;line-height:1.7;padding:4px 0">${allPrenatalSyndromes().map(s=>`<div>· <b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)" title="Ficha Orphanet (español)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">IA</span>':''} <span class="dx-meta hastip">— ${(s.findings||[]).length} hallazgos<span class="tooltip">${syndromeFindingsTip(s)}</span></span> <span class="dx-meta">· ${escHtml(s.test||'')}</span>${(s.ref&&s.ref.url)?` <a class="dx-meta" href="${escHtml(String(s.ref.url)).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">bibliografía</a>`:''}${s.ref?bibRefHtml(s.ref):''}${s.ia?` <a class="tip-ai" data-rmsyn="${escHtml(s.name)}">quitar</a>`:''}</div>`).join('')}</div>
+          <div style="font-size:12.5px;line-height:1.7;padding:4px 0">${allPrenatalSyndromes().map(s=>{ const editable=!PRENATAL_SYNDROMES.some(b=>normSyndName(b.name)===normSyndName(s.name)); return `<div>· <b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)" title="Ficha Orphanet (español)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">IA</span>':''}${s.rev?` <span class="dx-meta">rev ${s.rev}</span>`:''} <span class="dx-meta hastip">— ${(s.findings||[]).length} hallazgos<span class="tooltip">${syndromeFindingsTip(s)}</span></span> <span class="dx-meta">· ${escHtml(s.test||'')}</span>${(s.ref&&s.ref.url)?` <a class="dx-meta" href="${escA(String(s.ref.url))}" target="_blank" rel="noopener">bibliografía</a>`:''}${s.ref?bibRefHtml(s.ref):''}${editable?` <a class="tip-ai" data-editsyn="${escA(s.name)}">✎ editar</a>`:''}${s.ia?` <a class="tip-ai" data-rmsyn="${escA(s.name)}">quitar</a>`:''}</div>`; }).join('')}</div>
         </details>
         <div class="cart-group-title" style="margin-top:14px">Añadir / proponer síndromes (IA)</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">
@@ -4859,6 +4925,7 @@ function renderPrenatal(){
     addInp.addEventListener('blur', ()=>{ setTimeout(()=>{ if(sg) sg.innerHTML=''; }, 150); });
   }
   box.querySelectorAll('[data-rmsyn]').forEach(a=>a.addEventListener('click', ()=>quitarSindromeIA(a.dataset.rmsyn)));
+  box.querySelectorAll('[data-editsyn]').forEach(a=>a.addEventListener('click', ()=>openPrenatalSyndEditor(a.dataset.editsyn)));
   box.querySelectorAll('[data-vfy]').forEach(a=>a.addEventListener('click', (e)=>{ e.stopPropagation(); verificarHallazgoIA(a.dataset.vfy); }));
   box.querySelectorAll('[data-rmf]').forEach(a=>a.addEventListener('click', (e)=>{ e.stopPropagation(); quitarHallazgoIA(a.dataset.rmf); }));
   // refresca iconos de PDF una vez cuando el índice llega (sin remover el panel: solo re-renderiza si seguimos en prenatal)
