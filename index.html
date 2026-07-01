@@ -439,8 +439,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.16.0';
+const APP_VERSION='1.17.0';
 const CHANGELOG=[
+  {v:'1.17.0', d:'2026-07-01', c:['Transparencia IA: mientras la IA trabaja, aparece un indicador arriba con la tarea en curso; y en «Estado» hay un interruptor «Debug IA» que —solo cuando lo activas— registra TODAS las operaciones de IA (system, prompt, razonamiento y respuesta) y te las descarga en un .txt. Por defecto no registra nada.','Revisor de fichas: nuevo cajetín para pedir a la IA modificaciones en lenguaje natural (edita el JSON de forma iterativa, manteniendo el esquema y verificando HPO) y VISTA PREVIA en vivo que muestra cómo «se traduce» el JSON a la ficha según lo editas.']},
   {v:'1.16.0', d:'2026-06-30', c:['Creador/editor de protocolos: nuevo diálogo con motivo + un campo de INSTRUCCIONES libres (admite un JSON de plantilla a respetar) + posibilidad de aportar UNO O VARIOS PDF (subidos o elegidos de tu repositorio documental) como fuente principal. La generación sigue verificando cada HPO contra JAX.']},
   {v:'1.15.0', d:'2026-06-30', c:['Paneles génicos (HAC): ahora es many-to-many — un panel puede aplicarse a varios protocolos y un protocolo puede tener varios paneles (con checkboxes). Cada panel tiene campo «código» de laboratorio. En la ficha, los genes del panel se colorean VERDE (recomendados por el protocolo) o AZUL («a mayores») y un aviso ROJO lista los recomendados que faltan en tus paneles.']},
   {v:'1.14.0', d:'2026-06-30', c:['Antropometría unificada: el módulo que se despliega en las fichas es ahora EL MISMO que la pestaña Antropometría (percentiles OMS, IMC, perímetro cefálico, envergadura, gravedad de talla; valor en DE). Los criterios de Beighton (hiperlaxitud) se integran como apartado dentro de Antropometría (ficha y pestaña).']},
@@ -1164,7 +1165,34 @@ function extractJSON(text){
   if(a>=0 && b>a) s=s.slice(a,b+1);
   try{ return JSON.parse(s); }catch(e){ return null; }
 }
-async function callLLM({system, user, webSearch, maxTokens, task, thinking}){
+/* ---- Transparencia IA: indicador de proceso + log de depuración (opt-in) ---- */
+let AI_DEBUG=false; const AI_LOG=[]; let _aiBusyN=0;
+const AI_TASKS={assign:'asignando protocolo', extract:'extrayendo HPO del informe', deepen:'profundizando', author:'generando protocolo (web)', freshness:'comprobando novedades (web)', eval:'consultando guías (web)'};
+function aiBusyStart(label){
+  _aiBusyN++;
+  let el=document.getElementById('aiBusy');
+  if(!el){ el=document.createElement('div'); el.id='aiBusy'; el.style.cssText='position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;background:#0a0f14;border:1px solid var(--accent2);border-radius:20px;padding:6px 14px;font-size:12.5px;color:var(--ink);box-shadow:var(--shadow);display:flex;align-items:center;gap:8px'; document.body.appendChild(el); }
+  el.innerHTML='<span style="width:12px;height:12px;border:2px solid var(--accent);border-top-color:transparent;border-radius:50%;display:inline-block;animation:aisp .7s linear infinite"></span> 🤖 '+escHtml(label||'trabajando…')+(AI_DEBUG?' <span class="dx-meta">· debug</span>':'');
+  el.style.display='flex';
+  if(!document.getElementById('aiSpStyle')){ const st=document.createElement('style'); st.id='aiSpStyle'; st.textContent='@keyframes aisp{to{transform:rotate(360deg)}}'; document.head.appendChild(st); }
+}
+function aiBusyEnd(){ _aiBusyN=Math.max(0,_aiBusyN-1); if(_aiBusyN===0){ const el=document.getElementById('aiBusy'); if(el) el.style.display='none'; } }
+function descargarAiLog(){
+  if(!AI_LOG.length){ showToast('El log IA está vacío (actívalo con Debug).'); return; }
+  const txt=AI_LOG.map((e,i)=>`### ${i+1}. ${e.t} · ${AI_TASKS[e.task]||e.task||'?'} · ${e.ms||'?'} ms\n--- SYSTEM ---\n${e.system||''}\n--- USER ---\n${e.user||''}\n${e.reasoning?('--- RAZONAMIENTO ---\n'+e.reasoning+'\n'):''}--- RESPUESTA ---\n${e.response||e.error||''}\n`).join('\n==================================================\n\n');
+  try{ const blob=new Blob([txt],{type:'text/plain'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='ariadna-ai-log-'+new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')+'.txt'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),2000); }catch(e){ showToast('No se pudo descargar: '+e.message); }
+}
+async function callLLM(opts){
+  const started=Date.now();
+  aiBusyStart(AI_TASKS[opts&&opts.task]||'consultando IA');
+  const entry = AI_DEBUG ? {t:new Date().toISOString(), task:opts&&opts.task, system:opts&&opts.system, user:opts&&opts.user} : null;
+  try{ const resp=await _callLLMImpl(opts, entry);
+    if(entry){ entry.response=resp; entry.ms=Date.now()-started; AI_LOG.push(entry); }
+    return resp;
+  }catch(e){ if(entry){ entry.error=e.message; entry.ms=Date.now()-started; AI_LOG.push(entry); } throw e; }
+  finally{ aiBusyEnd(); }
+}
+async function _callLLMImpl({system, user, webSearch, maxTokens, task, thinking}, _dbg){
   const c=loadCfg();
   maxTokens = maxTokens || 1500;
   const pick = pickModel(task||'deepen');
@@ -1190,6 +1218,7 @@ async function callLLM({system, user, webSearch, maxTokens, task, thinking}){
     });
     if(!r.ok) throw new Error('Anthropic '+r.status+' '+await r.text());
     const d=await r.json();
+    if(_dbg){ _dbg.reasoning=(d.content||[]).filter(b=>b.type==='thinking').map(b=>b.thinking||'').join('\n'); }
     return (d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
   }
 }
@@ -1291,10 +1320,16 @@ function renderStatus(){
     +`<span class="status-chip" id="verChip" style="cursor:pointer;color:var(--ink3)" title="Versión y novedades">v${APP_VERSION}</span>`
     +`<div id="statusDetail" style="display:none;position:absolute;top:calc(100% + 4px);right:0;z-index:60;background:#0a0f14;border:1px solid var(--accent2);border-radius:9px;padding:10px 12px;box-shadow:var(--shadow);min-width:230px">`
     +services.map(s=>`<div style="font-size:12px;margin:4px 0;white-space:nowrap"><span style="${dotS};background:${s.on?'var(--ok)':'var(--danger)'}"></span>${s.k}: <span style="color:var(--ink3)">${s.txt}</span></div>`).join('')
-    +`<div style="margin-top:6px"><button class="btn ghost" id="statusToAjustes" style="padding:3px 8px;font-size:11px">Configurar en Ajustes</button></div></div>`;
+    +`<div style="border-top:1px solid var(--line);margin-top:8px;padding-top:8px">`
+    +`<label class="q-opt" style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" id="dbgToggle" ${AI_DEBUG?'checked':''}> 🐞 Debug IA <span class="dx-meta">(registra prompts, razonamiento y respuestas)</span></label>`
+    +`<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn ghost" id="dbgDownload" style="padding:3px 8px;font-size:11px">⬇ Descargar log (${AI_LOG.length})</button><button class="btn ghost" id="statusToAjustes" style="padding:3px 8px;font-size:11px">Ajustes</button></div>`
+    +`</div></div>`;
   const btn=document.getElementById('statusBtn'), det=document.getElementById('statusDetail');
   if(btn&&det){ btn.addEventListener('click',(e)=>{ e.stopPropagation(); det.style.display=det.style.display==='none'?'block':'none'; });
+    det.addEventListener('click', e=>e.stopPropagation());
     document.addEventListener('click', ()=>{ det.style.display='none'; }); }
+  const dt=document.getElementById('dbgToggle'); if(dt) dt.addEventListener('change', ()=>{ AI_DEBUG=dt.checked; showToast(AI_DEBUG?'Debug IA activado: se registrarán las operaciones':'Debug IA desactivado'); });
+  const dd=document.getElementById('dbgDownload'); if(dd) dd.addEventListener('click', descargarAiLog);
   const sa=document.getElementById('statusToAjustes'); if(sa) sa.addEventListener('click', openSettings);
   const vc=document.getElementById('verChip'); if(vc) vc.addEventListener('click', openChangelog);
 }
@@ -2657,6 +2692,36 @@ function countFichaStats(f){
   return {dom, preg, ent, genes, hpo};
 }
 
+// Vista previa ligera de una ficha (para el revisor): "traduce" el JSON a lo que verá el clínico
+function fichaPreviewHtml(f){
+  if(!f || typeof f!=='object' || Array.isArray(f)) return '<div class="dx-meta">JSON no válido — corrige el texto para ver la vista previa.</div>';
+  const g=escHtml;
+  const dom=(f.dominios||[]).map(d=>{
+    const preg=(d.preguntas||[]).map(q=>{
+      const hpos=(q.opciones||[]).flatMap(o=>(o.hpo||[])).map(h=>`<span class="hp">${g(h.id||'')}</span>`).join(' ');
+      return `<li>${g(q.texto||'')} ${hpos}</li>`;
+    }).join('');
+    return `<div style="margin:5px 0"><b>${g(d.nombre||'')}</b><ul style="margin:2px 0 0 16px;padding:0">${preg||'<li class="dx-meta">(sin preguntas)</li>'}</ul></div>`;
+  }).join('');
+  const ent=(f.entidades||[]).map(e=>{
+    const logica=(e.logica||'and')==='or'?' o ':' y ';
+    const crit=e.umbral || `≥${e.min_mayores||0} mayores${logica}≥${e.min_menores||0} menores`;
+    const genes=(e.genes||[]).length?` · genes: ${g((e.genes||[]).join(', '))}`:'';
+    return `<div style="margin:4px 0"><b>${g(e.nombre||'')}</b>${genes}<br><span class="dx-meta">Criterio: ${g(crit)} · mayores: ${g((e.mayores||[]).join(', ')||'—')} · menores: ${g((e.menores||[]).join(', ')||'—')}</span></div>`;
+  }).join('');
+  const eg=f.estudio_genetico;
+  const egHtml=eg&&typeof eg==='object' ? `<div class="dx-meta">${eg.indicado===false?'No indicado de rutina. ':''}${g(eg.tipo||'')}${eg.detalle?'. '+g(eg.detalle):''}${(eg.indicaciones||[]).length?'<br>Indicaciones: '+g((eg.indicaciones||[]).join('; ')):''}</div>` : '';
+  return `<div style="font-size:12.5px;line-height:1.5">
+    <div style="font-size:15px;font-weight:600">${g(f.nombre_es||f.id||'—')}</div>
+    ${(f.sinonimos||[]).length?`<div class="dx-meta">${g((f.sinonimos||[]).join(', '))}</div>`:''}
+    ${(f.poblacion||f.grupo)?`<div class="dx-meta">población: ${g(f.poblacion||'—')}${f.grupo?' · grupo: '+g(f.grupo):''}</div>`:''}
+    ${dom?`<div class="cart-group-title" style="margin-top:8px">Dominios y anamnesis</div>${dom}`:''}
+    ${ent?`<div class="cart-group-title" style="margin-top:8px">Diferencial y criterios</div>${ent}`:''}
+    ${(f.panel_genes||[]).length?`<div class="cart-group-title" style="margin-top:8px">Panel génico (${(f.panel_genes||[]).length})</div><div>${g((f.panel_genes||[]).join(' · '))}</div>`:''}
+    ${egHtml?`<div class="cart-group-title" style="margin-top:8px">Estudio genético</div>${egHtml}`:''}
+  </div>`;
+}
+
 function openFichaReview(f, opts){
   opts=opts||{};
   const ov=document.createElement('div'); ov.className='overlay'; ov.id='fichaReviewOverlay';
@@ -2670,6 +2735,16 @@ function openFichaReview(f, opts){
       <button class="btn" id="btnFichaDownload">⬇ Descargar JSON</button>
     </div>
     <div class="test-out" id="fichaVerifyOut"></div>
+
+    <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; align-items:center">
+      <input id="fichaEditInstr" type="text" placeholder="Dile a la IA qué modificar (p. ej. «añade un dominio ocular», «quita el gen X», «cambia el umbral»)…" style="flex:1; min-width:260px; padding:8px 11px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink); font-size:12.5px">
+      <button class="btn" id="btnEditIA">✏ Editar con IA</button>
+    </div>
+    <div id="fichaEditOut" style="font-size:12px; margin-top:6px"></div>
+
+    <details open style="margin-top:10px"><summary class="cart-group-title" style="cursor:pointer">Vista previa · cómo queda la ficha</summary>
+      <div id="fichaPreview" style="border:1px solid var(--line); border-radius:9px; padding:10px 12px; margin-top:6px; max-height:300px; overflow:auto"></div>
+    </details>
 
     <div style="border:1px solid var(--line); border-radius:9px; padding:10px 12px; margin-top:12px; background:var(--panel2)">
       <div style="font-size:12px; font-weight:700; color:var(--accent); margin-bottom:6px">📎 Aplicar una guía a esta ficha (opcional) + re-buscar</div>
@@ -2689,6 +2764,30 @@ function openFichaReview(f, opts){
   const out=ov.querySelector('#fichaVerifyOut');
   const parse=()=>{ try{ return JSON.parse(ta.value); }catch(e){ out.className='test-out bad'; out.textContent='JSON inválido: '+e.message; return null; } };
   const close=()=>ov.remove();
+
+  // Vista previa en vivo: cómo "traduce" el JSON a ficha
+  const prev=ov.querySelector('#fichaPreview');
+  const renderPrev=()=>{ if(!prev) return; let j=null; try{ j=JSON.parse(ta.value); }catch(e){} prev.innerHTML=fichaPreviewHtml(j); };
+  renderPrev();
+  let _pvT=null; ta.addEventListener('input', ()=>{ clearTimeout(_pvT); _pvT=setTimeout(renderPrev, 300); });
+
+  // Editar el JSON con IA por instrucción libre (iterativo)
+  ov.querySelector('#btnEditIA').addEventListener('click', async ()=>{
+    const eout=ov.querySelector('#fichaEditOut'); const instr=ov.querySelector('#fichaEditInstr').value.trim();
+    if(!instr){ eout.className=''; eout.innerHTML='<span class="dx-meta">Escribe qué quieres cambiar.</span>'; return; }
+    const cur=parse(); if(!cur) return;
+    if(!anyProvider()){ eout.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
+    eout.className=''; eout.textContent='Editando con IA…';
+    try{
+      const system='Eres genetista clínico. Recibes una FICHA JSON y una INSTRUCCIÓN de modificación del clínico. Devuelve la FICHA COMPLETA ya modificada según la instrucción, MANTENIENDO EXACTAMENTE el mismo esquema JSON (id, nombre_es, sinonimos, poblacion, grupo, version, fuentes, modulos, dominios, entidades, panel_genes, estudio_genetico). No cambies nada que la instrucción no pida. CADA código HPO DEBE corresponder EXACTAMENTE al concepto (nombre oficial del término); los códigos se VERIFICAN contra JAX, no los inventes. Devuelve SOLO JSON {"ficha": <ficha completa>, "cambios": "resumen breve en español"}.';
+      const user=JSON.stringify({ ficha: cur, instruccion: instr });
+      const resp=await callLLM({ system, user, webSearch:false, maxTokens:16000, task:'author' });
+      const j=extractJSON(resp); const nueva=j&&(j.ficha||j);
+      if(!nueva||typeof nueva!=='object'){ eout.innerHTML='<div class="err">La IA no devolvió un JSON válido. Reintenta.</div>'; return; }
+      ta.value=JSON.stringify(nueva, null, 2); renderPrev();
+      eout.innerHTML='<div style="color:var(--ok)">✓ '+escHtml((j&&j.cambios)||'Editado.')+' Revisa el JSON y la vista previa; puedes seguir pidiendo más cambios o guardar.</div>';
+    }catch(e){ eout.innerHTML='<div class="err">Error al editar: '+escHtml(e.message)+'</div>'; }
+  });
 
   ov.querySelector('#btnFichaCancel').addEventListener('click', close);
   ov.addEventListener('click', e=>{ if(e.target===ov) close(); });
