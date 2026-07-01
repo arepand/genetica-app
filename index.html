@@ -228,6 +228,11 @@
   .dx-nm{font-weight:700; font-size:13.5px;}
   .pill{margin-left:auto; font-size:10.5px; font-weight:700; border-radius:999px; padding:2px 9px;}
   .pill.sug{background:#173d2a; color:#7fe0a6; border:1px solid #2f6b48;}
+  .pill.ok{background:#173d2a; color:#7fe0a6; border:1px solid #2f6b48;}
+  .pill.near{background:#3a2f12; color:#e8c07a; border:1px solid #6b562a; cursor:help;}
+  .dx.near{border-color:#6b562a;}
+  .dx-prog{height:5px; border-radius:3px; background:var(--line); margin-top:7px; overflow:hidden;}
+  .dx-prog>span{display:block; height:100%; background:var(--accent);}
   .dx-meta{font-size:11px; color:var(--ink3); margin-top:6px;}
   .hp-chip{display:inline-block; font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11px; background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:0 5px; margin:1px 2px; cursor:pointer;}
   .hp-chip:hover{border-color:var(--accent);}
@@ -449,8 +454,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.19.1';
+const APP_VERSION='1.20.0';
 const CHANGELOG=[
+  {v:'1.20.0', d:'2026-07-01', c:['Diferencial más claro y en vivo: a medida que marcas rasgos, cada entidad del protocolo muestra su estado — «✓ Cumple criterios» (verde) o «Falta 1 mayor / Faltan 2 criterios» (ámbar), con barra de progreso hacia el umbral y un tooltip que detalla el criterio exigido (mayores/menores, lógica y/o) y lo que ya tienes presente. Las entidades con rasgos pero sin cumplir ya no se ocultan: aparecen en «En seguimiento» para ver cuánto falta.']},
   {v:'1.19.1', d:'2026-07-01', c:['Revisor/editor de protocolos: botón «⛶ Pantalla completa» (y «↙ Volver a como estaba») para editar el JSON, la vista previa y el formulario con mucho más espacio.']},
   {v:'1.19.0', d:'2026-07-01', c:['Editor visual del formulario de anamnesis (en el revisor, «✎ Editar»): añade/quita dominios, preguntas y respuestas con botones +/🗑, alterna respuesta única/múltiple, y añade o quita códigos HPO en cada respuesta con un buscador integrado (con nombre oficial JAX) — todo sin escribir JSON a mano. El mismo array «dominios» alimenta a la vez este formulario y la anamnesis dirigida que rellenas por paciente.']},
   {v:'1.18.0', d:'2026-07-01', c:['Revisor de fichas — corrector de HPO en la vista previa: cada código HPO se muestra como un chip con su NOMBRE OFICIAL (JAX) al lado, y avisa con «≠» cuando el nombre oficial no coincide con la etiqueta que puso la IA (código válido pero de otro concepto). Al hacer clic en el chip se abre un buscador AJAX (español, inglés o código HP:…) para localizar el término correcto y reemplazar el código en el JSON con un clic.']},
@@ -3070,7 +3076,30 @@ function entidadStatus(e){
   const majOk = maj.length>=needMaj, minOk = min.length>=needMin;
   const logica = (e.logica||'and').toLowerCase();
   const cumple = (needMaj||needMin) ? (logica==='or' ? (majOk||minOk) : (majOk&&minOk)) : (maj.length+min.length>0);
-  return {maj, min, needMaj, needMin, cumple, score: maj.length*2 + min.length};
+  const faltMaj = Math.max(0, needMaj - maj.length);
+  const faltMin = Math.max(0, needMin - min.length);
+  let faltan; // nº de criterios que aún faltan para cumplir (0 si ya cumple)
+  if(cumple) faltan = 0;
+  else if(!needMaj && !needMin) faltan = 1;
+  else if(logica==='or'){ const c=[]; if(needMaj) c.push(faltMaj); if(needMin) c.push(faltMin); faltan = c.length ? Math.min(...c) : 1; }
+  else faltan = faltMaj + faltMin;
+  return {maj, min, needMaj, needMin, logica, faltMaj, faltMin, faltan, cumple, score: maj.length*2 + min.length};
+}
+/* Etiqueta corta del estado: "Cumple criterios" · "Falta 1 mayor" · "Faltan 2 criterios". */
+function faltaLabel(st){
+  if(st.cumple) return '✓ Cumple criterios';
+  if(st.logica==='or') return 'Falta'+(st.faltan>1?'n':'')+' '+st.faltan+' criterio'+(st.faltan>1?'s':'');
+  const bits=[];
+  if(st.faltMaj>0) bits.push(st.faltMaj+' mayor'+(st.faltMaj>1?'es':''));
+  if(st.faltMin>0) bits.push(st.faltMin+' menor'+(st.faltMin>1?'es':''));
+  return (st.faltan>1?'Faltan ':'Falta ')+(bits.join(' y ')||(st.faltan+' criterio'+(st.faltan>1?'s':'')));
+}
+/* Texto para el tooltip: umbral exigido + qué hay presente. */
+function critDetalle(e, st){
+  const conj = st.logica==='or' ? 'o' : 'y';
+  const umbral = e.umbral || `≥${st.needMaj} mayores ${conj} ≥${st.needMin} menores`;
+  const via = st.logica==='or' ? 'basta cumplir UNA vía' : 'exige mayores Y menores';
+  return `Criterio: ${umbral} (${via}). Presentes: ${st.maj.length}/${st.needMaj} mayores · ${st.min.length}/${st.needMin} menores.`;
 }
 function geneChip(g){ return `<span class="gene">${g}</span>`; }
 function geneLinks(g){
@@ -3089,10 +3118,19 @@ function geneRowHtml(g){
 }
 function dxHtml(e, st){
   const genes=(e.genes||[]).map(geneChip).join(' ');
-  return `<div class="dx top">
-    <div class="dx-hd"><span class="dx-nm">${e.nombre}</span><span class="pill sug">cumple umbral</span></div>
-    <div class="dx-meta">Mayores presentes ${st.maj.length}/${st.needMaj} · Menores ${st.min.length}/${st.needMin}</div>
-    ${e.umbral?`<div class="dx-rule">${e.umbral}</div>`:''}
+  const det=escHtml(critDetalle(e, st));
+  const pill = st.cumple
+    ? `<span class="pill ok" title="${det}">✓ Cumple criterios</span>`
+    : `<span class="pill near" title="${det}">${escHtml(faltaLabel(st))}</span>`;
+  // progreso: fracción hacia el umbral (mejor vía si es "o")
+  const need = st.needMaj + st.needMin || 1;
+  const have = Math.min(st.maj.length, st.needMaj) + Math.min(st.min.length, st.needMin);
+  const pct = st.cumple ? 100 : Math.round(100*have/need);
+  return `<div class="dx ${st.cumple?'top':'near'}">
+    <div class="dx-hd"><span class="dx-nm">${escHtml(e.nombre)}</span>${pill}</div>
+    <div class="dx-meta">Mayores ${st.maj.length}/${st.needMaj} · Menores ${st.min.length}/${st.needMin}${st.cumple?'':` · ${escHtml(faltaLabel(st).replace(/^✓ /,''))}`}</div>
+    <div class="dx-prog" title="${det}"><span style="width:${pct}%"></span></div>
+    ${e.umbral?`<div class="dx-rule">${escHtml(e.umbral)}</div>`:''}
     ${genes?`<div class="gp-genes" style="margin-top:6px">${genes}</div>`:''}
   </div>`;
 }
@@ -3199,14 +3237,22 @@ function renderDifferential(){
   }
   const ents=(activeFicha.entidades||[]).map(e=>({e, st:entidadStatus(e)}));
   const cumplen=ents.filter(x=>x.st.cumple).sort((a,b)=>b.st.score-a.st.score);
-  // Diferencial: SOLO entidades que cruzan su umbral formal
+  // "Cerca": no cumple aún pero ya hay ≥1 rasgo → se muestra con "falta N criterio(s)"
+  const cerca=ents.filter(x=>!x.st.cumple && x.st.score>0).sort((a,b)=> a.st.faltan-b.st.faltan || b.st.score-a.st.score);
   const ch=crossProtocolHtml(true);
   if((activeFicha.entidades && activeFicha.entidades.length) || ch){
     dbox.style.display='block';
-    dbox.innerHTML = ((activeFicha.entidades&&activeFicha.entidades.length)
-        ? `<div class="cart-group-title">Diferencial${(patient.edad||patient.sexo)?` · ${[patient.edad,patient.sexo].filter(Boolean).join(' · ')}`:''}</div>` +
-          (cumplen.length ? cumplen.map(x=>dxHtml(x.e, x.st)).join('') : '<div class="empty">Ninguna entidad cruza aún su umbral formal. Marca más rasgos.</div>')
-        : '') + ch;
+    let html='';
+    if(activeFicha.entidades && activeFicha.entidades.length){
+      html += `<div class="cart-group-title">Diferencial${(patient.edad||patient.sexo)?` · ${[patient.edad,patient.sexo].filter(Boolean).join(' · ')}`:''}</div>`;
+      if(cumplen.length) html += cumplen.map(x=>dxHtml(x.e, x.st)).join('');
+      if(cerca.length){
+        html += `<div class="cart-group-title" style="font-size:11px;color:var(--ink3);margin-top:${cumplen.length?'10px':'2px'}">En seguimiento (aún no cumplen)</div>`;
+        html += cerca.map(x=>dxHtml(x.e, x.st)).join('');
+      }
+      if(!cumplen.length && !cerca.length) html += '<div class="empty">Ninguna entidad tiene rasgos aún. Marca opciones en la anamnesis.</div>';
+    }
+    dbox.innerHTML = html + ch;
     wireCrossProto(dbox);
   } else { dbox.style.display='none'; }
   // Panel génico: genes de las entidades activas; si ninguna, panel_genes completo
