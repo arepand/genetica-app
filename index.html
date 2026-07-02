@@ -111,7 +111,7 @@
   /* Búsqueda global + filas */
   .global-search input{width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink); font-size:13px;}
   .global-search input:focus{outline:none; border-color:var(--accent);}
-  #globalSearchResults{margin-top:8px; max-height:300px; overflow:auto;}
+  #globalSearchResults{margin-top:8px;}   /* sin overflow: así el tooltip de definición no se recorta */
   .search-row{display:flex; align-items:flex-start; gap:10px; padding:9px 11px; background:var(--panel2);
     border:1px solid var(--line); border-radius:9px; margin-bottom:6px;}
   .check-wrap{cursor:pointer; flex:0 0 auto; margin-top:1px;}
@@ -128,7 +128,7 @@
     margin-left:7px; vertical-align:middle; border-radius:50%; border:1px solid var(--line); color:var(--ink3);
     font-size:9.5px; cursor:help; position:relative; font-weight:700;}
   .info-dot:hover{border-color:var(--accent); color:var(--accent);}
-  .info-dot .tooltip{display:none; position:absolute; top:100%; left:0; margin-top:4px; width:270px; pointer-events:auto;
+  .info-dot .tooltip{display:none; position:absolute; top:100%; left:0; margin-top:4px; width:270px; max-width:78vw; pointer-events:auto;
     background:#0a0f14; color:var(--ink); border:1px solid var(--accent2); font-weight:400;
     font-size:11.5px; line-height:1.5; padding:11px 13px; border-radius:9px; text-align:left; z-index:60; box-shadow:var(--shadow);}
   /* franja invisible que une la ⓘ con el tooltip para no perder el hover al ir a "mejorar (IA)" */
@@ -466,8 +466,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.33.0';
+const APP_VERSION='1.34.0';
 const CHANGELOG=[
+  {v:'1.34.0', d:'2026-07-02', c:['Antropometría: colores tipo SEMÁFORO por severidad del z (verde dentro de rango, ámbar moderado, rojo marcado) y ahora el perímetro cefálico también sugiere HPO (micro/macrocefalia) en todo el rango 0–18 a.','Diferencial cruzado más laxo: sugiere protocolos que encajan ANTES (con coincidencia parcial, sin esperar a cumplir todos los criterios) y muestra hasta 5, marcando cuáles cumplen y cuáles son parciales.','Fenotipado por protocolo: si varios protocolos encajan con el motivo, se muestran TODOS ordenados por relevancia para elegir (antes abría solo uno).','Ver/imprimir protocolo: los paneles génicos muestran por defecto solo los ASOCIADos (el buscador aparece al escribir).','Buscador HPO: el tooltip de definición ya no se recorta.','Protocolos (normales y prenatales): casilla «Validado» en el editor → muestran un ✓ de validado en la vista y en la lista.','Índice de Beighton: si se cumple el criterio, aparece un chip del HPO para añadir (como en antropometría), en vez del botón «+Añadir HAG» (que estaba siempre y fallaba).']},
   {v:'1.33.0', d:'2026-07-02', c:['Cuadro de mando: nueva gráfica de barras MENSUAL (Ene–Dic) con selector de AÑO, que suma solo las realizadas (SI+URG). Barras apiladas por colores según «Desglosar por» (médico/consulta/prestación/realizada) y filtros multi-selección (consultas, prestaciones, médicos, SI/URG).','Cuadro de mando: por defecto se preselecciona el MES actual, con botones «Mes actual», «Año actual» y «Todo».','Médico sin clasificar (S.C / S.C S.C) se muestra como «SC». Agenda UXPC03 se muestra como «UXPC03 Xenética» (y UXPC04 como «UXPC04 Telefónicas Xenética»).']},
   {v:'1.32.1', d:'2026-07-02', c:['Cuadro de mando: soporte de PDF de VARIAS páginas — se procesan por lotes (4 páginas) con indicador de progreso y arrastre de la sección Médico/Agenda entre páginas por si alguna no repite la cabecera.']},
   {v:'1.32.0', d:'2026-07-02', c:['Nuevo módulo «📊 Cuadro de mando» (menú «Otros»): gestión de la actividad de consulta. Importas el PDF de actividad; la app lo lee en el navegador y TAPA en blanco la columna «Paciente» ANTES de procesar (los nombres nunca salen del navegador) — solo se guardan registros SIN datos personales. El PDF no se almacena. Evita duplicados por NREG (puedes re-subir un PDF con fechas ya cargadas). Cuadro de mando con filtro por fechas, gráficas por agenda/prestación/médico y resumen trimestral (total por agenda desglosado por prestación + total acumulado). Vista previa redactada con botón «Rotar» y exportación CSV.']},
@@ -1128,7 +1129,7 @@ async function saveFicha(ficha){
   try{ const ci=await ghGetFile('fichas/index.json'); idx=ci.json||{fichas:[]}; idxSha=ci.sha; }
   catch(e){ idx=cachedIndex()||{fichas:[]}; }
   if(!idx.fichas) idx.fichas=[];
-  const entry={id:ficha.id, nombre:ficha.nombre_es, sinonimos:ficha.sinonimos||[], poblacion:ficha.poblacion||'unica', grupo:ficha.grupo||null};
+  const entry={id:ficha.id, nombre:ficha.nombre_es, sinonimos:ficha.sinonimos||[], poblacion:ficha.poblacion||'unica', grupo:ficha.grupo||null, validado:!!ficha.validado};
   const i=idx.fichas.findIndex(f=>f.id===ficha.id);
   if(i>=0) idx.fichas[i]=entry; else idx.fichas.push(entry);
   await ghPutFile('fichas/index.json', idx, 'index: '+ficha.id, idxSha);
@@ -1707,6 +1708,22 @@ function localMatch(motivo, fichas){
   // Solo aceptamos como match local los fuertes (substring/exacto). El resto → LLM.
   return bestScore>=3 ? {ficha:best, score:bestScore} : null;
 }
+/* TODAS las fichas que encajan con el motivo, ordenadas por relevancia (exacto>substring>solape de palabras). */
+function localMatchAll(motivo, fichas){
+  const q=normTxt(motivo); if(!q) return [];
+  const qtok=q.split(' ').filter(t=>t.length>=3 && !NL_STOP.has(t));
+  const out=[];
+  (fichas||[]).forEach(f=>{
+    const hay=[f.id, f.nombre, ...(f.sinonimos||[])].filter(Boolean).map(normTxt);
+    let score=0;
+    hay.forEach(h=>{ if(!h) return;
+      if(h===q) score=Math.max(score,5);
+      else if(h.includes(q)||q.includes(h)) score=Math.max(score,4);
+      else if(qtok.length){ const ht=new Set(h.split(' ')); const ov=qtok.filter(t=>ht.has(t)).length; if(ov) score=Math.max(score, 1+Math.min(ov,2)); } });
+    if(score>0) out.push({ficha:f, score});
+  });
+  return out.sort((a,b)=>b.score-a.score);
+}
 
 /* Enrutado por edad: si la ficha pertenece a un "grupo" con variantes
    pediátrica/adulta, elige la que corresponde a la edad del paciente. */
@@ -1768,10 +1785,20 @@ function renderInicio(){
 async function openFichaFlow(){
   const box=document.getElementById('fichaFlow'); if(!box) return;
   if(!patient.motivo){ box.innerHTML='<div class="err">Introduce un motivo de consulta.</div>'; return; }
-  box.innerHTML='<div class="loading">Buscando la ficha más parecida…</div>';
-  const res = await assignFicha(patient.motivo);
+  box.innerHTML='<div class="loading">Buscando protocolos que encajen…</div>';
   const idx = await getIndex();
   const fichas = idx.fichas||[];
+  // Si varios protocolos encajan con el motivo, muéstralos TODOS por relevancia para elegir.
+  const cands = localMatchAll(patient.motivo, fichas);
+  if(cands.length>=2){
+    box.innerHTML = `<div class="step-sub">Protocolos que encajan con «${escHtml(patient.motivo)}» (por relevancia). Elige uno:</div>`
+      + cands.slice(0,8).map(c=>`<div class="lib-card protoPick" data-openf="${escHtml(c.ficha.id)}" style="cursor:pointer;margin:6px 0"><div class="nm">${escHtml(c.ficha.nombre||c.ficha.id)}${c.ficha.poblacion&&c.ficha.poblacion!=='unica'?` <span class="pop-badge">${c.ficha.poblacion==='pediatrica'?'ped.':'adulto'}</span>`:''}</div><div class="meta">${escHtml((c.ficha.sinonimos||[]).slice(0,5).join(', ')||'')}</div></div>`).join('')
+      + `<div style="margin-top:10px"><button class="btn" id="btnCrearFicha3">✨ Generar uno nuevo con IA</button></div>`;
+    box.querySelectorAll('.protoPick').forEach(el=>el.addEventListener('click', async ()=>{ const f=await getFicha(el.dataset.openf); if(f) setActiveFicha(f, {via:'manual', confianza:1}, fichas); }));
+    const c3=document.getElementById('btnCrearFicha3'); if(c3) c3.addEventListener('click', ()=>openAutoriaModal(patient.motivo));
+    return;
+  }
+  const res = await assignFicha(patient.motivo);
   if(res.id){
     const ficha = await getFicha(res.id);
     if(ficha){ setActiveFicha(ficha, res, fichas); return; }
@@ -1922,28 +1949,26 @@ function beightonHtml(){
       <span class="num">${score}/9</span>
       <span class="verdict ${pos?'pos':'neg'}">${pos?'HAG presente':'No alcanza umbral'}</span>
       <span class="bthr">Umbral aplicado: ≥${thr} (${patient.edad||'edad no indicada'})</span>
-      <button class="btn" id="bAddGjh" style="margin-left:auto;" ${pos?'':'disabled'}>+ Añadir HAG (HP:0002761)</button>
     </div>
+    ${pos?`<div class="am-sub" style="margin-top:6px">Cumple criterio — pulsa para añadir al fenotipo:</div><div class="pheno-chips">${chipBtn('HP:0002761','Hiperlaxitud articular generalizada','Beighton')}</div>`:''}
   </div>`;
 }
 function attachBeighton(region){
+  region=region||{label:'Beighton'};
   document.querySelectorAll('input[data-bk]').forEach(cb=>{   // funciona en la ficha (#main) y en la pestaña Antropometría
+    if(cb._bw) return; cb._bw=1;
     cb.addEventListener('change', ()=>{
       beighton[cb.dataset.bk] = cb.checked;
       const wrap = cb.closest('.beighton');
       if(wrap){ wrap.outerHTML = beightonHtml(); attachBeighton(region); }
     });
   });
-  const add = document.getElementById('bAddGjh');
-  if(add){
-    add.addEventListener('click', ()=>{
-      const id = 'HP:0002761';
-      const esLabel = (window.__esLabels && window.__esLabels[id]) || 'Hiperlaxitud articular generalizada';
-      selections[id] = {hpo:id, es:esLabel, en:'Generalized joint laxity', region:region.label, origen:'beighton', verified:true};
-      renderCart();
-      showToast('HAG añadida al fenotipo (Beighton ' + beightonScore() + '/9)');
-    });
-  }
+  document.querySelectorAll('.beighton .pheno-chip').forEach(b=>{
+    if(b._bw) return; b._bw=1;
+    b.addEventListener('click', (e)=>{ if(e.target.closest('.info-dot')) return; toggleAnthroPheno(b.dataset.pid, b.dataset.pes);
+      const wrap=b.closest('.beighton'); if(wrap){ wrap.outerHTML=beightonHtml(); attachBeighton(region); } });
+  });
+  document.querySelectorAll('.beighton .info-dot').forEach(d=>wireInfoDot(d));
 }
 
 /* ---- Antropometría (módulo opcional; motor WHO_LMS injertado verbatim abajo) ---- */
@@ -2036,6 +2061,8 @@ function fmtPct(o){
   let band = p<3?'< P3':(p>97?'> P97':('P'+Math.round(p)));
   return {band, z:o.z, pct:p};
 }
+/* Semáforo por severidad del z (simétrico alto/bajo): verde dentro de rango, ámbar moderado, rojo marcado. */
+function pctCls(z){ const a=Math.abs(z||0); return a<=1.881 ? 'mid' : (a<=3 ? 'low' : 'high'); }
 /* Orbegozo — estudio TRANSVERSAL de Bilbao, EDICIÓN 2011 (Fundación Faustino Orbegozo; Fernández, Lorenzo, Vrotsou, Aresti, Rica, Sánchez).
    Datos EXACTOS extraídos del TEXTO del PDF oficial estudios_2011.pdf (no OCR): talla, peso, IMC y perímetro craneal, por edad (5–18 a) y sexo → [ageY, P3, P50, P97].
    El Z se calcula anclando a P3/P50/P97 (P50→z0, P97→+1.8808, P3→−1.8808), respetando la asimetría. */
@@ -2120,7 +2147,7 @@ function anthroPctCard(title, value, unit, measure, maxAge){
   // Pediátrico: OMS 0–5 + Orbegozo 5–18. El PC del adulto (>18) se ancla a la ref. de 18 a.
   if(value>0 && sx && ageY!=null && (ageY<=18 || measure==='hc')){
     const r=fmtPct(growthZ(measure, sx, ageY, value));
-    if(r){ const cls=r.pct<3?'low':(r.pct>97?'high':'mid'); pctHtml=`<span class="pct ${cls}">${r.band} · ${r.z>=0?'+':''}${r.z.toFixed(2)} DE</span>`; }
+    if(r){ pctHtml=`<span class="pct ${pctCls(r.z)}">${r.band} · ${r.z>=0?'+':''}${r.z.toFixed(2)} DE</span>`; }
     else pctHtml='<span class="pct na">fuera del rango de edad</span>';
   } else if(value>0 && sx && measure!=='hc' && ageY!=null && ageY>18){
     const a=adultPct(measure, sx, value);
@@ -2140,7 +2167,7 @@ function renderAnthroResult(boxId){
   let rows = anthroPctCard('Talla',talla,'cm','height') + anthroPctCard('Peso',peso,'kg','weight');
   if(bmi){
     let p='';
-    if(sx && ageY!=null && ageY<=18){ const r=fmtPct(growthZ('bmi',sx,ageY,bmi)); if(r){ const cls=r.pct<3?'low':(r.pct>97?'high':'mid'); p=`<span class="pct ${cls}">${r.band} · ${r.z>=0?'+':''}${r.z.toFixed(2)} DE</span>`; } }
+    if(sx && ageY!=null && ageY<=18){ const r=fmtPct(growthZ('bmi',sx,ageY,bmi)); if(r){ p=`<span class="pct ${pctCls(r.z)}">${r.band} · ${r.z>=0?'+':''}${r.z.toFixed(2)} DE</span>`; } }
     else if(ageY!=null && ageY>18){ const bc=bmiClass(bmi); if(bc) p=`<span class="pct ${bc.c}">${bc.t} (SEEDO)</span>`; }
     rows += `<div class="am-row"><span class="am-t">IMC</span><span class="am-v">${bmi.toFixed(1)} kg/m²</span>${p}${measureSrcHtml('bmi', ageY)}</div>`;
   }
@@ -2187,15 +2214,15 @@ function renderAnthroResult(boxId){
       else chips+=chipBtn('HP:0001513','Obesidad')+chipBtn('HP:0025501','Obesidad grado III (mórbida)','Antropometría');
     }
   }
-  // Perímetro cefálico
-  if(pc>0 && sx && ageY!=null && ageY<=5){ const r=lmsZ('hc',sx,ageY,pc); if(r){ if(r.pct>97) chips+=chipBtn('HP:0000256','Macrocefalia','Antropometría'); if(r.pct<3) chips+=chipBtn('HP:0000252','Microcefalia','Antropometría'); } }
+  // Perímetro cefálico (OMS 0-5 + Orbegozo 5-18; adulto ancla a 18 a)
+  if(pc>0 && sx && ageY!=null){ const r=growthZ('hc',sx,ageY,pc); if(r){ if(r.z>=2) chips+=chipBtn('HP:0000256','Macrocefalia','Antropometría'); if(r.z<=-2) chips+=chipBtn('HP:0000252','Microcefalia','Antropometría'); } }
   // Envergadura (cociente envergadura/talla)
   if(envRatio!=null){ if(envRatio>=1.05) chips+=chipBtn('HP:0012771','Envergadura aumentada','Antropometría'); else if(envRatio<=0.95) chips+=chipBtn('HP:0012770','Envergadura disminuida','Antropometría'); }
 
   box.innerHTML = `<div class="am-grid">${rows}</div>`
     + (chips?`<div class="am-sub">Sugeridos por las medidas — pulsa para añadir al fenotipo:</div><div class="pheno-chips">${chips}</div>`:'')
     + preg
-    + `<div class="am-note">Percentiles <b>OMS</b> (LMS): talla/peso/IMC 0-19 a; <b>perímetro cefálico 0-5 a</b>. Gravedad de la talla baja por z: <b>leve</b> −2 a −3 · <b>moderada</b> −3 a −4 · <b>severa</b> &lt;−4 DE. En &gt;19 a la talla usa referencia poblacional y el IMC la clasificación OMS. Orientativo.</div>`;
+    + `<div class="am-note">Referencia: <b>OMS 2006</b> (0-5 a) + <b>Orbegozo 2011</b> (5-18 a) para talla/peso/IMC/PC; PC en adulto se ancla a la ref. de 18 a. Color <b>semáforo</b> por severidad del z: verde |z|≤1,88 (dentro de rango) · ámbar 1,88-3 · rojo &gt;3 DE. Gravedad de la talla baja: leve −2 a −3 · moderada −3 a −4 · severa &lt;−4 DE. Orientativo.</div>`;
   box.querySelectorAll('.pheno-chip').forEach(b=> b.addEventListener('click', (e)=>{ if(e.target.closest('.info-dot')) return; toggleAnthroPheno(b.dataset.pid, b.dataset.pes); }));
   box.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d)); prefetchDefinitions(box);
 }
@@ -2485,7 +2512,7 @@ async function openValidarHpo(f){
 async function persistFicha(f){
   if(ghConfigured()){ await saveFicha(f); return 'commit'; }
   const idx = cachedIndex() || {fichas:[]};
-  const entry={id:f.id, nombre:f.nombre_es, sinonimos:f.sinonimos||[], poblacion:f.poblacion||'unica', grupo:f.grupo||null};
+  const entry={id:f.id, nombre:f.nombre_es, sinonimos:f.sinonimos||[], poblacion:f.poblacion||'unica', grupo:f.grupo||null, validado:!!f.validado};
   const i=idx.fichas.findIndex(x=>x.id===f.id);
   if(i>=0) idx.fichas[i]=entry; else idx.fichas.push(entry);
   cacheIndex(idx); localStorage.setItem('fh_ficha_'+f.id, JSON.stringify(f));
@@ -3054,6 +3081,7 @@ function openFichaReview(f, opts){
 
     <div style="display:flex; gap:8px; margin-top:10px; align-items:center; flex-wrap:wrap">
       <input id="fichaNota" type="text" placeholder="Nota de cambios (opcional) — se guarda en el changelog de esta versión" style="flex:1; min-width:240px; padding:8px 11px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink); font-size:12.5px">
+      <label class="q-opt" style="display:flex;align-items:center;gap:6px;font-size:13px;white-space:nowrap"><input type="checkbox" id="fichaValidado" ${f.validado?'checked':''}> ✓ Validado</label>
     </div>
 
     <div class="modal-actions">
@@ -3279,6 +3307,7 @@ function openFichaReview(f, opts){
     if(badHpo.length){ out.className='test-out bad'; out.textContent='Códigos HPO con formato inválido: '+badHpo.join(', ')+'. Corrígelos (formato HP:0000000) o usa "🔧 Validar HPO" en la vista de ficha.'; return; }
     out.className='test-out'; out.textContent='Guardando…';
     try{
+      j.validado = !!(ov.querySelector('#fichaValidado')||{}).checked;
       bumpFichaRev(j, (ov.querySelector('#fichaNota')||{}).value||'');   // sube rev + changelog + copia de seguridad local
       const mode=await persistFicha(j);
       close();
@@ -3489,21 +3518,23 @@ function crossProtocolMatches(){
   for(const fc of (_fichaDxIndex||[])){
     if(fc.id===activeId) continue;
     const ents=[];
-    for(const e of (fc.entidades||[])){ const st=entidadStatus(e); if(st.cumple && (st.maj.length+st.min.length)>0) ents.push({nombre:e.nombre, st}); }
-    if(ents.length){ ents.sort((a,b)=>b.st.score-a.st.score); out.push({id:fc.id, nombre:fc.nombre, ents, score:Math.max(...ents.map(x=>x.st.score))}); }
+    for(const e of (fc.entidades||[])){ const st=entidadStatus(e); const feats=st.maj.length+st.min.length;
+      // MÁS LAXO: entra si cumple, o si ya hay ≥1 mayor o ≥2 rasgos (aparece antes, sin esperar a cumplir todo)
+      if(st.cumple || st.maj.length>=1 || feats>=2) ents.push({nombre:e.nombre, st, cumple:st.cumple, feats}); }
+    if(ents.length){ ents.sort((a,b)=> (b.cumple-a.cumple) || (b.st.score-a.st.score)); out.push({id:fc.id, nombre:fc.nombre, ents, score:Math.max(...ents.map(x=>x.st.score)), anyCumple:ents.some(x=>x.cumple)}); }
   }
-  return out.sort((a,b)=>b.score-a.score);
+  return out.sort((a,b)=> (b.anyCumple-a.anyCumple) || (b.score-a.score)).slice(0,5);   // hasta 5 protocolos
 }
 function crossProtocolHtml(topMargin){
   if(currentSection==='prenatal') return '';
   const cross=crossProtocolMatches(); if(!cross.length) return '';
-  return `<div class="cart-group-title" style="color:var(--accent)${topMargin?';margin-top:12px':''}">🎯 También encaja con tus protocolos <span class="dx-meta">(${cross.length})</span></div>`
+  return `<div class="cart-group-title" style="color:var(--accent)${topMargin?';margin-top:12px':''}">🎯 También encaja con tus protocolos <span class="dx-meta">(${cross.length}${cross.length>=5?'+':''})</span></div>`
     + cross.map(m=>{
       const complejo=m.ents.length>1;
-      const subs=m.ents.map(x=>`<div class="dx-meta" style="margin:2px 0 0 8px;color:var(--ink2)">↳ <b style="color:var(--ok)">${escHtml(x.nombre)}</b> <span class="dx-meta">— ${x.st.maj.length}/${x.st.needMaj} mayores · ${x.st.min.length}/${x.st.needMin} menores</span></div>`).join('');
+      const subs=m.ents.slice(0,5).map(x=>`<div class="dx-meta" style="margin:2px 0 0 8px;color:var(--ink2)">↳ <b style="color:${x.cumple?'var(--ok)':'#e8a13a'}">${escHtml(x.nombre)}</b> <span class="dx-meta">— ${x.st.maj.length}/${x.st.needMaj} mayores · ${x.st.min.length}/${x.st.needMin} menores ${x.cumple?'· ✓ cumple':'· parcial'}</span></div>`).join('');
       return `<div style="border:1px solid var(--accent2);border-left:3px solid var(--accent);border-radius:9px;padding:8px 10px;margin:6px 0;background:linear-gradient(180deg,#16302c,#141d1b)">
-        <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap"><a class="tip-ai" data-openficha="${escHtml(m.id)}"><b>${escHtml(m.nombre)}</b></a>${complejo?`<span class="pill sug" title="Cumplen varias entidades dentro de este protocolo">${m.ents.length} entidades</span>`:''}</div>
-        ${complejo?`<div class="dx-meta" style="margin-top:2px">Dentro de este protocolo cumplen:</div>`:''}
+        <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap"><a class="tip-ai" data-openficha="${escHtml(m.id)}"><b>${escHtml(m.nombre)}</b></a>${complejo?`<span class="pill sug" title="Entidades con coincidencias dentro de este protocolo">${m.ents.length} entidades</span>`:''}${m.anyCumple?'':`<span class="pill near">coincidencia parcial</span>`}</div>
+        ${complejo?`<div class="dx-meta" style="margin-top:2px">Entidades que coinciden:</div>`:''}
         ${subs}
         <button class="btn primary aplicarProto" data-aplicar="${escHtml(m.id)}" style="margin-top:7px;padding:3px 10px;font-size:12px">Aplicar protocolo y seguir anamnesis ›</button>
       </div>`;
@@ -4058,10 +4089,15 @@ function fichaPanelHtml(f){
 function panelAssocResultsHtml(f, query){
   if(!(PANELES||[]).length) return '<span class="dx-meta">No tienes paneles. Créalos en 🧩 Paneles.</span>';
   const q=accLower(query||'').trim();
-  let list=PANELES.filter(p=>!q || accLower(p.name).includes(q) || accLower(p.codigo||'').includes(q) || accLower(p.tecnica||'').includes(q));
-  // asociados primero
-  list=list.slice().sort((a,b)=>((b.fichaIds||[]).includes(f.id)?1:0)-((a.fichaIds||[]).includes(f.id)?1:0));
-  if(!list.length) return '<span class="dx-meta">Ningún panel coincide con «'+escHtml(query)+'».</span>';
+  let list;
+  if(!q){ // sin búsqueda: mostrar SOLO los paneles asociados (marcados) a este protocolo
+    list=PANELES.filter(p=>(p.fichaIds||[]).includes(f.id));
+    if(!list.length) return '<span class="dx-meta">Sin paneles asociados. Escribe para buscar y marcar uno.</span>';
+  } else {
+    list=PANELES.filter(p=>accLower(p.name).includes(q) || accLower(p.codigo||'').includes(q) || accLower(p.tecnica||'').includes(q))
+      .sort((a,b)=>((b.fichaIds||[]).includes(f.id)?1:0)-((a.fichaIds||[]).includes(f.id)?1:0));
+    if(!list.length) return '<span class="dx-meta">Ningún panel coincide con «'+escHtml(query)+'».</span>';
+  }
   return list.slice(0,25).map(p=>{ const on=(p.fichaIds||[]).includes(f.id);
     return `<label class="q-opt" style="display:flex;align-items:center;gap:6px;font-size:12.5px;padding:3px 2px"><input type="checkbox" class="panTog" data-pid="${escHtml(p.id)}" ${on?'checked':''}> ${escHtml(p.name)}${p.codigo?' <span class="dx-meta">['+escHtml(p.codigo)+']</span>':''}${p.tecnica?' <span class="dx-meta">· '+escHtml(p.tecnica)+'</span>':''}${on?' <span style="color:var(--ok);font-weight:600">✓ asociado</span>':''}</label>`;
   }).join('');
@@ -4583,6 +4619,7 @@ function openPrenatalSyndEditor(name){
       <div id="psFindings">${findings||'<div class="dx-meta">Sin hallazgos.</div>'}</div>
       <button class="btn ghost" id="psAddF" style="margin-top:6px;padding:3px 9px;font-size:12px">+ hallazgo (buscar HPO)</button>
       <label class="q-opt" style="display:flex;align-items:center;gap:6px;margin-top:14px;font-size:13px"><input type="checkbox" id="psNoIA" ${!s.ia?'checked':''}> Marcar como revisado (quitar la etiqueta «IA»)</label>
+      <label class="q-opt" style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:13px"><input type="checkbox" id="psValidado" ${s.validado?'checked':''}> ✓ Validado</label>
       <div class="field" style="margin-top:10px"><label>Nota de cambios (changelog)</label><input id="psNota" placeholder="opcional"></div>
       ${(s.historial&&s.historial.length)?`<details style="margin-top:6px"><summary class="dx-meta" style="cursor:pointer">🕘 Changelog (${s.historial.length})</summary><div>${s.historial.slice(0,20).map(h=>`<div style="font-size:12px;border-top:1px solid var(--line);padding:3px 0"><b>rev ${h.rev}</b> <span class="dx-meta">${String(h.fecha||'').slice(0,16).replace('T',' ')}</span>${h.nota?' · '+escHtml(h.nota):''}</div>`).join('')}</div></details>`:''}
       <div class="modal-actions"><button class="btn ghost" id="psCancel">Cancelar</button><button class="btn primary" id="psSave">Guardar (nueva versión)</button></div>
@@ -4599,6 +4636,7 @@ function openPrenatalSyndEditor(name){
       const rt=ov.querySelector('#psRefT').value.trim(), ru=ov.querySelector('#psRefU').value.trim();
       if(rt||ru) s.ref={titulo:rt, url:ru};
       if(ov.querySelector('#psNoIA').checked){ s.ia=false; s.verified=true; }
+      s.validado=!!ov.querySelector('#psValidado').checked;
       bumpPrenatalRev(s, ov.querySelector('#psNota').value);
       await persistPrenatalCustom('prenatal: editar '+s.name);
       ov.remove(); renderPrenatal(); showToast('Síndrome guardado (rev '+s.rev+')');
@@ -4989,7 +5027,7 @@ function renderPrenatal(){
       <div style="margin-top:24px;border-top:1px solid var(--line);padding-top:16px">
         <div id="prenatalInd" style="margin:0 0 16px"></div>
         <details class="morfo-region"><summary>Síndromes incorporados <span style="color:var(--ink3);font-weight:400">· ${allPrenatalSyndromes().length}</span></summary>
-          <div style="font-size:12.5px;line-height:1.7;padding:4px 0">${allPrenatalSyndromes().map(s=>{ const editable=true; return `<div>· <b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)" title="Ficha Orphanet (español)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">IA</span>':''}${s.rev?` <span class="dx-meta">rev ${s.rev}</span>`:''} <span class="dx-meta hastip">— ${(s.findings||[]).length} hallazgos<span class="tooltip">${syndromeFindingsTip(s)}</span></span> <span class="dx-meta">· ${escHtml(s.test||'')}</span>${(s.ref&&s.ref.url)?` <a class="dx-meta" href="${escA(String(s.ref.url))}" target="_blank" rel="noopener">bibliografía</a>`:''}${s.ref?bibRefHtml(s.ref):''}${editable?` <a class="tip-ai" data-editsyn="${escA(s.name)}">✎ editar</a>`:''}${s.ia?` <a class="tip-ai" data-rmsyn="${escA(s.name)}">quitar</a>`:''}</div>`; }).join('')}</div>
+          <div style="font-size:12.5px;line-height:1.7;padding:4px 0">${allPrenatalSyndromes().map(s=>{ const editable=true; return `<div>· <b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)" title="Ficha Orphanet (español)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">IA</span>':''}${s.validado?' <span class="dx-meta" style="color:var(--ok)">✓ validado</span>':''}${s.rev?` <span class="dx-meta">rev ${s.rev}</span>`:''} <span class="dx-meta hastip">— ${(s.findings||[]).length} hallazgos<span class="tooltip">${syndromeFindingsTip(s)}</span></span> <span class="dx-meta">· ${escHtml(s.test||'')}</span>${(s.ref&&s.ref.url)?` <a class="dx-meta" href="${escA(String(s.ref.url))}" target="_blank" rel="noopener">bibliografía</a>`:''}${s.ref?bibRefHtml(s.ref):''}${editable?` <a class="tip-ai" data-editsyn="${escA(s.name)}">✎ editar</a>`:''}${s.ia?` <a class="tip-ai" data-rmsyn="${escA(s.name)}">quitar</a>`:''}</div>`; }).join('')}</div>
         </details>
         <div class="cart-group-title" style="margin-top:14px">Añadir / proponer síndromes (IA)</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">
@@ -5408,7 +5446,7 @@ function wireLibCards(scope){
 }
 function prenatalCardHtml(s){
   return `<div class="lib-card">
-    <div class="nm">${escHtml(s.name)} <span class="pop-badge" style="background:rgba(120,180,255,.15);color:#9cc4ff">prenatal</span>${s.ia?' <span class="dx-meta" style="color:var(--accent)">IA</span>':''}</div>
+    <div class="nm">${escHtml(s.name)} <span class="pop-badge" style="background:rgba(120,180,255,.15);color:#9cc4ff">prenatal</span>${s.ia?' <span class="dx-meta" style="color:var(--accent)">IA</span>':''}${s.validado?' <span class="pop-badge" style="background:#173d2a;color:#7fe0a6;border-color:#2f6b48" title="Validado">✓</span>':''}</div>
     <div class="meta">${(s.findings||[]).length} hallazgos · ${escHtml(s.test||'')}${s.orpha?' · ORPHA:'+escHtml(String(s.orpha)):''}</div>
     <div class="acts">
       <button class="btn" data-prenver="${escHtml(s.name)}">👁 Ver hallazgos</button>
@@ -5473,7 +5511,7 @@ async function validarTodosProtocolos(){
 function libCardHtml(f){
   const pob = f.poblacion && f.poblacion!=='unica' ? `<span class="pop-badge">${f.poblacion==='pediatrica'?'pediátrica':'adulta'}</span>` : '';
   return `<div class="lib-card">
-    <div class="nm">${f.nombre||f.id} ${pob}</div>
+    <div class="nm">${f.nombre||f.id} ${pob}${f.validado?' <span class="pop-badge" style="background:#173d2a;color:#7fe0a6;border-color:#2f6b48" title="Protocolo validado">✓</span>':''}</div>
     <div class="meta">${f.id}${(f.sinonimos&&f.sinonimos.length)?' · '+f.sinonimos.slice(0,4).join(', '):''}</div>
     <div class="acts">
       <button class="btn" data-ver="${f.id}">👁 Ver / imprimir</button>
@@ -5507,7 +5545,7 @@ async function renderFichaView(f){
       <button class="btn primary" id="fvPrint">🖨 Imprimir / PDF</button>
     </div>
     <div class="fview" id="fviewDoc">
-      <h1>${f.nombre_es||f.id}</h1>
+      <h1>${f.nombre_es||f.id}${f.validado?' <span class="pop-badge" style="background:#173d2a;color:#7fe0a6;border-color:#2f6b48;font-size:12px;vertical-align:middle">✓ Validado</span>':''}</h1>
       <div class="fsub">${f.poblacion&&f.poblacion!=='unica'?(f.poblacion==='pediatrica'?'Población pediátrica · ':'Población adulta · '):''}${f.version?'v'+f.version+' · ':''}${f.rev?'rev '+f.rev+' · ':''}${(f.sinonimos||[]).join(', ')}</div>
       ${(f.historial&&f.historial.length)?`<details style="margin:4px 0 8px"><summary class="dx-meta" style="cursor:pointer">🕘 Changelog del protocolo (${f.historial.length})</summary><div style="margin-top:4px">${f.historial.slice(0,20).map(h=>`<div style="font-size:12px;border-top:1px solid var(--line);padding:4px 0"><b>rev ${h.rev}</b> <span class="dx-meta">${String(h.fecha||'').slice(0,16).replace('T',' ')}</span>${h.nota?' · '+escHtml(h.nota):''}</div>`).join('')}</div></details>`:''}
       ${doms?`<h3>Dominios y anamnesis</h3>${doms}`:''}
