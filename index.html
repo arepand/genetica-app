@@ -459,8 +459,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.29.1';
+const APP_VERSION='1.30.0';
 const CHANGELOG=[
+  {v:'1.30.0', d:'2026-07-02', c:['El indicador que aparece arriba mientras trabaja la IA muestra ahora el PROVEEDOR y MODELO en uso (p. ej. «Anthropic Opus 4.8», «OpenAI GPT-5.5»), además de la tarea.']},
   {v:'1.29.1', d:'2026-07-02', c:['Perímetro cefálico en adultos (>18 a): se valora anclando a la referencia de 18 años (el PC alcanza tamaño ~adulto hacia los 16–18 a), en vez de dejarlo sin valor. Se etiqueta como «ref. 18 a (aprox. adulto)»; la referencia específica de adulto sería Bushby 1992 si se aporta.']},
   {v:'1.29.0', d:'2026-07-02', c:['Antropometría: sustituidas las referencias por las tablas OFICIALES de Orbegozo, EDICIÓN 2011 (estudio transversal de Bilbao), extraídas del TEXTO del PDF oficial de la Fundación (datos exactos, sin OCR): talla, peso, IMC y perímetro cefálico, varones y mujeres, 5–18 años. El PC (que antes se transcribió por OCR) ahora también viene del texto exacto y coincide. Para ≤5 años se sigue usando OMS 2006.']},
   {v:'1.28.1', d:'2026-07-01', c:['Prenatal: ahora TODOS los síndromes son editables, también los que vienen de serie (antes solo los tuyos). Al editar uno de serie se crea una copia propia versionada que lo sustituye.']},
@@ -1233,9 +1234,28 @@ function descargarAiLog(){
   const txt=AI_LOG.map((e,i)=>`### ${i+1}. ${e.t} · ${AI_TASKS[e.task]||e.task||'?'} · ${e.ms||'?'} ms\n--- SYSTEM ---\n${e.system||''}\n--- USER ---\n${e.user||''}\n${e.reasoning?('--- RAZONAMIENTO ---\n'+e.reasoning+'\n'):''}--- RESPUESTA ---\n${e.response||e.error||''}\n`).join('\n==================================================\n\n');
   try{ const blob=new Blob([txt],{type:'text/plain'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='ariadna-ai-log-'+new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')+'.txt'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),2000); }catch(e){ showToast('No se pudo descargar: '+e.message); }
 }
+/* Nombre legible del proveedor+modelo, p. ej. "Anthropic Opus 4.8" · "OpenAI GPT-5.5". */
+function prettyModel(provider, model){
+  model=String(model||'');
+  if(provider==='anthropic'){
+    let m=model.replace(/^claude-/,'').replace(/-(\d+)-(\d+)(?:-\d+)?$/,' $1.$2').replace(/-/g,' ').trim();
+    m=m.replace(/(^|\s)([a-z])/g,(_,s,c)=>s+c.toUpperCase());
+    return 'Anthropic '+m;
+  }
+  let m=model.replace(/-search-preview/,' (web)').replace(/^gpt/i,'GPT');
+  return 'OpenAI '+m;
+}
+function aiModelLabel(opts){
+  try{ const pick=pickModel(opts&&opts.task); if(!pick) return '';
+    let model=pick.model;
+    if(pick.provider==='openai' && opts&&opts.webSearch && !/search/.test(model)) model=DEFAULT_MODELS.openai.search;
+    return prettyModel(pick.provider, model);
+  }catch(e){ return ''; }
+}
 async function callLLM(opts){
   const started=Date.now();
-  aiBusyStart(AI_TASKS[opts&&opts.task]||'consultando IA');
+  const ml=aiModelLabel(opts);
+  aiBusyStart((AI_TASKS[opts&&opts.task]||'consultando IA')+(ml?' · '+ml:''));
   const entry = AI_DEBUG ? {t:new Date().toISOString(), task:opts&&opts.task, system:opts&&opts.system, user:opts&&opts.user} : null;
   try{ const resp=await _callLLMImpl(opts, entry);
     if(entry){ entry.response=resp; entry.ms=Date.now()-started; AI_LOG.push(entry); }
