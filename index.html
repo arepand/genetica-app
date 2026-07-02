@@ -399,6 +399,12 @@
   </div>
   <div class="spacer"></div>
   <div class="status-row" id="statusRow"></div>
+  <span style="position:relative">
+    <button class="btn ghost" id="btnOtros">Otros ▾</button>
+    <div id="otrosMenu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;z-index:60;background:#0a0f14;border:1px solid var(--accent2);border-radius:9px;padding:6px;box-shadow:var(--shadow);min-width:200px">
+      <button class="btn ghost" id="menuCuadro" style="width:100%;text-align:left;padding:6px 10px;font-size:13px">📊 Cuadro de mando (actividad)</button>
+    </div>
+  </span>
   <button class="btn ghost" id="openSettings">⚙ Ajustes</button>
 </header>
 
@@ -448,6 +454,7 @@
 <div id="seguimientoView" class="section-view" style="display:none"></div>
 <div id="panelesView" class="section-view" style="display:none"></div>
 <div id="documentosView" class="section-view" style="display:none"></div>
+<div id="cuadromandoView" class="section-view" style="display:none"></div>
 
 <div id="toast"></div>
 
@@ -459,8 +466,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.31.0';
+const APP_VERSION='1.32.0';
 const CHANGELOG=[
+  {v:'1.32.0', d:'2026-07-02', c:['Nuevo módulo «📊 Cuadro de mando» (menú «Otros»): gestión de la actividad de consulta. Importas el PDF de actividad; la app lo lee en el navegador y TAPA en blanco la columna «Paciente» ANTES de procesar (los nombres nunca salen del navegador) — solo se guardan registros SIN datos personales. El PDF no se almacena. Evita duplicados por NREG (puedes re-subir un PDF con fechas ya cargadas). Cuadro de mando con filtro por fechas, gráficas por agenda/prestación/médico y resumen trimestral (total por agenda desglosado por prestación + total acumulado). Vista previa redactada con botón «Rotar» y exportación CSV.']},
   {v:'1.31.0', d:'2026-07-02', c:['Modelos IA al día: la app comprueba automáticamente (cada 7 días, con tu API key) si tus proveedores tienen modelos nuevos (p. ej. Fable) y, si aparecen, te avisa y lo anota en un «Registro de modelos» con fecha, dentro de «Estado». Botón «🔎 Comprobar ahora» para forzarlo. (Es un registro por dispositivo; no requiere actualizar la versión de la app.)']},
   {v:'1.30.0', d:'2026-07-02', c:['El indicador que aparece arriba mientras trabaja la IA muestra ahora el PROVEEDOR y MODELO en uso (p. ej. «Anthropic Opus 4.8», «OpenAI GPT-5.5»), además de la tarea.']},
   {v:'1.29.1', d:'2026-07-02', c:['Perímetro cefálico en adultos (>18 a): se valora anclando a la referencia de 18 años (el PC alcanza tamaño ~adulto hacia los 16–18 a), en vez de dejarlo sin valor. Se etiqueta como «ref. 18 a (aprox. adulto)»; la referencia específica de adulto sería Bushby 1992 si se aporta.']},
@@ -1250,7 +1258,7 @@ function extractJSON(text){
 }
 /* ---- Transparencia IA: indicador de proceso + log de depuración (opt-in) ---- */
 let AI_DEBUG=false; const AI_LOG=[]; let _aiBusyN=0;
-const AI_TASKS={assign:'asignando protocolo', extract:'extrayendo HPO del informe', deepen:'profundizando', author:'generando protocolo (web)', freshness:'comprobando novedades (web)', eval:'consultando guías (web)'};
+const AI_TASKS={assign:'asignando protocolo', extract:'extrayendo HPO del informe', deepen:'profundizando', author:'generando protocolo (web)', freshness:'comprobando novedades (web)', eval:'consultando guías (web)', actividad:'leyendo actividad (visión)'};
 function aiBusyStart(label){
   _aiBusyN++;
   let el=document.getElementById('aiBusy');
@@ -5055,6 +5063,190 @@ function applyPrenatalFilter(q){
     det.style.display = any ? '' : 'none'; det.open = !!q && any;
   });
 }
+/* ===========================================================================
+   MÓDULO GESTIÓN DE CONSULTA — cuadro de mando de actividad
+   Importa un PDF de actividad (C.H.U. Vigo): agrupado por Servicio/Médico/Agenda.
+   PRIVACIDAD: el PDF se lee en el navegador; la columna «Paciente» se TAPA en
+   blanco antes de enviar la imagen al modelo de visión (los nombres NO salen del
+   navegador). El PDF no se guarda; solo se almacenan registros sin datos personales.
+   Dedup por NREG. =========================================================================== */
+const MEDICO_MAP={ '5860':'ARA', '2858':'MBP', '5071':'CTB' };
+const MEDICO_NAME_MAP=[[/reparaz/i,'ARA'],[/blanco\s+perez/i,'MBP'],[/torreira/i,'CTB'],[/vicente\s+perez/i,'NVP'],[/sin\s+codificar|^\s*s\.?\s*c\.?\s*$/i,'SC']];
+const AGENDA_MAP={ 'UXPC03':'Presencial (Xenética)', 'UXPC04':'Telefónica (Xenética)' };
+function medicoIni(cod, nombre){
+  const c=String(cod||'').trim(); if(MEDICO_MAP[c]) return MEDICO_MAP[c];
+  const n=String(nombre||''); for(const [re,ini] of MEDICO_NAME_MAP){ if(re.test(n)) return ini; }
+  return (c||n||'?').slice(0,6);
+}
+function agendaNombre(cod, name){ const c=String(cod||'').trim().toUpperCase(); return AGENDA_MAP[c] || (name?String(name).trim():c) || c; }
+function realizadaNorm(r){ const s=String(r||'').toUpperCase().replace(/\./g,'').trim(); return s.startsWith('URG')?'URG':(s.startsWith('SI')||s.startsWith('SÍ')?'SI':(s.startsWith('NO')?'NO':s)); }
+function altaNorm(a){ const s=String(a==null?'':a).trim(); if(/^1|segu/i.test(s) && !/fin/i.test(s)) return '1'; if(/^0|fin/i.test(s)) return '0'; return s.charAt(0)||''; }
+function consultaKey(r){ return (r.nreg&&String(r.nreg).trim()) ? 'n:'+String(r.nreg).trim() : ['k',r.fecha,r.hora,r.prestacion,r.medico].join('|'); }
+/* Aplana el JSON del modelo de visión a registros sin datos personales. */
+function parseActividad(j){
+  const out=[];
+  for(const sec of ((j&&j.secciones)||[])){
+    const medico=medicoIni(sec.medico_cod, sec.medico_nombre);
+    const agCod=String(sec.agenda_cod||'').trim().toUpperCase();
+    const agNom=agendaNombre(agCod, sec.agenda_nombre);
+    for(const f of (sec.filas||[])){
+      if(!f || (!f.fecha && !f.nreg)) continue;
+      out.push({ fecha:String(f.fecha||'').trim(), hora:String(f.hora||'').trim(), agenda:agCod, agendaNom:agNom,
+        prestacion:String(f.prestacion||'').trim(), medico, realizada:realizadaNorm(f.realizada), alta:altaNorm(f.alta), nreg:String(f.nreg||'').trim() });
+    }
+  }
+  return out;
+}
+/* Fusiona registros nuevos con los existentes evitando duplicados por NREG. */
+function mergeConsultas(existing, incoming){
+  const seen=new Set((existing||[]).map(consultaKey));
+  const added=[]; let dup=0;
+  for(const r of (incoming||[])){ const k=consultaKey(r); if(seen.has(k)){ dup++; continue; } seen.add(k); added.push(r); }
+  return { added, dup, total:(existing||[]).length+added.length };
+}
+let CONSULTAS=[];
+function loadConsultasLocal(){ try{ const c=JSON.parse(localStorage.getItem('fh_consultas')); if(Array.isArray(c)) CONSULTAS=c; }catch(e){} }
+async function loadConsultas(){
+  loadConsultasLocal();
+  if(ghConfigured()){ try{ const r=await ghGetFile('consultas.json'); if(r.json && Array.isArray(r.json.consultas)){ CONSULTAS=r.json.consultas; try{ localStorage.setItem('fh_consultas', JSON.stringify(CONSULTAS)); }catch(e){} } }catch(e){} }
+}
+async function persistConsultas(msg){
+  try{ localStorage.setItem('fh_consultas', JSON.stringify(CONSULTAS)); }catch(e){}
+  try{ if(ghConfigured()){ let sha=null; try{ const ci=await ghGetFile('consultas.json'); sha=ci.sha; }catch(e){} await ghPutFile('consultas.json', {consultas:CONSULTAS}, msg||'consultas: actualizar', sha); } }catch(e){}
+}
+/* dd/mm/yyyy → yyyy-mm-dd para comparar/ordenar. */
+function fechaISO(f){ const m=String(f||'').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/); return m ? m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0') : ''; }
+function trimestre(iso){ const m=iso.match(/^(\d{4})-(\d{2})/); if(!m) return ''; const q=Math.floor((+m[2]-1)/3)+1; return m[1]+' T'+q; }
+
+/* Llamada al modelo de VISIÓN con imágenes (base64 PNG, sin prefijo data:). */
+async function callVisionLLM(imagesB64, system, user, task){
+  const c=loadCfg(); const pick=pickModel(task||'author'); if(!pick) throw new Error('No hay proveedor de IA configurado (⚙ Ajustes).');
+  const ml=aiModelLabel({task:task||'author'}); aiBusyStart((AI_TASKS[task]||'analizando')+(ml?' · '+ml:''));
+  try{
+    if(pick.provider==='anthropic'){
+      const content=[{type:'text', text:user}].concat(imagesB64.map(b=>({type:'image', source:{type:'base64', media_type:'image/png', data:b}})));
+      const r=await fetch('https://api.anthropic.com/v1/messages', { method:'POST', headers:{'x-api-key':c.anthropicKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true','Content-Type':'application/json'},
+        body:JSON.stringify({ model:pick.model, max_tokens:8000, system, messages:[{role:'user', content}] }) });
+      if(!r.ok) throw new Error('Anthropic '+r.status+' '+await r.text());
+      const d=await r.json(); return (d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
+    } else {
+      const content=[{type:'text', text:user}].concat(imagesB64.map(b=>({type:'image_url', image_url:{url:'data:image/png;base64,'+b}})));
+      const model=/4o|4\.1|o[0-9]|gpt-5/.test(pick.model)?pick.model:'gpt-4o';
+      const r=await fetch('https://api.openai.com/v1/chat/completions', { method:'POST', headers:{Authorization:'Bearer '+c.openaiKey,'Content-Type':'application/json'},
+        body:JSON.stringify({ model, max_tokens:8000, messages:[{role:'system',content:system},{role:'user',content}] }) });
+      if(!r.ok) throw new Error('OpenAI '+r.status+' '+await r.text());
+      const d=await r.json(); return d.choices[0].message.content;
+    }
+  } finally{ aiBusyEnd(); }
+}
+const ACT_SYSTEM='Eres un extractor de datos de un informe de ACTIVIDAD clínica del C.H.U. de Vigo. El documento se agrupa en secciones por «Servicio / Médico / Agenda» y bajo cada una hay una tabla con columnas: Fecha, Hora, Prestacion, Realizada, NREG, (columna Paciente TAPADA EN BLANCO — IGNÓRALA por completo), Alta. Extrae TODAS las filas de TODAS las secciones y páginas. NUNCA inventes ni incluyas datos de pacientes (están tapados). Devuelve SOLO JSON válido: {"secciones":[{"medico_cod":"5860","medico_nombre":"REPARAZ ANDRADE, ALFREDO","agenda_cod":"UXPC03","agenda_nombre":"XENETICA","filas":[{"fecha":"03/04/2019","hora":"10:57","prestacion":"LXEN.1 CONSULTA XENETICA","realizada":"URG","nreg":"192380852","alta":"0"}]}]}. «realizada» ∈ {SI,NO,URG}. «alta» = "0" (fin de seguimiento) o "1" (en seguimiento).';
+
+/* Renderiza una página PDF a canvas, en horizontal, y TAPA la columna Paciente. Devuelve base64 PNG. */
+async function actPageToRedactedB64(page, scale, extraRot){
+  let vp=page.getViewport({scale:scale||2});
+  const base=(vp.width < vp.height)?90:0;   // el informe es apaisado
+  const rotation=((base+(extraRot||0))%360+360)%360;
+  vp=page.getViewport({scale:scale||2, rotation});
+  const canvas=document.createElement('canvas'); canvas.width=Math.ceil(vp.width); canvas.height=Math.ceil(vp.height);
+  const ctx=canvas.getContext('2d');
+  await page.render({canvasContext:ctx, viewport:vp}).promise;
+  ctx.fillStyle='#ffffff';
+  ctx.fillRect(Math.floor(canvas.width*0.58), 0, Math.ceil(canvas.width*(0.855-0.58)), canvas.height);   // tapa «Paciente»
+  return { b64:canvas.toDataURL('image/png').split(',')[1], canvas };
+}
+let _actPending=null; let _actRot=0;
+async function importarActividad(file, extraRot){
+  _actRot=((extraRot||0)%360+360)%360;
+  const box=document.getElementById('cmImport'); if(!box) return;
+  if(!window.pdfjsLib){ box.innerHTML='<div class="err">pdf.js no cargó (¿sin red?).</div>'; return; }
+  if(!anyProvider()){ box.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
+  box.innerHTML='<div class="loading">Leyendo PDF y tapando la columna de pacientes…</div>';
+  try{
+    pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    const buf=await file.arrayBuffer();
+    const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+    const imgs=[]; const previews=[];
+    for(let i=1;i<=pdf.numPages;i++){ const page=await pdf.getPage(i); const {b64,canvas}=await actPageToRedactedB64(page,2,_actRot); imgs.push(b64); previews.push(canvas.toDataURL('image/png')); }
+    box.innerHTML=`<div class="dx-meta">Vista redactada (los nombres deben estar tapados en blanco). Si se ve algún nombre o está torcida, pulsa «Rotar» hasta que quede bien; si algún nombre asoma, NO continúes.</div>
+      <div style="display:flex;gap:8px;overflow:auto;margin:6px 0">${previews.map(u=>`<img src="${u}" style="height:120px;border:1px solid var(--line);border-radius:6px">`).join('')}</div>
+      <button class="btn ghost" id="cmRotar" style="padding:4px 10px;font-size:12px">🔄 Rotar 90°</button>
+      <button class="btn primary" id="cmAnalizar">Analizar ${pdf.numPages} página(s) →</button> <span class="dx-meta">· el PDF no se guardará</span>
+      <div id="cmResult" style="margin-top:8px"></div>`;
+    const rb=document.getElementById('cmRotar'); if(rb) rb.addEventListener('click', ()=>importarActividad(file, _actRot+90));
+    document.getElementById('cmAnalizar').addEventListener('click', async ()=>{
+      const out=document.getElementById('cmResult'); out.innerHTML='<div class="loading">Analizando con el modelo (solo columnas sin datos personales)…</div>';
+      try{
+        const resp=await callVisionLLM(imgs, ACT_SYSTEM, 'Extrae la actividad de estas '+imgs.length+' imagen(es) al JSON indicado.', 'actividad');
+        const j=extractJSON(resp); const recs=parseActividad(j);
+        if(!recs.length){ out.innerHTML='<div class="err">No se extrajo ninguna fila. Revisa el PDF.</div>'; return; }
+        const m=mergeConsultas(CONSULTAS, recs);
+        _actPending=m.added;
+        out.innerHTML=`<div class="test-out">Extraídas <b>${recs.length}</b> · nuevas <b style="color:var(--ok)">${m.added.length}</b> · ya existentes (omitidas) <b>${m.dup}</b>.</div>
+          <button class="btn primary" id="cmConfirm" ${m.added.length?'':'disabled'}>Incorporar ${m.added.length} registro(s)</button>`;
+        const cf=document.getElementById('cmConfirm'); if(cf) cf.addEventListener('click', async ()=>{
+          CONSULTAS=CONSULTAS.concat(_actPending); _actPending=null; await persistConsultas('consultas: importar '+m.added.length);
+          imgs.length=0;  // descarta las imágenes (el PDF nunca se guardó)
+          showToast('Incorporados '+m.added.length+' registros. PDF descartado.'); renderCuadroMando();
+        });
+      }catch(e){ out.innerHTML='<div class="err">Error al analizar: '+escHtml(e.message)+'</div>'; }
+    });
+  }catch(e){ box.innerHTML='<div class="err">No se pudo leer el PDF: '+escHtml(e.message)+'</div>'; }
+}
+/* Barra simple para las gráficas del cuadro de mando. */
+function cmBars(title, counts){
+  const entries=Object.entries(counts).sort((a,b)=>b[1]-a[1]); const max=Math.max(1,...entries.map(e=>e[1]));
+  return `<div style="margin:10px 0"><div class="cart-group-title">${escHtml(title)}</div>`
+    + (entries.length?entries.map(([k,v])=>`<div style="display:flex;align-items:center;gap:8px;margin:3px 0;font-size:12.5px"><span style="min-width:150px">${escHtml(k)}</span><span style="flex:1;background:var(--panel2);border-radius:5px;overflow:hidden"><span style="display:block;height:14px;width:${Math.round(100*v/max)}%;background:var(--accent)"></span></span><b style="min-width:36px;text-align:right">${v}</b></div>`).join(''):'<div class="dx-meta">Sin datos.</div>')
+    + '</div>';
+}
+function renderCuadroMando(){
+  const box=document.getElementById('cuadromandoView'); if(!box) return;
+  const desde=(box.querySelector('#cmDesde')||{}).value||'';
+  const hasta=(box.querySelector('#cmHasta')||{}).value||'';
+  const rows=CONSULTAS.filter(r=>{ const iso=fechaISO(r.fecha); if(desde && iso<desde) return false; if(hasta && iso>hasta) return false; return true; });
+  const realizadas=rows.filter(r=>r.realizada==='SI'||r.realizada==='URG');
+  const by=(f)=>{ const o={}; rows.forEach(r=>{ const k=f(r)||'—'; o[k]=(o[k]||0)+1; }); return o; };
+  // Trimestral: total por agenda desglosado por prestación
+  const porAgenda={}; rows.forEach(r=>{ const a=r.agendaNom||r.agenda||'—'; (porAgenda[a]=porAgenda[a]||{__tot:0}); porAgenda[a].__tot++; const p=r.prestacion||'—'; porAgenda[a][p]=(porAgenda[a][p]||0)+1; });
+  const trimTabla=Object.entries(porAgenda).map(([a,pres])=>`<div style="margin:6px 0"><b>${escHtml(a)}</b> — total <b>${pres.__tot}</b><div style="margin-left:12px">${Object.entries(pres).filter(([k])=>k!=='__tot').sort((x,y)=>y[1]-x[1]).map(([p,n])=>`<div style="font-size:12px">· ${escHtml(p)}: <b>${n}</b></div>`).join('')}</div></div>`).join('')||'<div class="dx-meta">Sin datos en el rango.</div>';
+  box.innerHTML=`
+    <div class="lib-head"><h2>📊 Cuadro de mando · actividad de consulta</h2></div>
+    <div class="sec-note">Registros internos sin datos de pacientes. Importa un PDF de actividad; la columna «Paciente» se tapa antes de procesar y el PDF no se guarda. Duplicados evitados por NREG.</div>
+    <div style="border:1px solid var(--line);border-radius:9px;padding:10px 12px;margin:10px 0">
+      <div style="font-weight:700;font-size:13px;margin-bottom:6px">Importar actividad (PDF)</div>
+      <input id="cmFile" type="file" accept="application/pdf">
+      <div id="cmImport" style="margin-top:8px"></div>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin:10px 0">
+      <label class="dx-meta">Desde <input id="cmDesde" type="date" value="${desde}" style="display:block"></label>
+      <label class="dx-meta">Hasta <input id="cmHasta" type="date" value="${hasta}" style="display:block"></label>
+      <button class="btn ghost" id="cmReset" style="padding:4px 10px;font-size:12px">Todo</button>
+      <div class="dx-meta" style="margin-left:auto">Total registros: <b>${CONSULTAS.length}</b></div>
+    </div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin:8px 0">
+      <div class="pop-badge" style="font-size:13px">Consultas: <b>${rows.length}</b></div>
+      <div class="pop-badge" style="font-size:13px">Realizadas (SI+URG): <b>${realizadas.length}</b></div>
+      <div class="pop-badge" style="font-size:13px">En seguimiento: <b>${rows.filter(r=>r.alta==='1').length}</b></div>
+    </div>
+    ${cmBars('Por agenda', by(r=>r.agendaNom||r.agenda))}
+    ${cmBars('Por prestación', by(r=>r.prestacion))}
+    ${cmBars('Por médico', by(r=>r.medico))}
+    ${cmBars('Por realizada', by(r=>r.realizada))}
+    <div style="margin:12px 0"><div class="cart-group-title">Resumen trimestral · total por Agenda desglosado por Prestación</div>${trimTabla}
+      <div style="margin-top:6px;font-size:12.5px">Total en el rango: <b>${rows.length}</b> · <b>Total acumulado (todas las consultas): ${CONSULTAS.length}</b></div></div>
+    <details style="margin-top:8px"><summary class="cart-group-title" style="cursor:pointer">Tabla de registros (${rows.length})</summary>
+      <div style="max-height:360px;overflow:auto;margin-top:6px"><table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr>${['Fecha','Hora','Consulta','Prestación','Médico','Realizada','Alta'].map(h=>`<th style="text-align:left;border-bottom:1px solid var(--line);padding:3px 6px">${h}</th>`).join('')}</tr></thead>
+        <tbody>${rows.slice().sort((a,b)=>(fechaISO(b.fecha)+b.hora).localeCompare(fechaISO(a.fecha)+a.hora)).slice(0,500).map(r=>`<tr>${[r.fecha,r.hora,r.agendaNom||r.agenda,r.prestacion,r.medico,r.realizada,(r.alta==='1'?'En seg.':(r.alta==='0'?'Fin':r.alta))].map(c=>`<td style="border-bottom:1px solid var(--line);padding:3px 6px">${escHtml(c||'')}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table></div></details>
+    <div style="margin-top:10px"><button class="btn ghost" id="cmExport" style="padding:4px 10px;font-size:12px">⬇ Exportar CSV</button></div>`;
+  const f=box.querySelector('#cmFile'); if(f) f.addEventListener('change', e=>{ if(e.target.files&&e.target.files[0]) importarActividad(e.target.files[0]); });
+  const rerender=()=>renderCuadroMando();
+  const dd=box.querySelector('#cmDesde'), hh=box.querySelector('#cmHasta'); if(dd) dd.addEventListener('change', rerender); if(hh) hh.addEventListener('change', rerender);
+  const rs=box.querySelector('#cmReset'); if(rs) rs.addEventListener('click', ()=>{ if(dd)dd.value=''; if(hh)hh.value=''; rerender(); });
+  const ex=box.querySelector('#cmExport'); if(ex) ex.addEventListener('click', ()=>{ const csv=['Fecha,Hora,Consulta,Prestacion,Medico,Realizada,Alta,NREG'].concat(rows.map(r=>[r.fecha,r.hora,r.agendaNom||r.agenda,r.prestacion,r.medico,r.realizada,r.alta,r.nreg].map(x=>'"'+String(x||'').replace(/"/g,'""')+'"').join(','))).join('\n'); const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download='actividad.csv'; a.click(); });
+}
+
 function showSection(s){
   currentSection=s;
   document.querySelectorAll('#sectionNav .section-btn').forEach(b=>b.classList.toggle('on', b.dataset.section===s));
@@ -5068,8 +5260,10 @@ function showSection(s){
   const inf=document.getElementById('informesView');
   const seg=document.getElementById('seguimientoView');
   const pan=document.getElementById('panelesView');
+  const cmv=document.getElementById('cuadromandoView');
   const panel=document.getElementById('phenoPanel');
-  [fen,feno,bib,doc,dis,ant,pv0,inf,seg,pan].forEach(v=>{ if(v) v.style.display='none'; });
+  [fen,feno,bib,doc,dis,ant,pv0,inf,seg,pan,cmv].forEach(v=>{ if(v) v.style.display='none'; });
+  if(s==='cuadromando'){ if(panel && fen && panel.parentElement!==fen){ fen.appendChild(panel); panel.classList.remove('cart-full'); } if(cmv){ cmv.style.display='block'; renderCuadroMando(); } return; }
   // El panel de fenotipo (búsqueda + carrito + diferencial + Monarch + export) es ÚNICO:
   // en "fenotipo" va a pantalla completa; en el resto vuelve al aside del protocolo.
   if(s==='fenotipo'){
@@ -5352,6 +5546,11 @@ function wireGlobalBib(){
 function init(){
   wireGlobalBib();
   document.getElementById('openSettings').addEventListener('click', openSettings);
+  (function(){ const b=document.getElementById('btnOtros'), m=document.getElementById('otrosMenu'); if(b&&m){
+    b.addEventListener('click', e=>{ e.stopPropagation(); m.style.display=m.style.display==='none'?'block':'none'; });
+    document.addEventListener('click', ()=>{ m.style.display='none'; });
+    const mc=document.getElementById('menuCuadro'); if(mc) mc.addEventListener('click', ()=>{ m.style.display='none'; showSection('cuadromando'); });
+  } })();
   document.getElementById('copyCodesBtn').addEventListener('click', copyCodes);
   document.getElementById('generatePdfBtn').addEventListener('click', generatePdf);
   document.querySelectorAll('#sectionNav .section-btn').forEach(b=>b.addEventListener('click', ()=>showSection(b.dataset.section)));
@@ -5371,6 +5570,8 @@ function init(){
   loadPrenatalCustom();
   // Pre-carga de los paneles génicos propios (GitHub)
   loadPaneles();
+  // Pre-carga del registro de actividad de consulta (GitHub / local)
+  loadConsultas();
   // Chequeo periódico (7 días) de modelos IA nuevos (p. ej. Fable) → avisa y anota en el registro
   setTimeout(()=>{ checkModelsFreshness().catch(()=>{}); }, 3000);
   // Pestaña de inicio: Fenotipo (panel a pantalla completa)
