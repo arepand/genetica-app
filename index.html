@@ -459,8 +459,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.30.0';
+const APP_VERSION='1.31.0';
 const CHANGELOG=[
+  {v:'1.31.0', d:'2026-07-02', c:['Modelos IA al día: la app comprueba automáticamente (cada 7 días, con tu API key) si tus proveedores tienen modelos nuevos (p. ej. Fable) y, si aparecen, te avisa y lo anota en un «Registro de modelos» con fecha, dentro de «Estado». Botón «🔎 Comprobar ahora» para forzarlo. (Es un registro por dispositivo; no requiere actualizar la versión de la app.)']},
   {v:'1.30.0', d:'2026-07-02', c:['El indicador que aparece arriba mientras trabaja la IA muestra ahora el PROVEEDOR y MODELO en uso (p. ej. «Anthropic Opus 4.8», «OpenAI GPT-5.5»), además de la tarea.']},
   {v:'1.29.1', d:'2026-07-02', c:['Perímetro cefálico en adultos (>18 a): se valora anclando a la referencia de 18 años (el PC alcanza tamaño ~adulto hacia los 16–18 a), en vez de dejarlo sin valor. Se etiqueta como «ref. 18 a (aprox. adulto)»; la referencia específica de adulto sería Bushby 1992 si se aporta.']},
   {v:'1.29.0', d:'2026-07-02', c:['Antropometría: sustituidas las referencias por las tablas OFICIALES de Orbegozo, EDICIÓN 2011 (estudio transversal de Bilbao), extraídas del TEXTO del PDF oficial de la Fundación (datos exactos, sin OCR): talla, peso, IMC y perímetro cefálico, varones y mujeres, 5–18 años. El PC (que antes se transcribió por OCR) ahora también viene del texto exacto y coincide. Para ≤5 años se sigue usando OMS 2006.']},
@@ -1026,6 +1027,36 @@ async function fetchModels(p){
   }
 }
 
+/* ---- Chequeo periódico de modelos nuevos + registro propio (por dispositivo, con tu API key) ---- */
+function modelLog(){ try{ return JSON.parse(localStorage.getItem('fh_modellog'))||[]; }catch(e){ return []; } }
+function modelLogText(){ return modelLog().map(e=>`${String(e.d||'').slice(0,10)} · ${e.p}: + ${(e.added||[]).join(', ')}`).join('\n'); }
+/* Comprueba /v1/models de cada proveedor configurado; si aparecen modelos NUEVOS respecto a lo ya visto,
+   lo anota en el registro (fh_modellog) con fecha y avisa. Throttle 7 días (force=true lo salta). */
+async function checkModelsFreshness(force){
+  const now=Date.now(); let last=0; try{ last=+localStorage.getItem('fh_models_checked')||0; }catch(e){}
+  if(!force && now-last < 7*24*3600*1000) return false;
+  try{ localStorage.setItem('fh_models_checked', String(now)); }catch(e){}
+  let anyNew=false;
+  for(const p of ['anthropic','openai']){
+    if(!providerKey(p)) continue;
+    let ids=[]; try{ ids=await fetchModels(p); }catch(e){ continue; }
+    if(!ids.length) continue;
+    let seen=null; try{ seen=JSON.parse(localStorage.getItem('fh_models_seen_'+p)); }catch(e){}
+    if(!Array.isArray(seen)){ try{ localStorage.setItem('fh_models_seen_'+p, JSON.stringify(ids)); }catch(e){} continue; } // 1ª vez: fija baseline sin avisar
+    const added=ids.filter(id=>!seen.includes(id));
+    if(added.length){
+      const log=modelLog(); log.unshift({d:new Date().toISOString(), p, added});
+      try{ localStorage.setItem('fh_modellog', JSON.stringify(log.slice(0,50))); }catch(e){}
+      try{ localStorage.setItem('fh_models_seen_'+p, JSON.stringify(ids)); }catch(e){}
+      anyNew=true;
+      const nice=added.slice(0,3).map(id=>prettyModel(p,id)).join(', ');
+      showToast('🆕 '+added.length+' modelo(s) nuevo(s): '+nice+' — actívalo en ⚙ Ajustes');
+    }
+  }
+  if(anyNew){ try{ renderStatus(); }catch(e){} }
+  return anyNew;
+}
+
 /* ---- base64 con soporte UTF-8 (GitHub Contents API usa base64) ---- */
 function b64EncodeUnicode(str){ return btoa(unescape(encodeURIComponent(str))); }
 function b64DecodeUnicode(str){ return decodeURIComponent(escape(atob((str||'').replace(/\n/g,'')))); }
@@ -1394,7 +1425,14 @@ function renderStatus(){
     +`<div style="border-top:1px solid var(--line);margin-top:8px;padding-top:8px">`
     +`<label class="q-opt" style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" id="dbgToggle" ${AI_DEBUG?'checked':''}> 🐞 Debug IA <span class="dx-meta">(registra prompts, razonamiento y respuestas)</span></label>`
     +`<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn ghost" id="dbgDownload" style="padding:3px 8px;font-size:11px">⬇ Descargar log (${AI_LOG.length})</button><button class="btn ghost" id="statusToAjustes" style="padding:3px 8px;font-size:11px">Ajustes</button></div>`
-    +`</div></div>`;
+    +`</div>`
+    +(function(){ const mc=(()=>{ try{ return +localStorage.getItem('fh_models_checked')||0; }catch(e){ return 0; } })(); const ml=modelLog();
+        return `<div style="border-top:1px solid var(--line);margin-top:8px;padding-top:8px">`
+        +`<div style="font-size:12px">🧠 Modelos IA <span class="dx-meta">· última comprobación: ${mc?new Date(mc).toISOString().slice(0,10):'nunca'}</span></div>`
+        +`<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn ghost" id="chkModels" style="padding:3px 8px;font-size:11px">🔎 Comprobar ahora</button></div>`
+        +(ml.length?`<details style="margin-top:6px"><summary class="dx-meta" style="cursor:pointer">Registro de modelos nuevos (${ml.length})</summary><div style="font-size:11.5px;margin-top:4px">${ml.slice(0,20).map(e=>`<div style="border-top:1px solid var(--line);padding:3px 0"><b>${String(e.d||'').slice(0,10)}</b> · ${escHtml(e.p)}: <span style="color:var(--ok)">+ ${escHtml((e.added||[]).join(', '))}</span></div>`).join('')}</div></details>`:`<div class="dx-meta" style="margin-top:4px">Sin modelos nuevos registrados todavía.</div>`)
+        +`</div>`; })()
+    +`</div>`;
   const btn=document.getElementById('statusBtn'), det=document.getElementById('statusDetail');
   if(btn&&det){ btn.addEventListener('click',(e)=>{ e.stopPropagation(); det.style.display=det.style.display==='none'?'block':'none'; });
     det.addEventListener('click', e=>e.stopPropagation());
@@ -1402,6 +1440,7 @@ function renderStatus(){
   const dt=document.getElementById('dbgToggle'); if(dt) dt.addEventListener('change', ()=>{ AI_DEBUG=dt.checked; showToast(AI_DEBUG?'Debug IA activado: se registrarán las operaciones':'Debug IA desactivado'); });
   const dd=document.getElementById('dbgDownload'); if(dd) dd.addEventListener('click', descargarAiLog);
   const sa=document.getElementById('statusToAjustes'); if(sa) sa.addEventListener('click', openSettings);
+  const cm=document.getElementById('chkModels'); if(cm) cm.addEventListener('click', async ()=>{ cm.textContent='⏳ Comprobando…'; const n=await checkModelsFreshness(true); if(!n){ showToast('Sin modelos nuevos'); renderStatus(); } });
   const vc=document.getElementById('verChip'); if(vc) vc.addEventListener('click', openChangelog);
 }
 
@@ -5332,6 +5371,8 @@ function init(){
   loadPrenatalCustom();
   // Pre-carga de los paneles génicos propios (GitHub)
   loadPaneles();
+  // Chequeo periódico (7 días) de modelos IA nuevos (p. ej. Fable) → avisa y anota en el registro
+  setTimeout(()=>{ checkModelsFreshness().catch(()=>{}); }, 3000);
   // Pestaña de inicio: Fenotipo (panel a pantalla completa)
   showSection('fenotipo');
 }
