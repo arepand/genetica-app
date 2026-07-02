@@ -459,8 +459,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.28.0';
+const APP_VERSION='1.28.1';
 const CHANGELOG=[
+  {v:'1.28.1', d:'2026-07-01', c:['Prenatal: ahora TODOS los síndromes son editables, también los que vienen de serie (antes solo los tuyos). Al editar uno de serie se crea una copia propia versionada que lo sustituye.']},
   {v:'1.28.0', d:'2026-07-01', c:['Perímetro cefálico hasta 18 años: integradas las tablas de Orbegozo 2011 de PC (varones y mujeres), transcritas de las tablas y validadas por consistencia interna (los 7 percentiles encajan en la recta de Z, residuo <0,2 cm; conviene cotejar con AEPap). Antes el PC solo llegaba a 5 años.']},
   {v:'1.27.0', d:'2026-07-01', c:['Antropometría con referencia española: para >5 años, talla, peso e IMC se valoran ahora con las tablas de Orbegozo (estudio transversal, ed. AEPap 2004) — datos EXACTOS del PDF oficial (sin OCR), Z calculado anclando a P3/P50/P97. Hasta 5 años se sigue usando OMS 2006. Cada medida indica su fuente. Esto reproduce el criterio de IANUS/SERGAS. (El peso >10 a ya no queda «fuera de rango».)','El perímetro cefálico >5 a sigue sin referencia cargada (el PDF de Orbegozo solo llega a 2 a en PC); se avisa con ⚠.']},
   {v:'1.26.0', d:'2026-07-01', c:['Prenatal: tus síndromes propios ahora son EDITABLES («✎ editar») — nombre, test, mínimo de hallazgos, ORPHA, bibliografía y la lista de hallazgos ecográficos (añadir con buscador HPO o quitar), con número de versión y changelog de cambios (y copia de seguridad local para revertir).','Prenatal: al editar y guardar un síndrome puedes «Marcar como revisado» para quitarle la etiqueta «IA».']},
@@ -4419,7 +4420,11 @@ function setGa(id, min, max){
   const o={}; if(mn>=6&&mn<=42) o.min=mn; if(mx>=6&&mx<=42) o.max=mx;   // semanas plausibles
   if(o.min||o.max) PRENATAL_GA[id]=o;
 }
-function allPrenatalSyndromes(){ return [...PRENATAL_SYNDROMES, ...(PRENATAL_CUSTOM.syndromes||[])]; }
+function allPrenatalSyndromes(){
+  const custom=(PRENATAL_CUSTOM.syndromes||[]);
+  const over=new Set(custom.map(s=>normSyndName(s.name)));   // una copia propia SUSTITUYE al síndrome de serie del mismo nombre
+  return [...PRENATAL_SYNDROMES.filter(s=>!over.has(normSyndName(s.name))), ...custom];
+}
 function prenatalFindingLabel(id){
   for(const s of PRENATAL_FINDINGS){ const t=s.terms.find(x=>x.id===id); if(t) return t.es; }
   const c=(PRENATAL_CUSTOM.findings||[]).find(x=>x.id===id); if(c) return c.es;
@@ -4476,8 +4481,14 @@ function ensurePrenatalFinding(id, label){
 }
 /* Editor completo de un síndrome prenatal PROPIO (no los de serie): campos + hallazgos + versión + quitar etiqueta IA. */
 function openPrenatalSyndEditor(name){
-  const s=(PRENATAL_CUSTOM.syndromes||[]).find(x=>normSyndName(x.name)===normSyndName(name));
-  if(!s){ showToast('Solo puedes editar tus síndromes propios (los de serie no)'); return; }
+  let s=(PRENATAL_CUSTOM.syndromes||[]).find(x=>normSyndName(x.name)===normSyndName(name));
+  if(!s){
+    const base=PRENATAL_SYNDROMES.find(x=>normSyndName(x.name)===normSyndName(name));
+    if(!base){ showToast('No se encontró el síndrome'); return; }
+    // Editar un síndrome DE SERIE: se crea una copia propia editable que lo sustituye
+    s=JSON.parse(JSON.stringify(base)); s.ia=false; s._base=true;
+    PRENATAL_CUSTOM.syndromes=PRENATAL_CUSTOM.syndromes||[]; PRENATAL_CUSTOM.syndromes.push(s);
+  }
   const ov=document.createElement('div'); ov.className='overlay'; ov.id='prenSynOverlay';
   function render(){
     const findings=(s.findings||[]).map((id,i)=>`<div style="display:flex;align-items:center;gap:6px;padding:2px 0"><span class="hp-chip" style="cursor:default">${escHtml(id)}<span class="hp-nm" data-hpo-nm="${escHtml(id)}"> · …</span></span> <span class="dx-meta">${escHtml(prenatalFindingLabel(id))}</span> <a data-rmf="${i}" title="Quitar hallazgo" style="cursor:pointer;color:var(--danger);margin-left:auto;font-weight:700">✕</a></div>`).join('');
@@ -4903,7 +4914,7 @@ function renderPrenatal(){
       <div style="margin-top:24px;border-top:1px solid var(--line);padding-top:16px">
         <div id="prenatalInd" style="margin:0 0 16px"></div>
         <details class="morfo-region"><summary>Síndromes incorporados <span style="color:var(--ink3);font-weight:400">· ${allPrenatalSyndromes().length}</span></summary>
-          <div style="font-size:12.5px;line-height:1.7;padding:4px 0">${allPrenatalSyndromes().map(s=>{ const editable=!PRENATAL_SYNDROMES.some(b=>normSyndName(b.name)===normSyndName(s.name)); return `<div>· <b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)" title="Ficha Orphanet (español)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">IA</span>':''}${s.rev?` <span class="dx-meta">rev ${s.rev}</span>`:''} <span class="dx-meta hastip">— ${(s.findings||[]).length} hallazgos<span class="tooltip">${syndromeFindingsTip(s)}</span></span> <span class="dx-meta">· ${escHtml(s.test||'')}</span>${(s.ref&&s.ref.url)?` <a class="dx-meta" href="${escA(String(s.ref.url))}" target="_blank" rel="noopener">bibliografía</a>`:''}${s.ref?bibRefHtml(s.ref):''}${editable?` <a class="tip-ai" data-editsyn="${escA(s.name)}">✎ editar</a>`:''}${s.ia?` <a class="tip-ai" data-rmsyn="${escA(s.name)}">quitar</a>`:''}</div>`; }).join('')}</div>
+          <div style="font-size:12.5px;line-height:1.7;padding:4px 0">${allPrenatalSyndromes().map(s=>{ const editable=true; return `<div>· <b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)" title="Ficha Orphanet (español)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">IA</span>':''}${s.rev?` <span class="dx-meta">rev ${s.rev}</span>`:''} <span class="dx-meta hastip">— ${(s.findings||[]).length} hallazgos<span class="tooltip">${syndromeFindingsTip(s)}</span></span> <span class="dx-meta">· ${escHtml(s.test||'')}</span>${(s.ref&&s.ref.url)?` <a class="dx-meta" href="${escA(String(s.ref.url))}" target="_blank" rel="noopener">bibliografía</a>`:''}${s.ref?bibRefHtml(s.ref):''}${editable?` <a class="tip-ai" data-editsyn="${escA(s.name)}">✎ editar</a>`:''}${s.ia?` <a class="tip-ai" data-rmsyn="${escA(s.name)}">quitar</a>`:''}</div>`; }).join('')}</div>
         </details>
         <div class="cart-group-title" style="margin-top:14px">Añadir / proponer síndromes (IA)</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">
