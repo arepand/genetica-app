@@ -466,8 +466,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.32.0';
+const APP_VERSION='1.32.1';
 const CHANGELOG=[
+  {v:'1.32.1', d:'2026-07-02', c:['Cuadro de mando: soporte de PDF de VARIAS páginas — se procesan por lotes (4 páginas) con indicador de progreso y arrastre de la sección Médico/Agenda entre páginas por si alguna no repite la cabecera.']},
   {v:'1.32.0', d:'2026-07-02', c:['Nuevo módulo «📊 Cuadro de mando» (menú «Otros»): gestión de la actividad de consulta. Importas el PDF de actividad; la app lo lee en el navegador y TAPA en blanco la columna «Paciente» ANTES de procesar (los nombres nunca salen del navegador) — solo se guardan registros SIN datos personales. El PDF no se almacena. Evita duplicados por NREG (puedes re-subir un PDF con fechas ya cargadas). Cuadro de mando con filtro por fechas, gráficas por agenda/prestación/médico y resumen trimestral (total por agenda desglosado por prestación + total acumulado). Vista previa redactada con botón «Rotar» y exportación CSV.']},
   {v:'1.31.0', d:'2026-07-02', c:['Modelos IA al día: la app comprueba automáticamente (cada 7 días, con tu API key) si tus proveedores tienen modelos nuevos (p. ej. Fable) y, si aparecen, te avisa y lo anota en un «Registro de modelos» con fecha, dentro de «Estado». Botón «🔎 Comprobar ahora» para forzarlo. (Es un registro por dispositivo; no requiere actualizar la versión de la app.)']},
   {v:'1.30.0', d:'2026-07-02', c:['El indicador que aparece arriba mientras trabaja la IA muestra ahora el PROVEEDOR y MODELO en uso (p. ej. «Anthropic Opus 4.8», «OpenAI GPT-5.5»), además de la tarea.']},
@@ -5174,14 +5175,27 @@ async function importarActividad(file, extraRot){
       <div id="cmResult" style="margin-top:8px"></div>`;
     const rb=document.getElementById('cmRotar'); if(rb) rb.addEventListener('click', ()=>importarActividad(file, _actRot+90));
     document.getElementById('cmAnalizar').addEventListener('click', async ()=>{
-      const out=document.getElementById('cmResult'); out.innerHTML='<div class="loading">Analizando con el modelo (solo columnas sin datos personales)…</div>';
+      const out=document.getElementById('cmResult');
       try{
-        const resp=await callVisionLLM(imgs, ACT_SYSTEM, 'Extrae la actividad de estas '+imgs.length+' imagen(es) al JSON indicado.', 'actividad');
-        const j=extractJSON(resp); const recs=parseActividad(j);
-        if(!recs.length){ out.innerHTML='<div class="err">No se extrajo ninguna fila. Revisa el PDF.</div>'; return; }
+        // Multipágina: procesa por lotes y ARRASTRA médico/agenda entre páginas por si alguna no repite la cabecera.
+        const BATCH=4; let recs=[]; let carry=null;
+        for(let s=0;s<imgs.length;s+=BATCH){
+          const chunk=imgs.slice(s, s+BATCH);
+          out.innerHTML='<div class="loading">Analizando páginas '+(s+1)+'–'+Math.min(s+BATCH,imgs.length)+' de '+imgs.length+'…</div>';
+          const ctx = carry ? ' CONTEXTO: si alguna página NO repite la cabecera Servicio/Médico/Agenda, sus filas pertenecen a médico "'+(carry.medico_nombre||'')+'" (cod '+(carry.medico_cod||'')+') y agenda "'+(carry.agenda_nombre||'')+'" (cod '+(carry.agenda_cod||'')+').' : '';
+          const resp=await callVisionLLM(chunk, ACT_SYSTEM, 'Extrae la actividad de estas '+chunk.length+' imagen(es) al JSON indicado.'+ctx, 'actividad');
+          const secs=((extractJSON(resp)||{}).secciones)||[];
+          for(const sec of secs){
+            if(!sec.medico_cod && !sec.medico_nombre && carry){ sec.medico_cod=carry.medico_cod; sec.medico_nombre=carry.medico_nombre; }
+            if(!sec.agenda_cod && !sec.agenda_nombre && carry){ sec.agenda_cod=carry.agenda_cod; sec.agenda_nombre=carry.agenda_nombre; }
+          }
+          recs=recs.concat(parseActividad({secciones:secs}));
+          const last=secs[secs.length-1]; if(last && (last.medico_cod||last.medico_nombre||last.agenda_cod)) carry={medico_cod:last.medico_cod, medico_nombre:last.medico_nombre, agenda_cod:last.agenda_cod, agenda_nombre:last.agenda_nombre};
+        }
+        if(!recs.length){ out.innerHTML='<div class="err">No se extrajo ninguna fila. Revisa la orientación (botón Rotar) o el PDF.</div>'; return; }
         const m=mergeConsultas(CONSULTAS, recs);
         _actPending=m.added;
-        out.innerHTML=`<div class="test-out">Extraídas <b>${recs.length}</b> · nuevas <b style="color:var(--ok)">${m.added.length}</b> · ya existentes (omitidas) <b>${m.dup}</b>.</div>
+        out.innerHTML=`<div class="test-out">${imgs.length} página(s) · extraídas <b>${recs.length}</b> filas · nuevas <b style="color:var(--ok)">${m.added.length}</b> · ya existentes (omitidas) <b>${m.dup}</b>.</div>
           <button class="btn primary" id="cmConfirm" ${m.added.length?'':'disabled'}>Incorporar ${m.added.length} registro(s)</button>`;
         const cf=document.getElementById('cmConfirm'); if(cf) cf.addEventListener('click', async ()=>{
           CONSULTAS=CONSULTAS.concat(_actPending); _actPending=null; await persistConsultas('consultas: importar '+m.added.length);
