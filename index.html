@@ -459,8 +459,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.29.0';
+const APP_VERSION='1.29.1';
 const CHANGELOG=[
+  {v:'1.29.1', d:'2026-07-02', c:['Perímetro cefálico en adultos (>18 a): se valora anclando a la referencia de 18 años (el PC alcanza tamaño ~adulto hacia los 16–18 a), en vez de dejarlo sin valor. Se etiqueta como «ref. 18 a (aprox. adulto)»; la referencia específica de adulto sería Bushby 1992 si se aporta.']},
   {v:'1.29.0', d:'2026-07-02', c:['Antropometría: sustituidas las referencias por las tablas OFICIALES de Orbegozo, EDICIÓN 2011 (estudio transversal de Bilbao), extraídas del TEXTO del PDF oficial de la Fundación (datos exactos, sin OCR): talla, peso, IMC y perímetro cefálico, varones y mujeres, 5–18 años. El PC (que antes se transcribió por OCR) ahora también viene del texto exacto y coincide. Para ≤5 años se sigue usando OMS 2006.']},
   {v:'1.28.1', d:'2026-07-01', c:['Prenatal: ahora TODOS los síndromes son editables, también los que vienen de serie (antes solo los tuyos). Al editar uno de serie se crea una copia propia versionada que lo sustituye.']},
   {v:'1.28.0', d:'2026-07-01', c:['Perímetro cefálico hasta 18 años: integradas las tablas de Orbegozo 2011 de PC (varones y mujeres), transcritas de las tablas y validadas por consistencia interna (los 7 percentiles encajan en la recta de Z, residuo <0,2 cm; conviene cotejar con AEPap). Antes el PC solo llegaba a 5 años.']},
@@ -1988,10 +1989,12 @@ function orbegozoZ(measure, sx, ageY, value){
   const z = value>=p50 ? 1.8808*(value-p50)/(p97-p50) : 1.8808*(value-p50)/(p50-p3);
   return {z, M:p50, pct:pctFromZ(z)};
 }
-/* Motor unificado: OMS (LMS) hasta 5 a; Orbegozo 2004 (transversal) para talla/peso/IMC en >5 a. */
+/* Motor unificado: OMS (LMS) hasta 5 a; Orbegozo 2011 (transversal) para >5 a.
+   PC en adulto (>18 a): se ancla a la referencia de 18 a (el perímetro cefálico alcanza tamaño ~adulto hacia los 16–18 a). */
 function growthZ(measure, sx, ageY, value){
   if(ageY!=null && ageY>5 && ORBEGOZO_REF[measure] && ORBEGOZO_REF[measure][sx]){
-    const o=orbegozoZ(measure, sx, ageY, value); if(o) return o;
+    const useAge = (measure==='hc' && ageY>18) ? 18 : ageY;   // PC adulto ≈ ref. 18 a
+    const o=orbegozoZ(measure, sx, useAge, value); if(o) return o;
   }
   return lmsZ(measure, sx, ageY, value);
 }
@@ -2000,8 +2003,11 @@ function measureSource(measure, ageY){
   if(ageY==null) return null;
   if(measure==='hc'){
     if(ageY<=5) return {src:'OMS 2006 (LMS)'};
-    if(ageY<=18 && ORBEGOZO_REF.hc && ORBEGOZO_REF.hc[sexKeyOf()]) return {src:'Orbegozo 2011', note:'estudio transversal · P3/P50/P97 → Z por interpolación'};
-    return {src:'PC sin referencia >18 a', pend:true};
+    if(ORBEGOZO_REF.hc && ORBEGOZO_REF.hc[sexKeyOf()]){
+      if(ageY<=18) return {src:'Orbegozo 2011', note:'estudio transversal · P3/P50/P97 → Z por interpolación'};
+      return {src:'Orbegozo 2011 · ref. 18 a (aprox. adulto)', note:'el PC alcanza tamaño ~adulto hacia los 16–18 a; se ancla a la referencia de 18 a. Para adultos existe la referencia específica de Bushby 1992', pend:true};
+    }
+    return {src:'PC sin referencia', pend:true};
   }
   if(ageY>18){
     if(measure==='bmi') return {src:'SEEDO', note:'clasificación de IMC del adulto por rangos fijos'};
@@ -2042,15 +2048,14 @@ function toggleAnthroPheno(id, es){
 }
 function anthroPctCard(title, value, unit, measure, maxAge){
   const ageY=patientAgeYears(); const sx=sexKeyOf(); let pctHtml='';
-  const pedMax = 18;   // OMS 0–5; Orbegozo 5–18 (talla/peso/IMC ed. 2004, PC ed. 2011)
-  if(value>0 && sx && ageY!=null && ageY<=pedMax){
+  // Pediátrico: OMS 0–5 + Orbegozo 5–18. El PC del adulto (>18) se ancla a la ref. de 18 a.
+  if(value>0 && sx && ageY!=null && (ageY<=18 || measure==='hc')){
     const r=fmtPct(growthZ(measure, sx, ageY, value));
     if(r){ const cls=r.pct<3?'low':(r.pct>97?'high':'mid'); pctHtml=`<span class="pct ${cls}">${r.band} · ${r.z>=0?'+':''}${r.z.toFixed(2)} DE</span>`; }
     else pctHtml='<span class="pct na">fuera del rango de edad</span>';
   } else if(value>0 && sx && measure!=='hc' && ageY!=null && ageY>18){
     const a=adultPct(measure, sx, value);
     if(a){ const band=a.pct<3?'< P3':(a.pct>97?'> P97':'P'+Math.round(a.pct)); const cls=a.pct<3?'low':(a.pct>97?'high':'mid'); pctHtml=`<span class="pct ${cls}">${band} · ${a.z>=0?'+':''}${a.z.toFixed(2)} DE</span>`; }
-  } else if(value>0 && measure==='hc' && ageY!=null && ageY>18){ pctHtml='<span class="pct na">PC: sin referencia >18 a</span>';
   } else if(value>0 && (!sx||ageY==null)){ pctHtml='<span class="pct na">indica edad y sexo</span>'; }
   const srcHtml = value>0 ? measureSrcHtml(measure, ageY) : '';
   return `<div class="am-row"><span class="am-t">${title}</span><span class="am-v">${value>0?value+' '+unit:'—'}</span>${pctHtml}${srcHtml}</div>`;
