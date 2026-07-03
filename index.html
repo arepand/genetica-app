@@ -474,8 +474,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.42.2';
+const APP_VERSION='1.42.3';
 const CHANGELOG=[
+  {v:'1.42.3', d:'2026-07-03', c:['ReadCube Papers: como Ariadna nunca cambia la URL al navegar (así que una extensión que solo re-escanea al detectar navegación nunca vería el marcador insertado luego), ahora se simula una señal de "navegación" cada vez que se muestra bibliografía, por si la extensión la usa para volver a comprobar la página. Experimental — pendiente de confirmar si hace que aparezca el icono.']},
   {v:'1.42.2', d:'2026-07-03', c:['Arreglo de fondo (probable causa real de "no se guarda"): las lecturas a GitHub no desactivaban la caché del navegador, así que justo después de guardar — o al refrescar la página — el navegador podía devolver una copia ANTIGUA guardada en su caché en vez de pedirla de nuevo, dando la falsa impresión de que los cambios se habían perdido aunque el commit sí se hubiera hecho. Ahora cada lectura fuerza ir siempre a buscar la versión real y actual.']},
   {v:'1.42.1', d:'2026-07-03', c:['Guardar un protocolo ahora COMPRUEBA que el cambio realmente llegó a GitHub antes de decir que ha terminado (relee el archivo y compara). Si no lo confirma, avisa claramente y NO cierra el editor — tus cambios (incluidos DOI/PMID recién encontrados) se quedan ahí para que reintentes, en vez de darse por guardados en falso.']},
   {v:'1.42.0', d:'2026-07-03', c:[
@@ -1404,6 +1405,17 @@ function readcubeMarkerHtml(ids){
   if(o.pmid) attrs.push('data-pmid="'+escA(o.pmid)+'"');
   if(o.pmcid) attrs.push('data-pmcid="'+escA(o.pmcid)+'"');
   return attrs.length ? ' <span class="__readcube-library-button" '+attrs.join(' ')+' title="ReadCube Papers"></span>' : '';
+}
+/* Ariadna nunca cambia la URL al navegar entre secciones (no usa pushState/hash) → una extensión que solo
+   re-escanea la página al detectar navegación (patrón habitual para SPAs) nunca vería el marcador de arriba,
+   porque cuando ella miró la página por primera vez esa parte del contenido aún no existía. Truco de bajo
+   coste: simular una "navegación" (replaceState + evento popstate) cada vez que se muestra bibliografía,
+   por si la extensión escucha esa señal genérica para re-comprobar la página. No garantizado, pero inofensivo. */
+function nudgeSpaExtensionRescan(){
+  try{
+    history.replaceState(history.state, '', location.href);
+    window.dispatchEvent(new PopStateEvent('popstate', {state: history.state}));
+  }catch(e){}
 }
 /* Componente reutilizable para CUALQUIER referencia bibliográfica:
    - si su PDF está indexado en docs/index.json → icono 📄 con tooltip (nombre + descripción + abrir PDF);
@@ -5902,6 +5914,7 @@ function showSection(s){
   else if(s==='paneles'){ if(pan){ pan.style.display='block'; renderPaneles(); } }
   else if(s==='prenatal'){ const pv=document.getElementById('prenatalView'); if(pv){ pv.style.display='block'; renderPrenatal(); const slot=document.getElementById('prenatalPanelSlot'); if(slot&&panel){ slot.appendChild(panel); panel.classList.remove('cart-full'); renderCart(); renderDifferential(); renderMonarch(); } } }
   else if(fen) fen.style.display='';
+  setTimeout(nudgeSpaExtensionRescan, 80);   // por si el marcador ReadCube recién insertado necesita una señal de "navegación" para que la extensión lo detecte
 }
 
 let _libCache=[];
@@ -5964,6 +5977,7 @@ function verSindromePrenatal(name){
   ov.querySelector('#pvClose').addEventListener('click',()=>ov.remove());
   ov.querySelector('#pvGo').addEventListener('click',()=>{ ov.remove(); showSection('prenatal'); });
   ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); });
+  setTimeout(nudgeSpaExtensionRescan, 80);
 }
 /* Importar una ficha JSON propia → pasa por la MISMA revisión + verificación de HPO que las creadas por la IA. */
 function importarFichaJson(){
@@ -6073,6 +6087,7 @@ async function renderFichaView(f){
   const pas=box.querySelector('#panAssocSearch'), par=box.querySelector('#panAssocResults');
   if(pas&&par) pas.addEventListener('input', ()=>{ par.innerHTML=panelAssocResultsHtml(f, pas.value); bindPanTog(par); });
   box.querySelectorAll('[data-panview]').forEach(a=>a.addEventListener('click', ()=>{ _panelSel=a.dataset.panview; showSection('paneles'); }));
+  setTimeout(nudgeSpaExtensionRescan, 80);
 }
 
 /* Registrar un PDF descargado: el PDF vive en la nube del usuario; aquí guardamos el enlace + metadatos en docs/index.json. */
