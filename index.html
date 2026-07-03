@@ -329,6 +329,7 @@
   .morfo-chip{display:inline-flex; align-items:center; gap:6px; background:var(--panel2); border:1px solid var(--line); border-radius:14px; padding:4px 9px; font-size:12px; margin:0 4px 4px 0;}
   #morfoSelected{margin-bottom:14px; padding-bottom:12px; border-bottom:2px solid var(--line);}
   .tip-ai{display:inline-block; margin-top:5px; color:var(--accent); cursor:pointer; font-size:11px; text-decoration:underline; font-weight:600;}
+  .tip-edit{display:inline-block; margin:5px 0 0 8px; color:var(--ink3); cursor:pointer; font-size:11px; text-decoration:underline;}
   .dx-src{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--accent); margin:4px 0 5px;}
   .prenatal-layout{display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:0; align-items:start;}
   .prenatal-main{padding-right:22px; min-width:0;}
@@ -473,8 +474,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.36.1';
+const APP_VERSION='1.37.0';
 const CHANGELOG=[
+  {v:'1.37.0', d:'2026-07-03', c:['Nuevo: editor de definición de cada HPO (enlace «✎ editar» en el tooltip «i»). Puedes escribir un texto libre, regenerar la traducción con IA, restaurar la definición automática, o recuperar cualquier versión anterior de un historial con fecha y hora — queda guardado para todos los usos futuros de ese HPO.']},
   {v:'1.36.1', d:'2026-07-03', c:['Cuadro de mando: botón «🗑 Borrar TODOS los registros» (con confirmación escribiendo BORRAR) para vaciar la tabla de actividad de golpe cuando haga falta.']},
   {v:'1.36.0', d:'2026-07-03', c:['Cuadro de mando: ahora puedes EDITAR o ELIMINAR cualquier registro ya importado (botones ✎/🗑 en la tabla).','Cuadro de mando: importación más fiable — elige modo «Página a página» (una imagen por llamada) o «En bloque: mismo encabezado» (fijas médico y agenda a mano, sin depender de que el modelo los detecte en cada página).','Cuadro de mando: ahora puedes arrastrar el PDF directamente sobre el recuadro de importar, sin tener que abrir el selector de archivo.','Protocolos: en el editor puedes activar o desactivar a mano los módulos anexos «Índice de Beighton» y «Antropometría» (por si la IA los añadió o quitó de forma incorrecta).','Diferencial cruzado: ahora muestra QUÉ hallazgos (HPO) concretos son los que cumplen en cada protocolo/entidad sugerida, no solo el recuento.']},
   {v:'1.35.0', d:'2026-07-03', c:['Pestaña «Fenotipo»: ahora ocupa todo el ancho (fuera el «marco» centrado) y los HPO seleccionados se muestran como CHIPS de colores (misma forma que al seleccionar en otros apartados), en vez de una columna.','Informes de laboratorio: mejorada la extracción de HPO — recorre cada parámetro comparándolo con su rango de referencia, es exhaustivo, ignora rangos/unidades/anotaciones y ya no se trunca en informes largos (más espacio de tokens).']},
@@ -647,10 +649,11 @@ function panelAppLink(label){
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function escA(s){ return escHtml(s).replace(/"/g,'&quot;'); }  // valor seguro para atributos
 // Mejor definición disponible para un HPO: {text, improvable}. improvable = procede del
-// Excel (Google Translate) → ofrece "mejorar con IA". STATIC y las IA previas son finales.
+// Excel (Google Translate) → ofrece "mejorar con IA". Una edición manual (ghDefs) gana SIEMPRE,
+// incluso sobre una definición STATIC integrada (el clínico puede sobrescribir cualquiera).
 function bestDef(id){
-  if(STATIC_DEFINITIONS[id]) return {text:STATIC_DEFINITIONS[id], improvable:false};
   if(typeof ghDefs!=='undefined' && ghDefs && ghDefs[id]) return {text:ghDefs[id], improvable:false};
+  if(STATIC_DEFINITIONS[id]) return {text:STATIC_DEFINITIONS[id], improvable:false};
   let lc=null; try{ lc=localStorage.getItem('fh_hpodef_'+id); }catch(e){}
   if(lc && /traducci[oó]n IA/.test(lc)) return {text:lc, improvable:false};
   if(typeof MORFO_DEFS!=='undefined' && MORFO_DEFS && MORFO_DEFS[id]) return {text:MORFO_DEFS[id], improvable:true};
@@ -660,7 +663,7 @@ function infoDotHtml(id){
   const b = bestDef(id);
   if(b){
     const ai = (b.improvable && anyProvider()) ? ' <a class="tip-ai" data-aiimprove="1">✨ mejorar (IA)</a>' : '';
-    return `<span class="info-dot" data-id="${id}">i<span class="tooltip">${escHtml(b.text)}${ai}</span></span>`;
+    return `<span class="info-dot" data-id="${id}">i<span class="tooltip">${escHtml(b.text)}${ai}${editDefLinkHtml(true)}</span></span>`;
   }
   return `<span class="info-dot pending" data-id="${id}" style="display:none;">i<span class="tooltip"></span></span>`;
 }
@@ -671,6 +674,8 @@ function wireInfoDot(dot){
   dot.dataset.bound = '1';
   dot.addEventListener('click', (e)=>{
     e.stopPropagation();
+    // Clic en "✎ editar" → abre el editor de definición (texto libre/IA/historial).
+    if(e.target.closest('.tip-edit')){ openDefEditor(dot.dataset.id); return; }
     // Clic en "✨ mejorar (IA)" dentro del tooltip → traducir con IA (no cierra el tooltip).
     if(e.target.closest('.tip-ai')){ upgradeDefinitionAi(dot.dataset.id, dot); return; }
     dot.classList.toggle('open');
@@ -748,6 +753,98 @@ async function saveGhDef(id, text){
   try{ await ghPutFile('defs/es.json', idx, 'defs: traducción IA '+id, sha); ghDefs=idx; localStorage.setItem('fh_ghdefs', JSON.stringify(idx)); }catch(e){}
 }
 
+/* ---- Historial de definiciones HPO editadas (fecha/hora + texto anterior), por término ----
+   Persistido en GitHub defs/es_hist.json (id -> [{fecha,texto,origen}, …]) + localStorage. */
+let DEF_HIST=null, defHistPromise=null;
+function cachedDefHist(){ try{ return JSON.parse(localStorage.getItem('fh_defhist'))||{}; }catch(e){ return {}; } }
+async function ensureDefHist(){
+  if(DEF_HIST) return DEF_HIST;
+  if(!defHistPromise) defHistPromise=(async()=>{
+    let h=null;
+    if(ghConfigured()){ try{ const r=await ghGetFile('defs/es_hist.json'); if(r.json) h=r.json; else if(r.missing) h={}; }catch(e){} }
+    if(!h) h=cachedDefHist();
+    DEF_HIST=h; try{ localStorage.setItem('fh_defhist', JSON.stringify(h)); }catch(e){}
+    return DEF_HIST;
+  })();
+  return defHistPromise;
+}
+async function pushDefHist(id, texto, origen){
+  await ensureDefHist();
+  const arr=(DEF_HIST[id]=DEF_HIST[id]||[]);
+  arr.unshift({fecha:new Date().toISOString(), texto, origen:origen||''});
+  if(arr.length>20) arr.length=20;
+  try{ localStorage.setItem('fh_defhist', JSON.stringify(DEF_HIST)); }catch(e){}
+  try{ if(ghConfigured()){ let sha=null; try{ const ci=await ghGetFile('defs/es_hist.json'); sha=ci.sha; }catch(e){} await ghPutFile('defs/es_hist.json', DEF_HIST, 'defs: historial '+id, sha); } }catch(e){}
+}
+/* Fija la definición final de un HPO (edición manual, regenerada IA, o restaurada), guardando la ANTERIOR en el historial. */
+async function setDefinition(id, text, origen){
+  const old=bestDef(id);
+  if(old && old.text && old.text!==text) await pushDefHist(id, old.text, origen==='manual'?'anterior (antes de editar)':'anterior');
+  liveDefinitionCache[id]=text; saveDefCache(id, text);
+  await saveGhDef(id, text);
+}
+/* Recalcula la definición automática (HPO+traducción) SIN persistir nada — para previsualizar "restaurar automática". */
+async function computeAutoDefinition(id){
+  if(STATIC_DEFINITIONS[id]) return STATIC_DEFINITIONS[id];
+  let en=defEnglish[id];
+  if(!en){ try{ const r=await fetch(HPO_API+'/terms/'+id); const d=await r.json(); en=(d&&d.definition)||''; defEnglish[id]=en; }catch(e){} }
+  if(!en) return '';
+  const es=await translateFree(en);
+  if(looksTranslated(es,en)) return es+' (traducción automática)';
+  if(anyProvider()){ const ai=await llmTranslateDef(en); if(ai) return ai+' (traducción IA)'; }
+  return en+' (EN · sin traducción)';
+}
+function editDefLinkHtml(has){ return has ? ' <a class="tip-edit" data-editdef="1">✎ editar</a>' : ''; }
+/* Modal: editar la definición (tooltip) de un HPO — texto libre, regenerar IA, restaurar automática, o volver a una versión del historial. */
+async function openDefEditor(id){
+  await ensureGhDefs(); await ensureDefHist();
+  const cur=(bestDef(id)||{}).text || liveDefinitionCache[id] || '';
+  const hist=(DEF_HIST&&DEF_HIST[id])||[];
+  const isStatic=!!STATIC_DEFINITIONS[id];
+  const ov=document.createElement('div'); ov.className='overlay'; ov.id='defEditOverlay';
+  ov.innerHTML=`<div class="modal" style="max-width:520px">
+    <h2>Editar definición <span class="hp">${id}</span></h2>
+    ${isStatic?'<div class="dx-meta" style="margin-bottom:6px">Este término tiene una definición integrada en la app; puedes sobrescribirla y «Restaurar automática» la recupera tal cual.</div>':''}
+    <textarea id="defText" style="width:100%;min-height:120px;box-sizing:border-box;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink);font-size:13px">${escHtml(cur)}</textarea>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+      <button class="btn" id="defRegenIA">🔄 Regenerar con IA</button>
+      <button class="btn" id="defRestore">↺ Restaurar automática</button>
+    </div>
+    <div id="defOut" class="test-out" style="margin-top:6px"></div>
+    ${hist.length?`<details style="margin-top:10px"><summary class="cart-group-title" style="cursor:pointer">🕘 Historial (${hist.length})</summary>
+      <div style="max-height:180px;overflow:auto;margin-top:6px">${hist.map((h,i)=>`<div style="border-top:1px solid var(--line);padding:5px 0;font-size:12px"><span class="dx-meta">${String(h.fecha||'').slice(0,16).replace('T',' ')}${h.origen?' · '+escHtml(h.origen):''}</span><div style="margin:2px 0">${escHtml(h.texto)}</div><button class="btn ghost defUseHist" data-i="${i}" style="padding:1px 8px;font-size:11px">Usar esta versión</button></div>`).join('')}</div></details>`:''}
+    <div class="modal-actions"><button class="btn ghost" id="defCancel">Cancelar</button><button class="btn primary" id="defSave">Guardar</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  const close=()=>ov.remove();
+  ov.querySelector('#defCancel').addEventListener('click', close);
+  ov.addEventListener('click', e=>{ if(e.target===ov) close(); });
+  const out=ov.querySelector('#defOut');
+  ov.querySelector('#defSave').addEventListener('click', async ()=>{
+    const txt=ov.querySelector('#defText').value.trim(); if(!txt) return;
+    await setDefinition(id, txt, 'manual');
+    document.querySelectorAll('.info-dot[data-id="'+id+'"] .tooltip').forEach(t=>{ t.innerHTML=escHtml(txt)+editDefLinkHtml(true); });
+    showToast('Definición guardada'); close();
+  });
+  const regen=ov.querySelector('#defRegenIA'); if(regen) regen.addEventListener('click', async ()=>{
+    if(!anyProvider()){ out.innerHTML='<div class="err">Configura una API key (Claude u OpenAI).</div>'; return; }
+    out.textContent='Regenerando con IA…';
+    let en=defEnglish[id]; if(!en){ try{ const r=await fetch(HPO_API+'/terms/'+id); const d=await r.json(); en=(d&&d.definition)||''; defEnglish[id]=en; }catch(e){} }
+    if(!en){ out.innerHTML='<div class="err">No hay definición en HPO para traducir.</div>'; return; }
+    const ai=await llmTranslateDef(en);
+    if(!ai){ out.innerHTML='<div class="err">La IA no devolvió traducción.</div>'; return; }
+    ov.querySelector('#defText').value = ai+' (traducción IA)';
+    out.innerHTML='<span style="color:var(--ok)">✓ Regenerada. Revisa el texto y pulsa Guardar.</span>';
+  });
+  const restore=ov.querySelector('#defRestore'); if(restore) restore.addEventListener('click', async ()=>{
+    out.textContent='Restaurando…';
+    const fresh = isStatic ? STATIC_DEFINITIONS[id] : await computeAutoDefinition(id);
+    if(fresh) ov.querySelector('#defText').value=fresh;
+    out.innerHTML = fresh? '<span style="color:var(--ok)">✓ Definición automática recalculada. Pulsa Guardar para confirmarla.</span>' : '<div class="err">No se pudo obtener una definición automática.</div>';
+  });
+  ov.querySelectorAll('.defUseHist').forEach(b=>b.addEventListener('click', ()=>{ const h=hist[+b.dataset.i]; if(h) ov.querySelector('#defText').value=h.texto; }));
+}
+
 async function fetchLiveDefinition(id){
   if(STATIC_DEFINITIONS[id]) return STATIC_DEFINITIONS[id];
   if(liveDefinitionCache[id] !== undefined) return liveDefinitionCache[id];
@@ -784,14 +881,16 @@ async function fetchLiveDefinition(id){
 async function upgradeDefinitionAi(id, dot){
   if(!anyProvider()){ showToast('Configura una API key (Claude u OpenAI) para traducir con IA'); return; }
   const tip=dot && dot.querySelector('.tooltip');
+  const prev=(bestDef(id)||{}).text||'';
   if(tip) tip.textContent='Traduciendo con IA…';
   let en=defEnglish[id];
   if(!en){ try{ const r=await fetch(HPO_API+'/terms/'+id); const d=await r.json(); en=(d&&d.definition)||''; defEnglish[id]=en; }catch(e){} }
   if(!en){ if(tip) tip.textContent='(no hay definición en HPO para traducir)'; return; }
   const ai=await llmTranslateDef(en);
   const result = ai ? (ai+' (traducción IA)') : (en+' (EN · sin traducción)');
+  if(prev && prev!==result) pushDefHist(id, prev, 'auto (antes de mejorar IA)');
   liveDefinitionCache[id]=result; saveDefCache(id, result);
-  if(tip) tip.textContent=result;
+  if(tip) tip.innerHTML=escHtml(result)+editDefLinkHtml(true);
   if(ai) saveGhDef(id, result);   // permanente y compartida entre dispositivos
 }
 async function prefetchDefinitions(box){
@@ -802,7 +901,7 @@ async function prefetchDefinitions(box){
     const id = dot.dataset.id;
     const def = await fetchLiveDefinition(id);
     if(def && dot.querySelector('.tooltip')){
-      dot.querySelector('.tooltip').textContent = def;
+      dot.querySelector('.tooltip').innerHTML = escHtml(def)+editDefLinkHtml(true);
       if(/pulsa para traducir con IA/.test(def)) dot.dataset.ai='1';
       dot.classList.remove('pending'); dot.style.display = '';
       wireInfoDot(dot);
