@@ -473,8 +473,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.35.0';
+const APP_VERSION='1.36.0';
 const CHANGELOG=[
+  {v:'1.36.0', d:'2026-07-03', c:['Cuadro de mando: ahora puedes EDITAR o ELIMINAR cualquier registro ya importado (botones ✎/🗑 en la tabla).','Cuadro de mando: importación más fiable — elige modo «Página a página» (una imagen por llamada) o «En bloque: mismo encabezado» (fijas médico y agenda a mano, sin depender de que el modelo los detecte en cada página).','Cuadro de mando: ahora puedes arrastrar el PDF directamente sobre el recuadro de importar, sin tener que abrir el selector de archivo.','Protocolos: en el editor puedes activar o desactivar a mano los módulos anexos «Índice de Beighton» y «Antropometría» (por si la IA los añadió o quitó de forma incorrecta).','Diferencial cruzado: ahora muestra QUÉ hallazgos (HPO) concretos son los que cumplen en cada protocolo/entidad sugerida, no solo el recuento.']},
   {v:'1.35.0', d:'2026-07-03', c:['Pestaña «Fenotipo»: ahora ocupa todo el ancho (fuera el «marco» centrado) y los HPO seleccionados se muestran como CHIPS de colores (misma forma que al seleccionar en otros apartados), en vez de una columna.','Informes de laboratorio: mejorada la extracción de HPO — recorre cada parámetro comparándolo con su rango de referencia, es exhaustivo, ignora rangos/unidades/anotaciones y ya no se trunca en informes largos (más espacio de tokens).']},
   {v:'1.34.1', d:'2026-07-03', c:['Cuadro de mando: los registros ya importados con el médico mal guardado (p. ej. «S.C S») se corrigen automáticamente a «SC» al cargar (y se guardan en tu GitHub). Botón «🔧 Corregir médicos SC» para forzarlo al momento.']},
   {v:'1.34.0', d:'2026-07-02', c:['Antropometría: colores tipo SEMÁFORO por severidad del z (verde dentro de rango, ámbar moderado, rojo marcado) y ahora el perímetro cefálico también sugiere HPO (micro/macrocefalia) en todo el rango 0–18 a.','Diferencial cruzado más laxo: sugiere protocolos que encajan ANTES (con coincidencia parcial, sin esperar a cumplir todos los criterios) y muestra hasta 5, marcando cuáles cumplen y cuáles son parciales.','Fenotipado por protocolo: si varios protocolos encajan con el motivo, se muestran TODOS ordenados por relevancia para elegir (antes abría solo uno).','Ver/imprimir protocolo: los paneles génicos muestran por defecto solo los ASOCIADos (el buscador aparece al escribir).','Buscador HPO: el tooltip de definición ya no se recorta.','Protocolos (normales y prenatales): casilla «Validado» en el editor → muestran un ✓ de validado en la vista y en la lista.','Índice de Beighton: si se cumple el criterio, aparece un chip del HPO para añadir (como en antropometría), en vez del botón «+Añadir HAG» (que estaba siempre y fallaba).']},
@@ -3093,6 +3094,11 @@ function openFichaReview(f, opts){
       <input id="fichaNota" type="text" placeholder="Nota de cambios (opcional) — se guarda en el changelog de esta versión" style="flex:1; min-width:240px; padding:8px 11px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink); font-size:12.5px">
       <label class="q-opt" style="display:flex;align-items:center;gap:6px;font-size:13px;white-space:nowrap"><input type="checkbox" id="fichaValidado" ${f.validado?'checked':''}> ✓ Validado</label>
     </div>
+    <div style="display:flex; gap:16px; margin-top:6px; flex-wrap:wrap; align-items:center">
+      <span class="dx-meta">Módulos anexos:</span>
+      <label class="q-opt" style="display:flex;align-items:center;gap:6px;font-size:13px;white-space:nowrap"><input type="checkbox" id="fichaModBeighton" ${f.modulos&&f.modulos.beighton?'checked':''}> Índice de Beighton</label>
+      <label class="q-opt" style="display:flex;align-items:center;gap:6px;font-size:13px;white-space:nowrap"><input type="checkbox" id="fichaModAntro" ${f.modulos&&f.modulos.antropometria?'checked':''}> Antropometría</label>
+    </div>
 
     <div class="modal-actions">
       <button class="btn ghost" id="btnFichaCancel">Cancelar</button>
@@ -3318,6 +3324,9 @@ function openFichaReview(f, opts){
     out.className='test-out'; out.textContent='Guardando…';
     try{
       j.validado = !!(ov.querySelector('#fichaValidado')||{}).checked;
+      j.modulos = j.modulos || {};
+      j.modulos.beighton = !!(ov.querySelector('#fichaModBeighton')||{}).checked;
+      j.modulos.antropometria = !!(ov.querySelector('#fichaModAntro')||{}).checked;
       bumpFichaRev(j, (ov.querySelector('#fichaNota')||{}).value||'');   // sube rev + changelog + copia de seguridad local
       const mode=await persistFicha(j);
       close();
@@ -3541,7 +3550,12 @@ function crossProtocolHtml(topMargin){
   return `<div class="cart-group-title" style="color:var(--accent)${topMargin?';margin-top:12px':''}">🎯 También encaja con tus protocolos <span class="dx-meta">(${cross.length}${cross.length>=5?'+':''})</span></div>`
     + cross.map(m=>{
       const complejo=m.ents.length>1;
-      const subs=m.ents.slice(0,5).map(x=>`<div class="dx-meta" style="margin:2px 0 0 8px;color:var(--ink2)">↳ <b style="color:${x.cumple?'var(--ok)':'#e8a13a'}">${escHtml(x.nombre)}</b> <span class="dx-meta">— ${x.st.maj.length}/${x.st.needMaj} mayores · ${x.st.min.length}/${x.st.needMin} menores ${x.cumple?'· ✓ cumple':'· parcial'}</span></div>`).join('');
+      const hpoNames=ids=>ids.map(id=>escHtml((selections[id]&&selections[id].es)||id)).join(', ');
+      const subs=m.ents.slice(0,5).map(x=>{
+        const majTxt=x.st.maj.length?hpoNames(x.st.maj):'', minTxt=x.st.min.length?hpoNames(x.st.min):'';
+        return `<div class="dx-meta" style="margin:2px 0 0 8px;color:var(--ink2)">↳ <b style="color:${x.cumple?'var(--ok)':'#e8a13a'}">${escHtml(x.nombre)}</b> <span class="dx-meta">— ${x.st.maj.length}/${x.st.needMaj} mayores · ${x.st.min.length}/${x.st.needMin} menores ${x.cumple?'· ✓ cumple':'· parcial'}</span>
+        ${(majTxt||minTxt)?`<div style="margin:1px 0 2px 14px;font-size:11px;color:var(--ink3)">${majTxt?'Mayores: '+majTxt:''}${majTxt&&minTxt?' · ':''}${minTxt?'Menores: '+minTxt:''}</div>`:''}</div>`;
+      }).join('');
       return `<div style="border:1px solid var(--accent2);border-left:3px solid var(--accent);border-radius:9px;padding:8px 10px;margin:6px 0;background:linear-gradient(180deg,#16302c,#141d1b)">
         <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap"><a class="tip-ai" data-openficha="${escHtml(m.id)}"><b>${escHtml(m.nombre)}</b></a>${complejo?`<span class="pill sug" title="Entidades con coincidencias dentro de este protocolo">${m.ents.length} entidades</span>`:''}${m.anyCumple?'':`<span class="pill near">coincidencia parcial</span>`}</div>
         ${complejo?`<div class="dx-meta" style="margin-top:2px">Entidades que coinciden:</div>`:''}
@@ -5163,7 +5177,7 @@ function mergeConsultas(existing, incoming){
   for(const r of (incoming||[])){ const k=consultaKey(r); if(seen.has(k)){ dup++; continue; } seen.add(k); added.push(r); }
   return { added, dup, total:(existing||[]).length+added.length };
 }
-let CONSULTAS=[];
+var CONSULTAS=[];   // var (no let): así window.CONSULTAS queda sincronizado tras reasignaciones (import/carga)
 function loadConsultasLocal(){ try{ const c=JSON.parse(localStorage.getItem('fh_consultas')); if(Array.isArray(c)) CONSULTAS=c; }catch(e){} }
 async function loadConsultas(){
   loadConsultasLocal();
@@ -5216,6 +5230,15 @@ async function actPageToRedactedB64(page, scale, extraRot){
   return { b64:canvas.toDataURL('image/png').split(',')[1], canvas };
 }
 let _actPending=null; let _actRot=0;
+/* Prompt de visión simplificado: SIN cabecera (médico/agenda ya los fija el clínico a mano) — solo filas. Modo "en bloque". */
+const ACT_SYSTEM_BULK='Eres un extractor de datos de un informe de ACTIVIDAD clínica del C.H.U. de Vigo. Todas las páginas comparten el mismo encabezado Servicio/Médico/Agenda (NO hace falta extraerlo). Cada página tiene una tabla con columnas: Fecha, Hora, Prestacion, Realizada, NREG, (columna Paciente TAPADA EN BLANCO — IGNÓRALA por completo), Alta. Extrae TODAS las filas de TODAS las páginas dadas. NUNCA inventes ni incluyas datos de pacientes. Devuelve SOLO JSON válido: {"filas":[{"fecha":"03/04/2019","hora":"10:57","prestacion":"LXEN.1 CONSULTA XENETICA","realizada":"URG","nreg":"192380852","alta":"0"}]}. «realizada» ∈ {SI,NO,URG}. «alta» = "0" (fin de seguimiento) o "1" (en seguimiento).';
+function parseActividadBulk(rows, medico, agCod){
+  const agNom=agendaNombre(agCod, '');
+  return (rows||[]).filter(f=>f && (f.fecha||f.nreg)).map(f=>({ fecha:String(f.fecha||'').trim(), hora:String(f.hora||'').trim(), agenda:agCod, agendaNom:agNom,
+    prestacion:String(f.prestacion||'').trim(), medico, realizada:realizadaNorm(f.realizada), alta:altaNorm(f.alta), nreg:String(f.nreg||'').trim() }));
+}
+const CM_MEDICOS=[['ARA','ARA — Reparaz Andrade, Alfredo'],['MBP','MBP — Blanco Pérez, María Milagros'],['CTB','CTB — Torreira Banzas, Cristina'],['NVP','NVP — Vicente Pérez, Nuria'],['SC','SC — Sin codificar']];
+try{ if(typeof window!=='undefined') window.CM_MEDICOS=CM_MEDICOS; }catch(e){}
 async function importarActividad(file, extraRot){
   _actRot=((extraRot||0)%360+360)%360;
   const box=document.getElementById('cmImport'); if(!box) return;
@@ -5231,28 +5254,55 @@ async function importarActividad(file, extraRot){
     box.innerHTML=`<div class="dx-meta">Vista redactada (los nombres deben estar tapados en blanco). Si se ve algún nombre o está torcida, pulsa «Rotar» hasta que quede bien; si algún nombre asoma, NO continúes.</div>
       <div style="display:flex;gap:8px;overflow:auto;margin:6px 0">${previews.map(u=>`<img src="${u}" style="height:120px;border:1px solid var(--line);border-radius:6px">`).join('')}</div>
       <button class="btn ghost" id="cmRotar" style="padding:4px 10px;font-size:12px">🔄 Rotar 90°</button>
+      <div style="margin:8px 0;font-size:12.5px">
+        <div class="dx-meta" style="font-weight:700;margin-bottom:3px">Modo de importación</div>
+        <label style="display:block;margin:2px 0"><input type="radio" name="cmMode" value="auto" checked> Automático — agrupa 4 páginas y detecta la cabecera en cada bloque</label>
+        <label style="display:block;margin:2px 0"><input type="radio" name="cmMode" value="page"> Página a página — más lento, más fiable (una imagen por llamada)</label>
+        <label style="display:block;margin:2px 0"><input type="radio" name="cmMode" value="bulk"> En bloque: mismo encabezado en TODAS las páginas (fijas médico/agenda a mano, más fiable si el PDF es homogéneo)</label>
+        <div id="cmBulkHdr" style="display:none;margin:6px 0 0 20px">
+          <label class="dx-meta">Médico <select id="cmBulkMed">${CM_MEDICOS.map(([k,v])=>`<option value="${k}">${escHtml(v)}</option>`).join('')}</select></label>
+          <label class="dx-meta" style="margin-left:10px">Agenda <select id="cmBulkAg"><option value="UXPC03">UXPC03 Xenética</option><option value="UXPC04">UXPC04 Telefónicas Xenética</option></select></label>
+        </div>
+      </div>
       <button class="btn primary" id="cmAnalizar">Analizar ${pdf.numPages} página(s) →</button> <span class="dx-meta">· el PDF no se guardará</span>
       <div id="cmResult" style="margin-top:8px"></div>`;
     const rb=document.getElementById('cmRotar'); if(rb) rb.addEventListener('click', ()=>importarActividad(file, _actRot+90));
+    const bulkHdr=document.getElementById('cmBulkHdr');
+    box.querySelectorAll('input[name="cmMode"]').forEach(r=>r.addEventListener('change', ()=>{ if(bulkHdr) bulkHdr.style.display = (box.querySelector('input[name="cmMode"]:checked')||{}).value==='bulk' ? 'block' : 'none'; }));
     document.getElementById('cmAnalizar').addEventListener('click', async ()=>{
       const out=document.getElementById('cmResult');
+      const mode=(box.querySelector('input[name="cmMode"]:checked')||{}).value||'auto';
       try{
-        // Multipágina: procesa por lotes y ARRASTRA médico/agenda entre páginas por si alguna no repite la cabecera.
-        const BATCH=4; let recs=[]; let carry=null;
-        for(let s=0;s<imgs.length;s+=BATCH){
-          const chunk=imgs.slice(s, s+BATCH);
-          out.innerHTML='<div class="loading">Analizando páginas '+(s+1)+'–'+Math.min(s+BATCH,imgs.length)+' de '+imgs.length+'…</div>';
-          const ctx = carry ? ' CONTEXTO: si alguna página NO repite la cabecera Servicio/Médico/Agenda, sus filas pertenecen a médico "'+(carry.medico_nombre||'')+'" (cod '+(carry.medico_cod||'')+') y agenda "'+(carry.agenda_nombre||'')+'" (cod '+(carry.agenda_cod||'')+').' : '';
-          const resp=await callVisionLLM(chunk, ACT_SYSTEM, 'Extrae la actividad de estas '+chunk.length+' imagen(es) al JSON indicado.'+ctx, 'actividad');
-          const secs=((extractJSON(resp)||{}).secciones)||[];
-          for(const sec of secs){
-            if(!sec.medico_cod && !sec.medico_nombre && carry){ sec.medico_cod=carry.medico_cod; sec.medico_nombre=carry.medico_nombre; }
-            if(!sec.agenda_cod && !sec.agenda_nombre && carry){ sec.agenda_cod=carry.agenda_cod; sec.agenda_nombre=carry.agenda_nombre; }
+        let recs=[];
+        if(mode==='bulk'){
+          const medico=(document.getElementById('cmBulkMed')||{}).value||'SC';
+          const agCod=(document.getElementById('cmBulkAg')||{}).value||'UXPC03';
+          const BATCH=4;
+          for(let s=0;s<imgs.length;s+=BATCH){
+            const chunk=imgs.slice(s, s+BATCH);
+            out.innerHTML='<div class="loading">Analizando páginas '+(s+1)+'–'+Math.min(s+BATCH,imgs.length)+' de '+imgs.length+' (médico y agenda fijados a mano)…</div>';
+            const resp=await callVisionLLM(chunk, ACT_SYSTEM_BULK, 'Extrae las filas de la tabla de estas '+chunk.length+' imagen(es) al JSON indicado.', 'actividad');
+            const rows=((extractJSON(resp)||{}).filas)||[];
+            recs=recs.concat(parseActividadBulk(rows, medico, agCod));
           }
-          recs=recs.concat(parseActividad({secciones:secs}));
-          const last=secs[secs.length-1]; if(last && (last.medico_cod||last.medico_nombre||last.agenda_cod)) carry={medico_cod:last.medico_cod, medico_nombre:last.medico_nombre, agenda_cod:last.agenda_cod, agenda_nombre:last.agenda_nombre};
+        } else {
+          // Automático (lotes de 4) o página a página (lotes de 1): ambos ARRASTRAN médico/agenda entre páginas por si alguna no repite la cabecera.
+          const BATCH = mode==='page' ? 1 : 4; let carry=null;
+          for(let s=0;s<imgs.length;s+=BATCH){
+            const chunk=imgs.slice(s, s+BATCH);
+            out.innerHTML='<div class="loading">Analizando página'+(chunk.length>1?'s':'')+' '+(s+1)+'–'+Math.min(s+BATCH,imgs.length)+' de '+imgs.length+'…</div>';
+            const ctx = carry ? ' CONTEXTO: si alguna página NO repite la cabecera Servicio/Médico/Agenda, sus filas pertenecen a médico "'+(carry.medico_nombre||'')+'" (cod '+(carry.medico_cod||'')+') y agenda "'+(carry.agenda_nombre||'')+'" (cod '+(carry.agenda_cod||'')+').' : '';
+            const resp=await callVisionLLM(chunk, ACT_SYSTEM, 'Extrae la actividad de estas '+chunk.length+' imagen(es) al JSON indicado.'+ctx, 'actividad');
+            const secs=((extractJSON(resp)||{}).secciones)||[];
+            for(const sec of secs){
+              if(!sec.medico_cod && !sec.medico_nombre && carry){ sec.medico_cod=carry.medico_cod; sec.medico_nombre=carry.medico_nombre; }
+              if(!sec.agenda_cod && !sec.agenda_nombre && carry){ sec.agenda_cod=carry.agenda_cod; sec.agenda_nombre=carry.agenda_nombre; }
+            }
+            recs=recs.concat(parseActividad({secciones:secs}));
+            const last=secs[secs.length-1]; if(last && (last.medico_cod||last.medico_nombre||last.agenda_cod)) carry={medico_cod:last.medico_cod, medico_nombre:last.medico_nombre, agenda_cod:last.agenda_cod, agenda_nombre:last.agenda_nombre};
+          }
         }
-        if(!recs.length){ out.innerHTML='<div class="err">No se extrajo ninguna fila. Revisa la orientación (botón Rotar) o el PDF.</div>'; return; }
+        if(!recs.length){ out.innerHTML='<div class="err">No se extrajo ninguna fila. Revisa la orientación (botón Rotar), el modo de importación o el PDF.</div>'; return; }
         const m=mergeConsultas(CONSULTAS, recs);
         _actPending=m.added;
         out.innerHTML=`<div class="test-out">${imgs.length} página(s) · extraídas <b>${recs.length}</b> filas · nuevas <b style="color:var(--ok)">${m.added.length}</b> · ya existentes (omitidas) <b>${m.dup}</b>.</div>
@@ -5313,6 +5363,36 @@ function cmBars(title, counts){
     + (entries.length?entries.map(([k,v])=>`<div style="display:flex;align-items:center;gap:8px;margin:3px 0;font-size:12.5px"><span style="min-width:150px">${escHtml(k)}</span><span style="flex:1;background:var(--panel2);border-radius:5px;overflow:hidden"><span style="display:block;height:14px;width:${Math.round(100*v/max)}%;background:var(--accent)"></span></span><b style="min-width:36px;text-align:right">${v}</b></div>`).join(''):'<div class="dx-meta">Sin datos.</div>')
     + '</div>';
 }
+/* Edita o elimina un registro de CONSULTAS ya guardado (localiza por consultaKey). */
+function openEditConsulta(key){
+  const i=CONSULTAS.findIndex(r=>consultaKey(r)===key); if(i<0) return;
+  const r=CONSULTAS[i];
+  const ov=document.createElement('div'); ov.className='overlay'; ov.id='cmEditOverlay';
+  ov.innerHTML=`<div class="modal" style="max-width:420px"><h2>Editar registro</h2>
+    <div class="field"><label>Fecha (dd/mm/aaaa)</label><input id="ceFecha" type="text" value="${escA(r.fecha)}"></div>
+    <div class="field"><label>Hora</label><input id="ceHora" type="text" value="${escA(r.hora)}"></div>
+    <div class="field"><label>Agenda (código)</label><select id="ceAgenda"><option value="UXPC03" ${r.agenda==='UXPC03'?'selected':''}>UXPC03 Xenética</option><option value="UXPC04" ${r.agenda==='UXPC04'?'selected':''}>UXPC04 Telefónicas Xenética</option></select></div>
+    <div class="field"><label>Prestación</label><input id="cePrest" type="text" value="${escA(r.prestacion)}"></div>
+    <div class="field"><label>Médico</label><select id="ceMedico">${CM_MEDICOS.map(([k,v])=>`<option value="${k}" ${r.medico===k?'selected':''}>${escHtml(v)}</option>`).join('')}</select></div>
+    <div class="field"><label>Realizada</label><select id="ceReal"><option value="SI" ${r.realizada==='SI'?'selected':''}>SI</option><option value="URG" ${r.realizada==='URG'?'selected':''}>URG</option><option value="NO" ${r.realizada==='NO'?'selected':''}>NO</option></select></div>
+    <div class="field"><label>Alta</label><select id="ceAlta"><option value="1" ${r.alta==='1'?'selected':''}>En seguimiento</option><option value="0" ${r.alta==='0'?'selected':''}>Fin de seguimiento</option></select></div>
+    <div class="modal-actions"><button class="btn ghost" id="ceCancel">Cancelar</button><button class="btn ghost" id="ceDelete" style="color:var(--danger);border-color:var(--danger)">🗑 Eliminar</button><button class="btn primary" id="ceSave">Guardar</button></div></div>`;
+  document.body.appendChild(ov);
+  const close=()=>ov.remove();
+  ov.querySelector('#ceCancel').addEventListener('click', close);
+  ov.addEventListener('click', e=>{ if(e.target===ov) close(); });
+  ov.querySelector('#ceDelete').addEventListener('click', async ()=>{
+    if(!confirm('¿Eliminar este registro? No se puede deshacer.')) return;
+    CONSULTAS.splice(i,1); await persistConsultas('consultas: eliminar registro'); close(); showToast('Registro eliminado'); renderCuadroMando();
+  });
+  ov.querySelector('#ceSave').addEventListener('click', async ()=>{
+    const agCod=ov.querySelector('#ceAgenda').value;
+    CONSULTAS[i]={ ...r, fecha:ov.querySelector('#ceFecha').value.trim(), hora:ov.querySelector('#ceHora').value.trim(),
+      agenda:agCod, agendaNom:agendaNombre(agCod,''), prestacion:ov.querySelector('#cePrest').value.trim(),
+      medico:ov.querySelector('#ceMedico').value, realizada:ov.querySelector('#ceReal').value, alta:ov.querySelector('#ceAlta').value };
+    await persistConsultas('consultas: editar registro'); close(); showToast('Registro guardado'); renderCuadroMando();
+  });
+}
 let _cmRange=null;   // {desde,hasta} — de serie el MES actual
 function cmMonthRange(d){ const y=d.getFullYear(), m=d.getMonth(), p=n=>String(n).padStart(2,'0'); const last=new Date(y,m+1,0); return {desde:`${y}-${p(m+1)}-01`, hasta:`${y}-${p(m+1)}-${p(last.getDate())}`}; }
 function renderCuadroMando(){
@@ -5328,8 +5408,8 @@ function renderCuadroMando(){
   box.innerHTML=`
     <div class="lib-head"><h2>📊 Cuadro de mando · actividad de consulta</h2></div>
     <div class="sec-note">Registros internos sin datos de pacientes. Importa un PDF de actividad; la columna «Paciente» se tapa antes de procesar y el PDF no se guarda. Duplicados evitados por NREG.</div>
-    <div style="border:1px solid var(--line);border-radius:9px;padding:10px 12px;margin:10px 0">
-      <div style="font-weight:700;font-size:13px;margin-bottom:6px">Importar actividad (PDF)</div>
+    <div id="cmDropzone" style="border:2px dashed var(--line);border-radius:9px;padding:10px 12px;margin:10px 0;transition:border-color .15s,background .15s">
+      <div style="font-weight:700;font-size:13px;margin-bottom:6px">Importar actividad (PDF) <span class="dx-meta" style="font-weight:400">— arrastra el PDF aquí o elige el archivo</span></div>
       <input id="cmFile" type="file" accept="application/pdf">
       <div id="cmImport" style="margin-top:8px"></div>
     </div>
@@ -5370,11 +5450,25 @@ function renderCuadroMando(){
       <div style="margin-top:6px;font-size:12.5px">Total en el rango: <b>${rows.length}</b> · <b>Total acumulado (todas las consultas): ${CONSULTAS.length}</b></div></div>
     <details style="margin-top:8px"><summary class="cart-group-title" style="cursor:pointer">Tabla de registros (${rows.length})</summary>
       <div style="max-height:360px;overflow:auto;margin-top:6px"><table style="width:100%;border-collapse:collapse;font-size:12px">
-        <thead><tr>${['Fecha','Hora','Consulta','Prestación','Médico','Realizada','Alta'].map(h=>`<th style="text-align:left;border-bottom:1px solid var(--line);padding:3px 6px">${h}</th>`).join('')}</tr></thead>
-        <tbody>${rows.slice().sort((a,b)=>(fechaISO(b.fecha)+b.hora).localeCompare(fechaISO(a.fecha)+a.hora)).slice(0,500).map(r=>`<tr>${[r.fecha,r.hora,r.agendaNom||r.agenda,r.prestacion,r.medico,r.realizada,(r.alta==='1'?'En seg.':(r.alta==='0'?'Fin':r.alta))].map(c=>`<td style="border-bottom:1px solid var(--line);padding:3px 6px">${escHtml(c||'')}</td>`).join('')}</tr>`).join('')}</tbody>
+        <thead><tr>${['Fecha','Hora','Consulta','Prestación','Médico','Realizada','Alta',''].map(h=>`<th style="text-align:left;border-bottom:1px solid var(--line);padding:3px 6px">${h}</th>`).join('')}</tr></thead>
+        <tbody>${rows.slice().sort((a,b)=>(fechaISO(b.fecha)+b.hora).localeCompare(fechaISO(a.fecha)+a.hora)).slice(0,500).map(r=>`<tr data-key="${escA(consultaKey(r))}">${[r.fecha,r.hora,r.agendaNom||r.agenda,r.prestacion,r.medico,r.realizada,(r.alta==='1'?'En seg.':(r.alta==='0'?'Fin':r.alta))].map(c=>`<td style="border-bottom:1px solid var(--line);padding:3px 6px">${escHtml(c||'')}</td>`).join('')}<td style="border-bottom:1px solid var(--line);padding:3px 6px;white-space:nowrap"><button class="btn ghost cmEditRow" title="Editar" style="padding:1px 6px;font-size:11px">✎</button> <button class="btn ghost cmDelRow" title="Eliminar" style="padding:1px 6px;font-size:11px">🗑</button></td></tr>`).join('')}</tbody>
       </table></div></details>
     <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" id="cmExport" style="padding:4px 10px;font-size:12px">⬇ Exportar CSV</button><button class="btn ghost" id="cmFixSC" style="padding:4px 10px;font-size:12px">🔧 Corregir médicos «SC»</button></div>`;
   const f=box.querySelector('#cmFile'); if(f) f.addEventListener('change', e=>{ if(e.target.files&&e.target.files[0]) importarActividad(e.target.files[0]); });
+  const dz=box.querySelector('#cmDropzone');
+  if(dz){
+    ['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev, e=>{ e.preventDefault(); e.stopPropagation(); dz.style.borderColor='var(--accent)'; dz.style.background='var(--panel2)'; }));
+    ['dragleave','drop'].forEach(ev=>dz.addEventListener(ev, e=>{ e.preventDefault(); e.stopPropagation(); dz.style.borderColor='var(--line)'; dz.style.background=''; }));
+    dz.addEventListener('drop', e=>{ const file=e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if(file && file.type==='application/pdf') importarActividad(file); else if(file) showToast('Suelta un archivo PDF'); });
+  }
+  box.querySelectorAll('.cmEditRow,.cmDelRow').forEach(b=>b.addEventListener('click', async ()=>{
+    const key=b.closest('tr').dataset.key;
+    if(b.classList.contains('cmDelRow')){
+      if(!confirm('¿Eliminar este registro? No se puede deshacer.')) return;
+      const i=CONSULTAS.findIndex(r=>consultaKey(r)===key); if(i<0) return;
+      CONSULTAS.splice(i,1); await persistConsultas('consultas: eliminar registro'); showToast('Registro eliminado'); renderCuadroMando();
+    } else openEditConsulta(key);
+  }));
   const rerender=()=>renderCuadroMando();
   const dd=box.querySelector('#cmDesde'), hh=box.querySelector('#cmHasta');
   if(dd) dd.addEventListener('change', ()=>{ _cmRange={desde:dd.value, hasta:_cmRange.hasta}; rerender(); });
