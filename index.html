@@ -300,6 +300,13 @@
   .pheno-chip.on{background:var(--chipsel); border-color:var(--chipsel-bd); color:#fff; font-weight:600;}
   .pheno-chip .hp{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:9.5px; color:var(--ink3);}
   .pheno-chip.on .hp{color:#bfe9e2;}
+  /* Carrito de HPO seleccionados como chips (mismo estilo que al seleccionar en otros apartados) */
+  #cartList.cart-chips{display:flex; flex-wrap:wrap; gap:7px;}
+  .cart-chip{font-size:12px; padding:5px 10px; border-radius:999px; background:var(--chipsel); border:1px solid var(--chipsel-bd); color:#fff; display:inline-flex; align-items:center; gap:5px; line-height:1.3;}
+  .cart-chip .hp{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:9.5px; color:#bfe9e2;}
+  .cart-chip .x{cursor:pointer; color:#bfe9e2; font-weight:800; margin-left:2px;}
+  .cart-chip .x:hover{color:#fff;}
+  .cart-chip .warn{color:#ffd27f;}
 
   /* Navegación de secciones */
   .section-nav{display:flex; gap:6px; padding:10px 28px 0; border-bottom:1px solid var(--line); background:rgba(13,17,22,.6);}
@@ -327,7 +334,7 @@
   .prenatal-main{padding-right:22px; min-width:0;}
   .prenatal-aside{min-width:0;}
   @media (max-width:900px){ .prenatal-layout{grid-template-columns:1fr;} .prenatal-main{padding-right:0;} }
-  .cart.cart-full{position:static; top:auto; border-left:none; width:auto; max-width:1080px; margin:0 auto; padding:24px 30px 90px;}
+  .cart.cart-full{position:static; top:auto; border-left:none; width:auto; max-width:none; margin:0; padding:22px 26px 90px;}
   .patient-bar{display:flex; align-items:center; flex-wrap:wrap; gap:14px; padding:9px 30px; border-bottom:1px solid var(--line); background:var(--panel2); font-size:12.5px;}
   .patient-bar .pb-group{display:flex; align-items:center; gap:6px;}
   .patient-bar .pb-l{color:var(--ink3); font-weight:600;}
@@ -466,8 +473,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.34.1';
+const APP_VERSION='1.35.0';
 const CHANGELOG=[
+  {v:'1.35.0', d:'2026-07-03', c:['Pestaña «Fenotipo»: ahora ocupa todo el ancho (fuera el «marco» centrado) y los HPO seleccionados se muestran como CHIPS de colores (misma forma que al seleccionar en otros apartados), en vez de una columna.','Informes de laboratorio: mejorada la extracción de HPO — recorre cada parámetro comparándolo con su rango de referencia, es exhaustivo, ignora rangos/unidades/anotaciones y ya no se trunca en informes largos (más espacio de tokens).']},
   {v:'1.34.1', d:'2026-07-03', c:['Cuadro de mando: los registros ya importados con el médico mal guardado (p. ej. «S.C S») se corrigen automáticamente a «SC» al cargar (y se guardan en tu GitHub). Botón «🔧 Corregir médicos SC» para forzarlo al momento.']},
   {v:'1.34.0', d:'2026-07-02', c:['Antropometría: colores tipo SEMÁFORO por severidad del z (verde dentro de rango, ámbar moderado, rojo marcado) y ahora el perímetro cefálico también sugiere HPO (micro/macrocefalia) en todo el rango 0–18 a.','Diferencial cruzado más laxo: sugiere protocolos que encajan ANTES (con coincidencia parcial, sin esperar a cumplir todos los criterios) y muestra hasta 5, marcando cuáles cumplen y cuáles son parciales.','Fenotipado por protocolo: si varios protocolos encajan con el motivo, se muestran TODOS ordenados por relevancia para elegir (antes abría solo uno).','Ver/imprimir protocolo: los paneles génicos muestran por defecto solo los ASOCIADos (el buscador aparece al escribir).','Buscador HPO: el tooltip de definición ya no se recorta.','Protocolos (normales y prenatales): casilla «Validado» en el editor → muestran un ✓ de validado en la vista y en la lista.','Índice de Beighton: si se cumple el criterio, aparece un chip del HPO para añadir (como en antropometría), en vez del botón «+Añadir HAG» (que estaba siempre y fallaba).']},
   {v:'1.33.0', d:'2026-07-02', c:['Cuadro de mando: nueva gráfica de barras MENSUAL (Ene–Dic) con selector de AÑO, que suma solo las realizadas (SI+URG). Barras apiladas por colores según «Desglosar por» (médico/consulta/prestación/realizada) y filtros multi-selección (consultas, prestaciones, médicos, SI/URG).','Cuadro de mando: por defecto se preselecciona el MES actual, con botones «Mes actual», «Año actual» y «Todo».','Médico sin clasificar (S.C / S.C S.C) se muestra como «SC». Agenda UXPC03 se muestra como «UXPC03 Xenética» (y UXPC04 como «UXPC04 Telefónicas Xenética»).']},
@@ -1400,12 +1408,13 @@ function renderCart(){
   const el=document.getElementById('cartList'); if(!el) return;
   const ids=Object.keys(selections);
   const stat=document.getElementById('statSel'); if(stat) stat.textContent=ids.length;
-  if(!ids.length){ el.innerHTML='<div class="empty">Aún no hay rasgos marcados</div>'; renderDifferential(); renderMonarch(); return; }
+  el.classList.add('cart-chips');
+  if(!ids.length){ el.classList.remove('cart-chips'); el.innerHTML='<div class="empty">Aún no hay rasgos marcados</div>'; renderDifferential(); renderMonarch(); return; }
   el.innerHTML = ids.map(id=>{
     const s=selections[id];
-    const warn = s.verified===false ? '<span class="warn" title="No verificado contra JAX"> ⚠</span>' : '';
+    const warn = s.verified===false ? ' <span class="warn" title="No verificado contra JAX">⚠</span>' : '';
     const fromInforme = /radiolog|laborat|electrofis|informe/i.test(s.origen||'') ? '<span title="Procede de un informe">📄</span> ' : '';
-    return `<div class="cart-item"><div>${fromInforme}${s.es}${infoDotHtml(id)}<span class="region-tag">${id} · ${s.origen||''}${warn}</span></div><span class="x" data-x="${id}" role="button" tabindex="0" aria-label="Quitar ${id}">✕</span></div>`;
+    return `<span class="cart-chip" title="${escA(id+' · '+(s.origen||''))}">${fromInforme}${escHtml(s.es)}${warn} <span class="hp">${id}</span>${infoDotHtml(id)}<span class="x" data-x="${id}" role="button" tabindex="0" aria-label="Quitar ${id}">✕</span></span>`;
   }).join('');
   el.querySelectorAll('.x').forEach(x=>x.addEventListener('click', ()=> removeSelection(x.dataset.x)));
   el.querySelectorAll('.info-dot').forEach(d=>wireInfoDot(d));
@@ -3846,11 +3855,11 @@ async function extraerInforme(tipo){
   try{
     const SYS = {
       radio: 'Extrae SOLO hallazgos ANÓMALOS de un informe de RADIOLOGÍA como términos HPO. Devuelve SOLO JSON {"hallazgos":[{"id":"HP:0000000","nombre":"etiqueta","origen":"frase exacta del informe","ambiguo":false}]}. No incluyas hallazgos normales ni descripciones de normalidad. Usa códigos HPO reales y vigentes.',
-      lab: 'Eres genetista clínico. Extrae SOLO valores ANÓMALOS de un informe de LABORATORIO como términos HPO, interpretando los rangos de referencia según la edad ('+(patient.edad||'no indicada')+') y el sexo ('+(patient.sexo||'no indicado')+') del paciente. NUNCA generes HPO de valores dentro de rango/normales. Devuelve SOLO JSON {"hallazgos":[{"id":"HP:0000000","nombre":"etiqueta","origen":"parámetro y valor de origen","ambiguo":false}]}. Marca ambiguo=true si la interpretación o el rango es incierto. Usa códigos HPO reales y vigentes.',
+      lab: 'Eres genetista clínico experto en interpretar analíticas. Recibes el TEXTO COMPLETO de un informe de LABORATORIO, que puede ser LARGO y contener muchos parámetros —cada uno con su valor, unidad y RANGO DE REFERENCIA— además de cabeceras y anotaciones. Recorre CADA parámetro, compara su valor con SU rango de referencia (el que aparece en el informe; si no lo hay, interpreta según edad ('+(patient.edad||'no indicada')+') y sexo ('+(patient.sexo||'no indicado')+')), y para CADA valor ALTERADO devuelve el término HPO adecuado (elevado → HPO de aumento/elevación; bajo → HPO de descenso/déficit). IGNORA por completo: valores dentro de rango, los propios rangos de referencia, unidades, cabeceras, datos administrativos y anotaciones normales. Sé EXHAUSTIVO: no omitas ningún parámetro alterado. Devuelve SOLO JSON {"hallazgos":[{"id":"HP:0000000","nombre":"etiqueta en español","origen":"parámetro: valor (rango de referencia)","ambiguo":false}]}. Marca ambiguo=true si el rango o la interpretación es incierta. Usa códigos HPO REALES y vigentes (formato HP:0000000); NUNCA inventes un código.',
       electro: 'Eres neurofisiólogo clínico y genetista. Extrae SOLO hallazgos ANÓMALOS de un informe de PRUEBAS ELECTROFISIOLÓGICAS (EEG, EMG, electroneurografía/ENG, estudios de conducción nerviosa, ECG/Holter, potenciales evocados visuales/auditivos/somatosensoriales, electrorretinograma/ERG, electrooculograma) como términos HPO. Interpreta según la edad ('+(patient.edad||'no indicada')+') y el sexo ('+(patient.sexo||'no indicado')+'). NO incluyas hallazgos normales. Devuelve SOLO JSON {"hallazgos":[{"id":"HP:0000000","nombre":"etiqueta","origen":"frase/parámetro de origen","ambiguo":false}]}. Usa códigos HPO reales y vigentes.'
     };
     const system = SYS[tipo];
-    const resp=await callLLM({system, user:texto, webSearch:false, maxTokens:1200, task:'extract'});
+    const resp=await callLLM({system, user:texto, webSearch:false, maxTokens:(tipo==='lab'?4000:1800), task:'extract'});
     const j=extractJSON(resp);
     const hs=(j&&j.hallazgos)||[];
     // Regla dura: verificar contra JAX + reetiquetar babelon; descartar inventados
