@@ -474,8 +474,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.42.3';
+const APP_VERSION='1.42.4';
 const CHANGELOG=[
+  {v:'1.42.4', d:'2026-07-03', c:['Arreglo de fondo (causa real de "captura bien la referencia pero no se guarda"): «Buscar DOI/PMID de las fuentes» tarda varios segundos en responder; capturaba una foto del protocolo al empezar y, al terminar, la volvía a escribir ENTERA — borrando cualquier cambio hecho mientras tanto (otra búsqueda, una edición manual…). Ahora aplica lo encontrado sobre la versión más reciente en vez de sobrescribirla.']},
   {v:'1.42.3', d:'2026-07-03', c:['ReadCube Papers: como Ariadna nunca cambia la URL al navegar (así que una extensión que solo re-escanea al detectar navegación nunca vería el marcador insertado luego), ahora se simula una señal de "navegación" cada vez que se muestra bibliografía, por si la extensión la usa para volver a comprobar la página. Experimental — pendiente de confirmar si hace que aparezca el icono.']},
   {v:'1.42.2', d:'2026-07-03', c:['Arreglo de fondo (probable causa real de "no se guarda"): las lecturas a GitHub no desactivaban la caché del navegador, así que justo después de guardar — o al refrescar la página — el navegador podía devolver una copia ANTIGUA guardada en su caché en vez de pedirla de nuevo, dando la falsa impresión de que los cambios se habían perdido aunque el commit sí se hubiera hecho. Ahora cada lectura fuerza ir siempre a buscar la versión real y actual.']},
   {v:'1.42.1', d:'2026-07-03', c:['Guardar un protocolo ahora COMPRUEBA que el cambio realmente llegó a GitHub antes de decir que ha terminado (relee el archivo y compara). Si no lo confirma, avisa claramente y NO cierra el editor — tus cambios (incluidos DOI/PMID recién encontrados) se quedan ahí para que reintentes, en vez de darse por guardados en falso.']},
@@ -3641,9 +3642,12 @@ function openFichaReview(f, opts){
   async function runFindIds(){
     const j=parse(); if(!j) return;
     const fout=ov.querySelector('#fichaFindIdsOut');
-    const lists=[j.fuentes, j.estudio_genetico&&j.estudio_genetico.fuentes].filter(Array.isArray);
-    const targets=[];   // {list, idx, titulo, url}
-    lists.forEach(list=>list.forEach((f,idx)=>{ if(f && f.titulo && !f.doi && !f.pmid && !f.pmcid) targets.push({list, idx, titulo:f.titulo, url:f.url||''}); }));
+    // "kind" (no una referencia directa al array) porque la búsqueda tarda varios segundos: el usuario puede
+    // seguir editando mientras tanto, así que el resultado se aplicará sobre una lectura FRESCA de ta.value,
+    // no sobre esta foto inicial (si no, al terminar se pisaría cualquier cambio hecho durante la espera).
+    const kinds=[['fuentes', j.fuentes], ['eg', j.estudio_genetico&&j.estudio_genetico.fuentes]];
+    const targets=[];   // {kind, idx, titulo, url}
+    kinds.forEach(([kind,list])=>{ if(Array.isArray(list)) list.forEach((f,idx)=>{ if(f && f.titulo && !f.doi && !f.pmid && !f.pmcid) targets.push({kind, idx, titulo:f.titulo, url:f.url||''}); }); });
     if(!targets.length){ fout.className='test-out ok'; fout.textContent='Todas las fuentes con título ya tienen DOI/PMID/PMCID (o no hay fuentes).'; return; }
     if(!anyProvider()){ fout.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
     fout.className='test-out'; fout.textContent='Buscando DOI/PMID/PMCID de '+targets.length+' referencia(s)…';
@@ -3653,17 +3657,22 @@ function openFichaReview(f, opts){
       const resp=await callLLM({system, user, webSearch:true, maxTokens:2000, task:'eval'});
       const j2=extractJSON(resp);
       const results=(j2&&j2.resultados)||[];
+      // Relee ta.value FRESCO ahora que la búsqueda terminó — puede haber cambiado mientras esperábamos.
+      const jj=feModel();
+      if(!jj){ fout.className='test-out bad'; fout.textContent='El JSON dejó de ser válido mientras se buscaba — no se aplicaron los resultados. Corrígelo y reintenta.'; return; }
       let found=0;
       results.forEach((r,i)=>{
         const idx1 = (Number.isFinite(+r.index) && +r.index>=1) ? (+r.index-1) : i;
         const t=targets[idx1]; if(!t) return;
-        const f=t.list[t.idx]; let hit=false;
+        const list = t.kind==='eg' ? (jj.estudio_genetico && jj.estudio_genetico.fuentes) : jj.fuentes;
+        const f = list && list[t.idx]; if(!f) return;
+        let hit=false;
         if(r.doi){ f.doi=String(r.doi).trim(); hit=true; }
         if(r.pmid){ f.pmid=String(r.pmid).trim(); hit=true; }
         if(r.pmcid){ f.pmcid=String(r.pmcid).trim(); hit=true; }
         if(hit) found++;
       });
-      ta.value=JSON.stringify(j,null,2); renderPrev(); renderFuentes();   // refresca también el editor visual de referencias (si no, sus campos quedan desfasados y una edición posterior los sobrescribiría con el valor viejo)
+      ta.value=JSON.stringify(jj,null,2); renderPrev(); renderFuentes();   // refresca también el editor visual de referencias (si no, sus campos quedan desfasados y una edición posterior los sobrescribiría con el valor viejo)
       fout.className='test-out ok';
       fout.innerHTML='✓ Encontrado(s) identificador(es) para <b>'+found+'</b> de '+targets.length+' referencia(s) sin DOI/PMID/PMCID. Revisa el JSON y pulsa «Guardar y commitear» para conservarlos.';
     }catch(e){ fout.className='test-out bad'; fout.textContent='Error al buscar: '+e.message; }
