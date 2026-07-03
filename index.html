@@ -474,8 +474,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.42.0';
+const APP_VERSION='1.42.1';
 const CHANGELOG=[
+  {v:'1.42.1', d:'2026-07-03', c:['Guardar un protocolo ahora COMPRUEBA que el cambio realmente llegó a GitHub antes de decir que ha terminado (relee el archivo y compara). Si no lo confirma, avisa claramente y NO cierra el editor — tus cambios (incluidos DOI/PMID recién encontrados) se quedan ahí para que reintentes, en vez de darse por guardados en falso.']},
   {v:'1.42.0', d:'2026-07-03', c:[
     'Arreglo importante (pérdida de datos): tras «Buscar DOI/PMID», «Editar con IA», «Aplicar guía» o «Corregir HPO automáticamente», el editor visual de referencias/formulario no se refrescaba — si luego tocabas cualquier campo, se sobrescribía en silencio con el valor vacío que se veía en pantalla y eso es lo que se guardaba. Ahora todos esos flujos refrescan el editor visual correctamente.',
     'Resaltado bidireccional arreglado: seleccionar una palabra en el editor visual ahora sí desplaza el JSON hasta mostrarla (antes solo funcionaba en el sentido JSON→editor).',
@@ -1256,6 +1257,20 @@ async function getFicha(id){
     catch(e){ console.warn('getFicha → caché', e.message); }
   }
   try{ return JSON.parse(localStorage.getItem('fh_ficha_'+id)); }catch(e){ return null; }
+}
+/* Comprueba que el guardado de una ficha REALMENTE llegó a GitHub (compara rev + fuentes, donde viven doi/pmid/pmcid).
+   Ignora la caché de sha (fuerza lectura fresca) y da un margen a la posible latencia de GitHub antes de darlo por fallido. */
+async function verifyFichaSaved(j){
+  const path='fichas/'+j.id+'.json';
+  for(let attempt=0; attempt<2; attempt++){
+    if(attempt>0) await new Promise(r=>setTimeout(r,900));
+    try{
+      delete _shaCache[path];
+      const fresh=await ghGetFile(path);
+      if(fresh && fresh.json && fresh.json.rev===j.rev && JSON.stringify(fresh.json.fuentes||[])===JSON.stringify(j.fuentes||[])) return true;
+    }catch(e){ return true; }   // fallo de RED al verificar (no del guardado) → no bloquees un guardado que probablemente sí funcionó
+  }
+  return false;
 }
 async function saveFicha(ficha){
   _fichaRefSet=null; _fichaDxIndex=null; // referencias e índice de diferencial cruzado pueden haber cambiado
@@ -3679,6 +3694,15 @@ function openFichaReview(f, opts){
       j.modulos.antropometria = !!(ov.querySelector('#fichaModAntro')||{}).checked;
       bumpFichaRev(j, (ov.querySelector('#fichaNota')||{}).value||'');   // sube rev + changelog + copia de seguridad local
       const mode=await persistFicha(j);
+      if(mode==='commit'){
+        out.textContent='Confirmando en GitHub…';
+        const ok=await verifyFichaSaved(j);
+        if(!ok){
+          out.className='test-out bad';
+          out.textContent='⚠ El guardado no se pudo confirmar en GitHub (puede que no haya llegado). Tus cambios NO se han perdido — siguen aquí; pulsa «Guardar y commitear» para reintentarlo.';
+          return;   // no cerrar: conserva el editor con los datos intactos para reintentar
+        }
+      }
       close();
       const savedMsg='Protocolo guardado'+(mode==='commit'?' y commiteado a GitHub':' (caché local · GitHub sin configurar)');
       if(opts.origin==='biblioteca'){
