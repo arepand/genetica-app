@@ -474,8 +474,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.40.3';
+const APP_VERSION='1.41.0';
 const CHANGELOG=[
+  {v:'1.41.0', d:'2026-07-03', c:['Editor de protocolo: nueva sección «📚 Referencias bibliográficas» — edita título, URL, año, DOI, PMID y PMCID de cada fuente con campos normales (sin tocar el JSON), y añade o elimina referencias con un clic.']},
   {v:'1.40.3', d:'2026-07-03', c:['Arreglo importante: el "Error al guardar: The quota has been exceeded" NO era de GitHub — era el navegador (localStorage lleno de copias de seguridad locales) rompiendo el guardado DESPUÉS de que el commit a GitHub ya hubiera funcionado. Ahora esa caché local nunca bloquea el guardado, y las copias de seguridad de protocolos/síndromes prenatales ocupan menos sitio (8 versiones en vez de 20).']},
   {v:'1.40.2', d:'2026-07-03', c:['Menos llamadas a la API de GitHub al guardar protocolos (para evitar el "quota exceeded"/límite de ráfaga): reutiliza el "sha" ya conocido en vez de pedirlo de nuevo, y el índice de protocolos solo se lee/escribe si realmente cambió el nombre/sinónimos/población/validado (la mayoría de guardados no lo tocan).']},
   {v:'1.40.1', d:'2026-07-03', c:['Arreglo: "Error al guardar: GitHub PUT 409" (sha desfasado por una escritura reciente al mismo fichero) ya no bloquea el guardado — reintenta automáticamente una vez con el sha actual antes de fallar.']},
@@ -3231,6 +3232,11 @@ function openFichaReview(f, opts){
       <div id="formEditor" style="border:1px solid var(--line); border-radius:9px; padding:10px 12px; margin-top:6px; max-height:360px; overflow:auto"></div>
     </details>
 
+    <details id="fuDetails" style="margin-top:10px"><summary class="cart-group-title" style="cursor:pointer">📚 Referencias bibliográficas — sin tocar JSON</summary>
+      <div class="msub" style="margin-top:4px">Título, URL, año y, si los conoces, DOI/PMID/PMCID (activan el marcador de ReadCube Papers). Basta con uno de los tres identificadores.</div>
+      <div id="fuentesEditor" style="border:1px solid var(--line); border-radius:9px; padding:10px 12px; margin-top:6px; max-height:360px; overflow:auto"></div>
+    </details>
+
     <div style="border:1px solid var(--line); border-radius:9px; padding:10px 12px; margin-top:12px; background:var(--panel2)">
       <div style="font-size:12px; font-weight:700; color:var(--accent); margin-bottom:6px">📎 Aplicar una guía a esta ficha (opcional) + re-buscar</div>
       <div class="field" style="margin:0 0 8px"><label>URL de la guía</label><input id="revGuiaUrl" type="text" placeholder="https://…" autocomplete="off"></div>
@@ -3279,7 +3285,7 @@ function openFichaReview(f, opts){
   const prev=ov.querySelector('#fichaPreview');
   const renderPrev=()=>{ if(!prev) return; let j=null; try{ j=JSON.parse(ta.value); }catch(e){} prev.innerHTML=fichaPreviewHtml(j); annotateHpoChips(prev); };
   renderPrev();
-  let _pvT=null; ta.addEventListener('input', ()=>{ clearTimeout(_pvT); _pvT=setTimeout(()=>{ renderPrev(); if(feDet && feDet.open && !ov.querySelector('#formEditor .hp-fix-pop')) renderForm(); }, 300); });
+  let _pvT=null; ta.addEventListener('input', ()=>{ clearTimeout(_pvT); _pvT=setTimeout(()=>{ renderPrev(); if(feDet && feDet.open && !ov.querySelector('#formEditor .hp-fix-pop')) renderForm(); if(fuDet && fuDet.open) renderFuentes(); }, 300); });
   // Clic en un chip HPO del preview → abre el buscador AJAX para verificar/corregir el código
   if(prev) prev.addEventListener('click', e=>{ if(e.target.closest('.hp-fix-pop')) return; const chip=e.target.closest('.hp-chip'); if(chip && prev.contains(chip)) toggleHpoFixPop(chip); });
 
@@ -3359,8 +3365,53 @@ function openFichaReview(f, opts){
     });
   }
 
+  // ---- Editor visual de referencias bibliográficas (fuentes): título/url/año/doi/pmid/pmcid, sin tocar JSON ----
+  const fubox=ov.querySelector('#fuentesEditor'), fuDet=ov.querySelector('#fuDetails');
+  const fuWrite=(j, rerender)=>{ ta.value=JSON.stringify(j,null,2); renderPrev(); if(rerender) renderFuentes(); };
+  function renderFuentes(){
+    if(!fubox) return;
+    const j=feModel();
+    if(!j){ fubox.innerHTML='<div class="dx-meta">El JSON no es válido ahora mismo — corrígelo para editar las referencias.</div>'; return; }
+    const fu=j.fuentes||[];
+    fubox.innerHTML=(fu.length?fu.map((s,fi)=>`
+      <div style="border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0">
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:5px">
+          <input class="fe-i" data-fu="tit" data-fi="${fi}" value="${A(s.titulo)}" placeholder="Título" style="flex:1;font-weight:600;${feIn}">
+          <button class="btn ghost" data-fu="del" data-fi="${fi}" title="Eliminar referencia" style="${feBtn}">🗑</button>
+        </div>
+        <input class="fe-i" data-fu="url" data-fi="${fi}" value="${A(s.url)}" placeholder="URL (https://…)" style="width:100%;box-sizing:border-box;margin-bottom:5px;${feIn}">
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <input class="fe-i" data-fu="anio" data-fi="${fi}" value="${A(s.anio)}" placeholder="Año" style="width:64px;${feIn}">
+          <input class="fe-i" data-fu="doi" data-fi="${fi}" value="${A(s.doi)}" placeholder="DOI (10.xxxx)" style="flex:1;min-width:130px;${feIn}">
+          <input class="fe-i" data-fu="pmid" data-fi="${fi}" value="${A(s.pmid)}" placeholder="PMID" style="width:100px;${feIn}">
+          <input class="fe-i" data-fu="pmcid" data-fi="${fi}" value="${A(s.pmcid)}" placeholder="PMCID" style="width:110px;${feIn}">
+        </div>
+      </div>`).join(''):'<div class="dx-meta" style="margin-bottom:6px">Sin referencias todavía.</div>')
+      +`<button class="btn ghost" data-fu="add" style="${feBtn};margin-top:4px">+ referencia</button>`;
+  }
+  renderFuentes();
+  if(fuDet) fuDet.addEventListener('toggle', ()=>{ if(fuDet.open) renderFuentes(); });
+  if(fubox){
+    const FU_MAP={tit:'titulo', url:'url', anio:'anio', doi:'doi', pmid:'pmid', pmcid:'pmcid'};
+    fubox.addEventListener('input', e=>{
+      const el=e.target.closest('[data-fu]'); if(!el) return; const fu=el.dataset.fu;
+      if(!FU_MAP[fu]) return;
+      const j=feModel(); if(!j || !Array.isArray(j.fuentes)) return;
+      j.fuentes[+el.dataset.fi][FU_MAP[fu]]=el.value;
+      fuWrite(j, false); // no re-render: conserva el foco mientras se teclea
+    });
+    fubox.addEventListener('click', e=>{
+      const b=e.target.closest('[data-fu]'); if(!b) return; const fu=b.dataset.fu;
+      if(FU_MAP[fu]) return;
+      const j=feModel(); if(!j){ showToast('Corrige el JSON antes de editar las referencias'); return; }
+      if(!Array.isArray(j.fuentes)) j.fuentes=[];
+      if(fu==='add'){ j.fuentes.push({titulo:'', url:'', anio:''}); fuWrite(j,true); }
+      else if(fu==='del'){ j.fuentes.splice(+b.dataset.fi,1); fuWrite(j,true); }
+    });
+  }
+
   // ---- Resaltado enlazado: seleccionar texto en el JSON resalta la parte correspondiente en la vista previa y el editor visual, y viceversa ----
-  const linkScopes=()=>[prev, fbox].filter(Boolean);
+  const linkScopes=()=>[prev, fbox, fubox].filter(Boolean);
   const linkClear=()=>ov.querySelectorAll('.link-hl').forEach(e=>e.classList.remove('link-hl'));
   const linkNorm=s=>(s||'').replace(/^[\s"',:]+|[\s"',:]+$/g,'').trim();  // limpia comillas/comas del JSON
   function highlightInViews(text){
