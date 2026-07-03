@@ -474,8 +474,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.40.1';
+const APP_VERSION='1.40.2';
 const CHANGELOG=[
+  {v:'1.40.2', d:'2026-07-03', c:['Menos llamadas a la API de GitHub al guardar protocolos (para evitar el "quota exceeded"/límite de ráfaga): reutiliza el "sha" ya conocido en vez de pedirlo de nuevo, y el índice de protocolos solo se lee/escribe si realmente cambió el nombre/sinónimos/población/validado (la mayoría de guardados no lo tocan).']},
   {v:'1.40.1', d:'2026-07-03', c:['Arreglo: "Error al guardar: GitHub PUT 409" (sha desfasado por una escritura reciente al mismo fichero) ya no bloquea el guardado — reintenta automáticamente una vez con el sha actual antes de fallar.']},
   {v:'1.40.0', d:'2026-07-03', c:['Editor de protocolo: nuevo botón «🔗 Buscar DOI/PMID de las fuentes» — busca con IA (web) el DOI/PMID/PMCID de las referencias que aún no lo tienen (solo los añade si encuentra una coincidencia segura, nunca los inventa) y los deja listos en el JSON para guardar. Útil para activar el marcador de ReadCube Papers en protocolos ya existentes.']},
   {v:'1.39.0', d:'2026-07-03', c:['Marcador ReadCube Papers: además del DOI, ahora también reconoce PMID y PMCID (los tres identificadores que usa realmente la extensión, confirmado inspeccionando su código) — detectados automáticamente en URLs de PubMed/PMC o pedidos a la IA al crear/actualizar protocolos, así que también funciona con referencias que no tienen DOI.']},
@@ -1191,34 +1192,43 @@ function b64DecodeUnicode(str){ return decodeURIComponent(escape(atob((str||'').
 function ghBase(){ const c=loadCfg(); return `https://api.github.com/repos/${c.gh_owner}/${c.gh_repo}/contents/`; }
 function ghHeaders(){ const c=loadCfg(); return {Authorization:'Bearer '+c.gh_pat, Accept:'application/vnd.github+json'}; }
 function ghConfigured(){ const c=loadCfg(); return !!(c.gh_owner && c.gh_repo && c.gh_pat); }
+/* Caché en memoria de "sha" por ruta: si ya la leímos o escribimos hace un momento, reutilizamos el sha
+   conocido en vez de pedirlo de nuevo — ahorra llamadas a la API de GitHub (evita el límite de ráfaga). */
+let _shaCache={};
 
 async function ghGetFile(path){
   const c=loadCfg();
   const url = ghBase()+path+'?ref='+encodeURIComponent(c.gh_branch||'main');
   const r = await fetch(url, {headers:ghHeaders()});
-  if(r.status===404) return {json:null, sha:null, missing:true};
+  if(r.status===404){ _shaCache[path]=null; return {json:null, sha:null, missing:true}; }
   if(!r.ok) throw new Error('GitHub GET '+r.status);
   const d = await r.json();
   const text = b64DecodeUnicode(d.content||'');
   let json=null; try{ json=JSON.parse(text); }catch(e){}
+  _shaCache[path]=d.sha;
   return {json, sha:d.sha, raw:text};
 }
+/* sha: pásalo explícitamente (incl. null si es archivo nuevo) para forzarlo; OMÍTELO (undefined) para
+   reutilizar el último sha conocido de este "path" (de una lectura/escritura reciente) sin pedirlo de nuevo. */
 async function ghPutFile(path, obj, message, sha, _retried){
   const c=loadCfg();
+  const useSha = (sha!==undefined) ? sha : _shaCache[path];
   const body = { message: message||('update '+path), content: b64EncodeUnicode(JSON.stringify(obj,null,2)), branch: c.gh_branch||'main' };
-  if(sha) body.sha = sha;
+  if(useSha) body.sha = useSha;
   const r = await fetch(ghBase()+path, {
     method:'PUT',
     headers: Object.assign({}, ghHeaders(), {'Content-Type':'application/json'}),
     body: JSON.stringify(body)
   });
-  // 409 = el "sha" quedó desfasado (el archivo cambió justo antes, p. ej. por otro guardado tuyo muy reciente).
-  // Reintenta UNA vez con el sha actual antes de rendirte — evita el "no me deja guardar" por una condición de carrera benigna.
+  // 409 = el "sha" quedó desfasado (el archivo cambió justo antes, p. ej. por otro guardado tuyo muy reciente,
+  // o por confiar en un sha cacheado que ya no es el actual). Reintenta UNA vez con el sha fresco antes de rendirte.
   if(r.status===409 && !_retried){
     try{ const fresh=await ghGetFile(path); return await ghPutFile(path, obj, message, fresh.sha, true); }catch(e){}
   }
   if(!r.ok){ const t=await r.text(); throw new Error('GitHub PUT '+r.status+' '+t); }
-  return r.json();
+  const d=await r.json();
+  try{ if(d && d.content && d.content.sha) _shaCache[path]=d.content.sha; }catch(e){}
+  return d;
 }
 
 /* ---- Librería de fichas (índice + fichas) con caché localStorage ---- */
@@ -1240,19 +1250,25 @@ async function getFicha(id){
 }
 async function saveFicha(ficha){
   _fichaRefSet=null; _fichaDxIndex=null; // referencias e índice de diferencial cruzado pueden haber cambiado
-  // 1) sha actual de la ficha (si existe) y PUT de la ficha
-  let sha=null;
-  try{ const cur=await ghGetFile('fichas/'+ficha.id+'.json'); sha=cur.sha; }catch(e){}
-  await ghPutFile('fichas/'+ficha.id+'.json', ficha, 'ficha: '+ficha.id, sha);
-  // 2) actualizar index.json (añadir/editar {id, nombre, sinonimos})
-  let idx, idxSha=null;
-  try{ const ci=await ghGetFile('fichas/index.json'); idx=ci.json||{fichas:[]}; idxSha=ci.sha; }
-  catch(e){ idx=cachedIndex()||{fichas:[]}; }
-  if(!idx.fichas) idx.fichas=[];
+  // 1) PUT de la ficha — reutiliza el sha ya conocido (p. ej. de cuando se abrió el editor) si lo tenemos;
+  //    si no, lo pide (y si ese sha quedase desfasado, ghPutFile ya reintenta solo). Ahorra 1 llamada.
+  const fpath='fichas/'+ficha.id+'.json';
+  if(_shaCache[fpath]===undefined){ try{ await ghGetFile(fpath); }catch(e){} }
+  await ghPutFile(fpath, ficha, 'ficha: '+ficha.id);
+  // 2) index.json: solo se lee/escribe si la entrada (nombre/sinónimos/población/grupo/validado) REALMENTE
+  //    cambió — la mayoría de guardados (editar dominios, entidades, añadir DOI…) no la tocan. Ahorra 2 llamadas.
   const entry={id:ficha.id, nombre:ficha.nombre_es, sinonimos:ficha.sinonimos||[], poblacion:ficha.poblacion||'unica', grupo:ficha.grupo||null, validado:!!ficha.validado};
-  const i=idx.fichas.findIndex(f=>f.id===ficha.id);
-  if(i>=0) idx.fichas[i]=entry; else idx.fichas.push(entry);
-  await ghPutFile('fichas/index.json', idx, 'index: '+ficha.id, idxSha);
+  let idx=cachedIndex()||{fichas:[]}; if(!idx.fichas) idx.fichas=[];
+  const iLocal=idx.fichas.findIndex(f=>f.id===ficha.id);
+  const changed = iLocal<0 || JSON.stringify(idx.fichas[iLocal])!==JSON.stringify(entry);
+  if(changed){
+    const ipath='fichas/index.json';
+    try{ const ci=await ghGetFile(ipath); idx=ci.json||idx; }catch(e){}
+    if(!idx.fichas) idx.fichas=[];
+    const i=idx.fichas.findIndex(f=>f.id===ficha.id);
+    if(i>=0) idx.fichas[i]=entry; else idx.fichas.push(entry);
+    await ghPutFile(ipath, idx, 'index: '+ficha.id);
+  } else if(iLocal>=0){ idx.fichas[iLocal]=entry; }
   cacheIndex(idx);
   localStorage.setItem('fh_ficha_'+ficha.id, JSON.stringify(ficha));
   return idx;
