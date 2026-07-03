@@ -474,8 +474,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.42.1';
+const APP_VERSION='1.42.2';
 const CHANGELOG=[
+  {v:'1.42.2', d:'2026-07-03', c:['Arreglo de fondo (probable causa real de "no se guarda"): las lecturas a GitHub no desactivaban la caché del navegador, así que justo después de guardar — o al refrescar la página — el navegador podía devolver una copia ANTIGUA guardada en su caché en vez de pedirla de nuevo, dando la falsa impresión de que los cambios se habían perdido aunque el commit sí se hubiera hecho. Ahora cada lectura fuerza ir siempre a buscar la versión real y actual.']},
   {v:'1.42.1', d:'2026-07-03', c:['Guardar un protocolo ahora COMPRUEBA que el cambio realmente llegó a GitHub antes de decir que ha terminado (relee el archivo y compara). Si no lo confirma, avisa claramente y NO cierra el editor — tus cambios (incluidos DOI/PMID recién encontrados) se quedan ahí para que reintentes, en vez de darse por guardados en falso.']},
   {v:'1.42.0', d:'2026-07-03', c:[
     'Arreglo importante (pérdida de datos): tras «Buscar DOI/PMID», «Editar con IA», «Aplicar guía» o «Corregir HPO automáticamente», el editor visual de referencias/formulario no se refrescaba — si luego tocabas cualquier campo, se sobrescribía en silencio con el valor vacío que se veía en pantalla y eso es lo que se guardaba. Ahora todos esos flujos refrescan el editor visual correctamente.',
@@ -1209,7 +1210,10 @@ let _shaCache={};
 async function ghGetFile(path){
   const c=loadCfg();
   const url = ghBase()+path+'?ref='+encodeURIComponent(c.gh_branch||'main');
-  const r = await fetch(url, {headers:ghHeaders()});
+  // cache:'no-store' — la API de GitHub manda cabeceras cacheables; sin esto el navegador puede servir una
+  // respuesta ANTIGUA (de antes de guardar) tanto justo después de un PUT como tras recargar la página,
+  // haciendo parecer que un guardado no llegó cuando en realidad sí lo hizo.
+  const r = await fetch(url, {headers:ghHeaders(), cache:'no-store'});
   if(r.status===404){ _shaCache[path]=null; return {json:null, sha:null, missing:true}; }
   if(!r.ok) throw new Error('GitHub GET '+r.status);
   const d = await r.json();
@@ -1277,7 +1281,7 @@ async function saveFicha(ficha){
   // 1) PUT de la ficha — reutiliza el sha ya conocido (p. ej. de cuando se abrió el editor) si lo tenemos;
   //    si no, lo pide (y si ese sha quedase desfasado, ghPutFile ya reintenta solo). Ahorra 1 llamada.
   const fpath='fichas/'+ficha.id+'.json';
-  if(_shaCache[fpath]===undefined){ try{ await ghGetFile(fpath); }catch(e){} }
+  if(_shaCache[fpath]==null){ try{ await ghGetFile(fpath); }catch(e){} }   // undefined o null (404 previo desfasado): repite la lectura para no perder el sha real
   await ghPutFile(fpath, ficha, 'ficha: '+ficha.id);
   // 2) index.json: solo se lee/escribe si la entrada (nombre/sinónimos/población/grupo/validado) REALMENTE
   //    cambió — la mayoría de guardados (editar dominios, entidades, añadir DOI…) no la tocan. Ahorra 2 llamadas.
