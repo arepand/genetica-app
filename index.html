@@ -474,8 +474,15 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.41.0';
+const APP_VERSION='1.42.0';
 const CHANGELOG=[
+  {v:'1.42.0', d:'2026-07-03', c:[
+    'Arreglo importante (pérdida de datos): tras «Buscar DOI/PMID», «Editar con IA», «Aplicar guía» o «Corregir HPO automáticamente», el editor visual de referencias/formulario no se refrescaba — si luego tocabas cualquier campo, se sobrescribía en silencio con el valor vacío que se veía en pantalla y eso es lo que se guardaba. Ahora todos esos flujos refrescan el editor visual correctamente.',
+    'Resaltado bidireccional arreglado: seleccionar una palabra en el editor visual ahora sí desplaza el JSON hasta mostrarla (antes solo funcionaba en el sentido JSON→editor).',
+    'Nuevo editor visual «🎯 Diferencial y criterios (entidades)»: nombre, genes, umbral (≥mayores/≥menores, Y/O) y los HPO mayores/menores de cada entidad, con buscador — añade o quita entidades y términos sin tocar el JSON.',
+    'Editor de referencias: botón 🔍 en cada fila para buscar el DOI/PMID/PMCID de esa fuente en concreto (además del botón que busca todas a la vez).',
+    'Terminología: "ficha" pasa a llamarse "protocolo" en gran parte de la interfaz (botones, mensajes, editor).'
+  ]},
   {v:'1.41.0', d:'2026-07-03', c:['Editor de protocolo: nueva sección «📚 Referencias bibliográficas» — edita título, URL, año, DOI, PMID y PMCID de cada fuente con campos normales (sin tocar el JSON), y añade o elimina referencias con un clic.']},
   {v:'1.40.3', d:'2026-07-03', c:['Arreglo importante: el "Error al guardar: The quota has been exceeded" NO era de GitHub — era el navegador (localStorage lleno de copias de seguridad locales) rompiendo el guardado DESPUÉS de que el commit a GitHub ya hubiera funcionado. Ahora esa caché local nunca bloquea el guardado, y las copias de seguridad de protocolos/síndromes prenatales ocupan menos sitio (8 versiones en vez de 20).']},
   {v:'1.40.2', d:'2026-07-03', c:['Menos llamadas a la API de GitHub al guardar protocolos (para evitar el "quota exceeded"/límite de ráfaga): reutiliza el "sha" ya conocido en vez de pedirlo de nuevo, y el índice de protocolos solo se lee/escribe si realmente cambió el nombre/sinónimos/población/validado (la mayoría de guardados no lo tocan).']},
@@ -1734,7 +1741,7 @@ function openSettings(){
       </div>
     </details>
 
-    <h3>Almacén GitHub (librería de fichas)</h3>
+    <h3>Almacén GitHub (librería de protocolos)</h3>
     <div class="field"><label>Owner (usuario u organización)</label>
       <input id="cfgOwner" type="text" value="${c.gh_owner||''}" placeholder="tu-usuario" autocomplete="off"></div>
     <div class="field"><label>Repositorio</label>
@@ -1926,12 +1933,12 @@ function renderInicio(){
   const main=document.getElementById('main'); if(!main) return;
   main.innerHTML = `
     <div class="step-title">Inicio</div>
-    <div class="step-sub">Motivo de consulta. La edad y el sexo se introducen en la barra superior. La ficha asignada dirigirá la anamnesis.</div>
+    <div class="step-sub">Motivo de consulta. La edad y el sexo se introducen en la barra superior. El protocolo asignado dirigirá la anamnesis.</div>
     <div style="max-width:560px">
       <div class="field"><label>Motivo de consulta</label>
         <input id="inMotivo" type="text" value="${(patient.motivo||'').replace(/"/g,'&quot;')}" placeholder='p. ej. "conectivopatía", "síndrome autoinflamatorio", "trombopenia crónica"'>
       </div>
-      <button class="btn primary" id="btnAbrirFicha" style="margin-top:8px">Abrir ficha ›</button>
+      <button class="btn primary" id="btnAbrirFicha" style="margin-top:8px">Abrir protocolo ›</button>
     </div>
     <div id="fichaFlow" style="margin-top:22px"></div>`;
 
@@ -1964,18 +1971,18 @@ async function openFichaFlow(){
   if(res.id){
     const ficha = await getFicha(res.id);
     if(ficha){ setActiveFicha(ficha, res, fichas); return; }
-    box.innerHTML='<div class="err">La ficha "'+res.id+'" está en el índice pero no se pudo cargar (red/caché).</div>';
+    box.innerHTML='<div class="err">El protocolo "'+res.id+'" está en el índice pero no se pudo cargar (red/caché).</div>';
     return;
   }
   // Sin match → ofrecer crear o elegir manualmente
   const viaTxt = res.via==='vacio' ? 'Tu librería está vacía.' :
-                 res.via==='llm' ? 'La IA no encontró una ficha que encaje con confianza.' :
+                 res.via==='llm' ? 'La IA no encontró un protocolo que encaje con confianza.' :
                  'No hay coincidencia clara en tu librería.';
   box.innerHTML = `
     <div class="placeholder">
-      <b>Sin ficha asignada.</b> ${viaTxt}<br><br>
-      <button class="btn primary" id="btnCrearFicha">✨ Generar ficha con IA</button>
-      <label class="btn" for="btnImportFicha" style="margin-left:8px">⬆ Importar ficha .json</label>
+      <b>Sin protocolo asignado.</b> ${viaTxt}<br><br>
+      <button class="btn primary" id="btnCrearFicha">✨ Generar protocolo con IA</button>
+      <label class="btn" for="btnImportFicha" style="margin-left:8px">⬆ Importar protocolo .json</label>
       <input id="btnImportFicha" type="file" accept="application/json,.json" style="display:none">
       ${fichas.length?`<div style="margin-top:14px">${fichaSelectorHtml(fichas,'')}</div>`:''}
     </div>`;
@@ -1991,19 +1998,19 @@ async function importFicha(file){
   try{
     const f = JSON.parse(await file.text());
     const errs = validateFicha(f);
-    if(errs.length){ showToast('Ficha inválida: '+errs.join(' · ')); return; }
+    if(errs.length){ showToast('Protocolo inválido: '+errs.join(' · ')); return; }
     const mode = await persistFicha(f);
     renderInicio();
     const idx = await getIndex();
     setActiveFicha(f, {via:'manual', confianza:1}, idx.fichas||[]);
-    showToast('Ficha importada'+(mode==='commit'?' y commiteada':' (caché local)'));
+    showToast('Protocolo importado'+(mode==='commit'?' y commiteado':' (caché local)'));
   }catch(e){ showToast('No se pudo importar: '+e.message); }
 }
 
 function fichaSelectorHtml(fichas, current){
   return `<label style="font-size:12px; color:var(--ink3)">…o elige manualmente:</label>
     <select id="fichaPick" style="margin-top:6px; width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink)">
-      <option value="">— seleccionar ficha —</option>
+      <option value="">— seleccionar protocolo —</option>
       ${fichas.map(f=>`<option value="${f.id}" ${f.id===current?'selected':''}>${f.nombre||f.id}</option>`).join('')}
     </select>`;
 }
@@ -2013,7 +2020,7 @@ function wireFichaSelector(scope, fichas){
     if(!sel.value) return;
     const ficha=await getFicha(sel.value);
     if(ficha) setActiveFicha(ficha, {via:'manual', confianza:1}, fichas);
-    else showToast('No se pudo cargar la ficha');
+    else showToast('No se pudo cargar el protocolo');
   });
 }
 
@@ -2044,8 +2051,8 @@ function setActiveFicha(ficha, res, fichas){
       ${fuentes?`<div style="margin-top:10px; font-size:11px; color:var(--ink3)">Fuentes: ${fuentes}</div>`:''}
       <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap">
         <button class="btn primary" id="btnAnamnesis">Comenzar anamnesis ›</button>
-        <button class="btn ghost" id="btnCambiarFicha">Cambiar ficha</button>
-        <button class="btn ghost" id="btnNuevaIA">+ Nueva ficha (IA)</button>
+        <button class="btn ghost" id="btnCambiarFicha">Cambiar protocolo</button>
+        <button class="btn ghost" id="btnNuevaIA">+ Nuevo protocolo (IA)</button>
       </div>
       <div id="fichaFreshness" style="margin-top:12px"></div>
     </div>`;
@@ -2462,7 +2469,7 @@ function renderAnamnesis(){
   main.innerHTML = `
     <div class="step-title">${f.nombre_es||f.id}</div>
     <div class="step-sub">Anamnesis dirigida · marca lo presente · cada respuesta añade HPO verificados (panel derecho). Orden HPO preservado.</div>
-    ${domsHtml||'<div class="placeholder">Esta ficha no tiene dominios/preguntas.</div>'}
+    ${domsHtml||'<div class="placeholder">Este protocolo no tiene dominios/preguntas.</div>'}
     ${(f.modulos&&f.modulos.beighton && !(f.modulos&&f.modulos.antropometria))?beightonHtml():''}
     ${(f.modulos&&f.modulos.antropometria)?antropometriaHtml():''}
     <details class="deepen">
@@ -2644,7 +2651,7 @@ async function openValidarHpo(f){
   const ov=document.createElement('div'); ov.className='overlay'; ov.id='validarHpoOverlay';
   ov.innerHTML=`<div class="modal" role="dialog" aria-label="Validar HPO" style="max-width:680px">
     <h2>🔧 Validar y corregir HPO</h2>
-    <div class="msub">Comprueba cada código HPO de la ficha contra HPO/JAX y propone correcciones para los inválidos (re-busca por la etiqueta).</div>
+    <div class="msub">Comprueba cada código HPO del protocolo contra HPO/JAX y propone correcciones para los inválidos (re-busca por la etiqueta).</div>
     <div id="valOut"><div class="loading">Validando códigos HPO…</div></div>
     <div class="modal-actions"><button class="btn ghost" id="valClose">Cerrar</button><button class="btn primary" id="valApply" style="display:none">Aplicar correcciones y guardar</button></div>
   </div>`;
@@ -2654,11 +2661,11 @@ async function openValidarHpo(f){
   const out=ov.querySelector('#valOut');
   let issues;
   try{ issues=await validarFichaHpo(f); }catch(e){ out.innerHTML='<div class="err">Error: '+e.message+'</div>'; return; }
-  if(!issues.length){ out.innerHTML='<div style="color:var(--ok);font-weight:600;padding:6px 0">✓ Todos los códigos HPO de la ficha son válidos.</div>'; return; }
+  if(!issues.length){ out.innerHTML='<div style="color:var(--ok);font-weight:600;padding:6px 0">✓ Todos los códigos HPO del protocolo son válidos.</div>'; return; }
   out.innerHTML='<div style="margin-bottom:6px"><b>'+issues.length+'</b> código(s) HPO inválido(s):</div>'+issues.map((it,i)=>`
     <div style="padding:8px 0;border-top:1px solid var(--line)">
       <div><span class="hp" style="color:#f2b3a6">${escHtml(it.id)}</span> ${it.label?'· '+escHtml(it.label):'<span style="color:var(--ink3)">(sin etiqueta para autocorregir)</span>'}</div>
-      ${it.fix?`<label style="display:flex;gap:7px;align-items:center;margin-top:4px;font-size:13px"><input type="checkbox" data-fix="${i}" checked> Corregir → <b>${escHtml(it.fix.es||it.fix.id)}</b> <span class="hp">${it.fix.id}</span></label>`:'<div style="color:#b8860b;font-size:12px;margin-top:4px">Sin corrección automática — edita la ficha manualmente.</div>'}
+      ${it.fix?`<label style="display:flex;gap:7px;align-items:center;margin-top:4px;font-size:13px"><input type="checkbox" data-fix="${i}" checked> Corregir → <b>${escHtml(it.fix.es||it.fix.id)}</b> <span class="hp">${it.fix.id}</span></label>`:'<div style="color:#b8860b;font-size:12px;margin-top:4px">Sin corrección automática — edita el protocolo manualmente.</div>'}
     </div>`).join('');
   const applyBtn=ov.querySelector('#valApply'); applyBtn.style.display='';
   applyBtn.addEventListener('click', async ()=>{
@@ -2891,7 +2898,7 @@ function renderDocumentos(){
       <button class="btn" id="docRefresh">↻ Refrescar</button>
       <button class="btn primary" id="docConnect">Conectar</button>
     </div>
-    <div class="sec-note">Flags por documento: <b>RAG</b> (la IA lo lee al crear fichas) · <b>indexado</b> (analizado por IA → docs/index.json) · <b>unido a bibliografía</b> (citado por una ficha). Marcar RAG <b>auto-indexa</b>.</div>
+    <div class="sec-note">Flags por documento: <b>RAG</b> (la IA lo lee al crear protocolos) · <b>indexado</b> (analizado por IA → docs/index.json) · <b>unido a bibliografía</b> (citado por un protocolo). Marcar RAG <b>auto-indexa</b>.</div>
     <div style="display:flex;gap:8px;margin:6px 0 12px">
       <input id="docSearch" type="text" placeholder="🔎 Buscar en el texto de tus documentos RAG (relevancia, sin coste)…" autocomplete="off" style="flex:1;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
       <button class="btn" id="docSearchBtn">Buscar</button>
@@ -2933,7 +2940,7 @@ async function renderDriveList(files){
     const descTip=(reg&&reg.descripcion)?(' <span class="hastip dx-meta" style="color:var(--accent)">ⓘ<span class="tooltip">'+escHtml(reg.titulo||f.name)+(reg.descripcion?'<br><span class=dx-meta>'+escHtml(reg.descripcion)+'</span>':'')+'</span></span>'):'';
     return `<div class="lib-card">
       <div class="nm">${escHtml(f.name)}${descTip}</div>
-      <div class="meta">${(f.modifiedTime||'').slice(0,10)} · ${flag(esRag,'RAG','¿Se usa para RAG (la IA lo lee al generar fichas)?')} · ${flag(indexado,'indexado','¿Analizado por IA y guardado en tu repositorio (docs/index.json) con nombre+descripción?')} · ${flag(enBib,'bibliografía','¿Citado por alguna referencia/ficha?')}</div>
+      <div class="meta">${(f.modifiedTime||'').slice(0,10)} · ${flag(esRag,'RAG','¿Se usa para RAG (la IA lo lee al generar protocolos)?')} · ${flag(indexado,'indexado','¿Analizado por IA y guardado en tu repositorio (docs/index.json) con nombre+descripción?')} · ${flag(enBib,'bibliografía','¿Citado por alguna referencia/protocolo?')}</div>
       <div class="acts">
         ${f.webViewLink?`<a class="btn" href="${f.webViewLink}" target="_blank" rel="noopener">Abrir</a>`:''}
         ${indexado ? `<button class="btn" data-editmeta="${i}" title="Editar nombre y descripción (a mano o regenerar con IA)">✏ Editar</button><button class="btn" data-reindex="${i}" title="Regenerar nombre+descripción con IA leyendo el texto del PDF">↻ IA</button><button class="btn ghost" data-unreg="${reg.id}" title="Quitar del índice">Quitar del índice</button>` : `<button class="btn primary" data-index="${i}" title="La IA lo analiza una vez y lo guarda en tu repositorio">✨ Indexar (IA)</button>`}
@@ -3018,7 +3025,7 @@ async function indexarDriveDoc(f, opts){
 async function generarFichaIA(motivo, guiaContext, instructions){
   const box=document.getElementById('fichaFlow');
   if(!anyProvider()){ if(box) box.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
-  if(box) box.innerHTML='<div class="loading">Generando ficha con IA (buscando criterios vigentes en la web)… puede tardar.</div>';
+  if(box) box.innerHTML='<div class="loading">Generando protocolo con IA (buscando criterios vigentes en la web)… puede tardar.</div>';
   try{
     let user='Motivo de consulta: "'+(motivo||'')+'". Genera la ficha JSON más completa y vigente para esta entidad o grupo nosológico, con sus criterios diagnósticos actuales.';
     if(instructions && instructions.trim()){ user += '\n\nINSTRUCCIONES ADICIONALES DEL CLÍNICO (síguelas con prioridad; pueden incluir un JSON de referencia/plantilla a respetar):\n'+instructions.trim(); }
@@ -3029,7 +3036,7 @@ async function generarFichaIA(motivo, guiaContext, instructions){
     if(!f){ resp=await callLLM({system:FICHA_SYSTEM_PROMPT, user:user+'\n\nIMPORTANTE: devuelve SOLO el JSON, compacto y COMPLETO (sin texto fuera del JSON).', webSearch:true, maxTokens:16000, task:'author'}); f=extractJSON(resp); }  // reintento
     if(!f){ if(box) box.innerHTML='<div class="err">La IA no devolvió un JSON válido tras 2 intentos (posible respuesta cortada). Prueba con un motivo más concreto.<div class="dx-meta" style="margin-top:6px;white-space:pre-wrap;max-height:120px;overflow:auto">'+escHtml(String(resp||'').slice(0,400))+'…</div></div>'; return; }
     openFichaReview(f, {autoVerify:true});
-  }catch(e){ if(box) box.innerHTML='<div class="err">Error generando la ficha: '+e.message+'</div>'; }
+  }catch(e){ if(box) box.innerHTML='<div class="err">Error generando el protocolo: '+e.message+'</div>'; }
 }
 
 /* Texto completo de un documento indexado (por su driveId): caché local → GitHub docs/text. */
@@ -3043,8 +3050,8 @@ async function docFullText(driveId){
 function openAutoriaModal(motivo){
   const repoDocs=((cachedDocs()||{}).docs||[]).filter(d=>d.driveId);
   const ov=document.createElement('div'); ov.className='overlay'; ov.id='autoriaOverlay';
-  ov.innerHTML=`<div class="modal" style="max-width:660px"><h2>✨ Nueva ficha / protocolo (IA)</h2>
-    <div class="msub">La IA genera la ficha buscando criterios vigentes en la web. Puedes añadir <b>instrucciones libres</b> (incluso un JSON de plantilla a respetar) y aportar <b>uno o varios PDF</b> (subidos o de tu repositorio) como fuente principal. Cada HPO se verifica luego contra JAX.</div>
+  ov.innerHTML=`<div class="modal" style="max-width:660px"><h2>✨ Nuevo protocolo (IA)</h2>
+    <div class="msub">La IA genera el protocolo buscando criterios vigentes en la web. Puedes añadir <b>instrucciones libres</b> (incluso un JSON de plantilla a respetar) y aportar <b>uno o varios PDF</b> (subidos o de tu repositorio) como fuente principal. Cada HPO se verifica luego contra JAX.</div>
     <div class="field"><label>Motivo / entidad</label><input id="auMotivo" type="text" value="${escHtml(motivo||'').replace(/"/g,'&quot;')}" placeholder="p. ej. conectivopatía, síndrome autoinflamatorio, trombopenia crónica…"></div>
     <div class="field"><label>Instrucciones (opcional · admite JSON)</label><textarea id="auInstr" style="width:100%;min-height:90px;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:12.5px;font-family:var(--mono,monospace)" placeholder="Matices, alcance, estructura preferida, o pega un JSON de referencia/plantilla…"></textarea></div>
     <div class="field"><label>PDF aportados (uno o varios)</label><input id="auFiles" type="file" accept="application/pdf" multiple></div>
@@ -3205,7 +3212,7 @@ function openFichaReview(f, opts){
   ov.innerHTML=`
   <div class="modal" role="dialog" aria-label="Revisar ficha generada" style="max-width:760px">
     <div style="display:flex; align-items:center; justify-content:space-between; gap:10px">
-      <h2>Revisar ficha generada por IA</h2>
+      <h2>Revisar protocolo generado por IA</h2>
       <button class="btn ghost" id="btnFichaFull" title="Pantalla completa" aria-label="Pantalla completa" style="padding:4px 8px; flex:none; line-height:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg></button>
     </div>
     <div class="msub">Revisa y edita el JSON. Al guardar se valida, se verifica una muestra de HPO contra JAX y se commitea a tu GitHub (o a caché local si GitHub no está configurado).</div>
@@ -3224,7 +3231,7 @@ function openFichaReview(f, opts){
     </div>
     <div id="fichaEditOut" style="font-size:12px; margin-top:6px"></div>
 
-    <details open style="margin-top:10px"><summary class="cart-group-title" style="cursor:pointer">Vista previa · cómo queda la ficha</summary>
+    <details open style="margin-top:10px"><summary class="cart-group-title" style="cursor:pointer">Vista previa · cómo queda el protocolo</summary>
       <div id="fichaPreview" style="border:1px solid var(--line); border-radius:9px; padding:10px 12px; margin-top:6px; max-height:300px; overflow:auto"></div>
     </details>
 
@@ -3232,13 +3239,18 @@ function openFichaReview(f, opts){
       <div id="formEditor" style="border:1px solid var(--line); border-radius:9px; padding:10px 12px; margin-top:6px; max-height:360px; overflow:auto"></div>
     </details>
 
+    <details id="enDetails" style="margin-top:10px"><summary class="cart-group-title" style="cursor:pointer">🎯 Diferencial y criterios (entidades) — sin tocar JSON</summary>
+      <div class="msub" style="margin-top:4px">Nombre, genes, umbral (mayores/menores) y los HPO que cuentan como criterio mayor o menor de cada entidad.</div>
+      <div id="entidadesEditor" style="border:1px solid var(--line); border-radius:9px; padding:10px 12px; margin-top:6px; max-height:400px; overflow:auto"></div>
+    </details>
+
     <details id="fuDetails" style="margin-top:10px"><summary class="cart-group-title" style="cursor:pointer">📚 Referencias bibliográficas — sin tocar JSON</summary>
-      <div class="msub" style="margin-top:4px">Título, URL, año y, si los conoces, DOI/PMID/PMCID (activan el marcador de ReadCube Papers). Basta con uno de los tres identificadores.</div>
+      <div class="msub" style="margin-top:4px">Título, URL, año y, si los conoces, DOI/PMID/PMCID (activan el marcador de ReadCube Papers). Basta con uno de los tres identificadores, o pulsa 🔍 para que la IA los busque por ti.</div>
       <div id="fuentesEditor" style="border:1px solid var(--line); border-radius:9px; padding:10px 12px; margin-top:6px; max-height:360px; overflow:auto"></div>
     </details>
 
     <div style="border:1px solid var(--line); border-radius:9px; padding:10px 12px; margin-top:12px; background:var(--panel2)">
-      <div style="font-size:12px; font-weight:700; color:var(--accent); margin-bottom:6px">📎 Aplicar una guía a esta ficha (opcional) + re-buscar</div>
+      <div style="font-size:12px; font-weight:700; color:var(--accent); margin-bottom:6px">📎 Aplicar una guía a este protocolo (opcional) + re-buscar</div>
       <div class="field" style="margin:0 0 8px"><label>URL de la guía</label><input id="revGuiaUrl" type="text" placeholder="https://…" autocomplete="off"></div>
       <div class="field" style="margin:0 0 8px"><label>PDF de la guía</label><input id="revGuiaPdf" type="file" accept="application/pdf"></div>
       <button class="btn" id="btnAplicarGuia">Aplicar guía y re-buscar ›</button>
@@ -3285,7 +3297,7 @@ function openFichaReview(f, opts){
   const prev=ov.querySelector('#fichaPreview');
   const renderPrev=()=>{ if(!prev) return; let j=null; try{ j=JSON.parse(ta.value); }catch(e){} prev.innerHTML=fichaPreviewHtml(j); annotateHpoChips(prev); };
   renderPrev();
-  let _pvT=null; ta.addEventListener('input', ()=>{ clearTimeout(_pvT); _pvT=setTimeout(()=>{ renderPrev(); if(feDet && feDet.open && !ov.querySelector('#formEditor .hp-fix-pop')) renderForm(); if(fuDet && fuDet.open) renderFuentes(); }, 300); });
+  let _pvT=null; ta.addEventListener('input', ()=>{ clearTimeout(_pvT); _pvT=setTimeout(()=>{ renderPrev(); if(feDet && feDet.open && !ov.querySelector('#formEditor .hp-fix-pop')) renderForm(); if(enDet && enDet.open) renderEntidades(); if(fuDet && fuDet.open) renderFuentes(); }, 300); });
   // Clic en un chip HPO del preview → abre el buscador AJAX para verificar/corregir el código
   if(prev) prev.addEventListener('click', e=>{ if(e.target.closest('.hp-fix-pop')) return; const chip=e.target.closest('.hp-chip'); if(chip && prev.contains(chip)) toggleHpoFixPop(chip); });
 
@@ -3329,7 +3341,7 @@ function openFichaReview(f, opts){
           </div>`).join('')}
         <button class="btn ghost" data-fe="addq" data-di="${di}" style="${feBtn}">+ pregunta</button>
       </div>`).join('');
-    fbox.innerHTML=(doms||'<div class="dx-meta" style="margin-bottom:6px">Esta ficha aún no tiene dominios de anamnesis.</div>')
+    fbox.innerHTML=(doms||'<div class="dx-meta" style="margin-bottom:6px">Este protocolo aún no tiene dominios de anamnesis.</div>')
       +`<button class="btn" data-fe="adddom" style="${feBtn};margin-top:4px">+ dominio</button>`;
     annotateHpoChips(fbox);
   }
@@ -3365,6 +3377,71 @@ function openFichaReview(f, opts){
     });
   }
 
+  // ---- Editor visual del diferencial (entidades): nombre/genes/umbral + HPO mayores/menores, sin tocar JSON ----
+  const enbox=ov.querySelector('#entidadesEditor'), enDet=ov.querySelector('#enDetails');
+  const enWrite=(j, rerender)=>{ ta.value=JSON.stringify(j,null,2); renderPrev(); if(rerender) renderEntidades(); };
+  function hpoChipsEn(ids, ei, kind){
+    return (ids||[]).map((id,hi)=>`<span class="hp-chip">${escHtml(hpoShort(id))} <span class="hp">${escHtml(id)}</span> <a data-en="${kind==='maj'?'delmaj':'delmin'}" data-ei="${ei}" data-hi="${hi}" title="Quitar" style="cursor:pointer;color:var(--danger);font-weight:700">×</a></span>`).join(' ');
+  }
+  function renderEntidades(){
+    if(!enbox) return;
+    const j=feModel();
+    if(!j){ enbox.innerHTML='<div class="dx-meta">El JSON no es válido ahora mismo — corrígelo para editar el diferencial.</div>'; return; }
+    const ents=j.entidades||[];
+    enbox.innerHTML=(ents.length?ents.map((e,ei)=>`
+      <div style="border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0">
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:5px">
+          <input class="fe-i" data-en="nom" data-ei="${ei}" value="${A(e.nombre)}" placeholder="Nombre de la entidad/subtipo" style="flex:1;font-weight:600;${feIn}">
+          <button class="btn ghost" data-en="del" data-ei="${ei}" title="Eliminar entidad" style="${feBtn}">🗑</button>
+        </div>
+        <input class="fe-i" data-en="genes" data-ei="${ei}" value="${A((e.genes||[]).join(', '))}" placeholder="Genes (separados por coma)" style="width:100%;box-sizing:border-box;margin-bottom:5px;${feIn}">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
+          <label class="dx-meta">≥ mayores <input class="fe-i" data-en="minmaj" data-ei="${ei}" type="number" min="0" value="${e.min_mayores||0}" style="width:50px;${feIn}"></label>
+          <select class="fe-i" data-en="logica" data-ei="${ei}" style="${feIn}"><option value="and" ${((e.logica||'and')==='and')?'selected':''}>Y</option><option value="or" ${(e.logica==='or')?'selected':''}>O</option></select>
+          <label class="dx-meta">≥ menores <input class="fe-i" data-en="minmen" data-ei="${ei}" type="number" min="0" value="${e.min_menores||0}" style="width:50px;${feIn}"></label>
+          <input class="fe-i" data-en="umbral" data-ei="${ei}" value="${A(e.umbral)}" placeholder="Texto del criterio (opcional, sustituye al automático)" style="flex:1;min-width:160px;${feIn}">
+        </div>
+        <div class="dx-meta" style="font-weight:700;margin-bottom:2px">Mayores</div>
+        <div style="margin-bottom:6px">${hpoChipsEn(e.mayores,ei,'maj')} <button class="btn ghost" data-en="addmaj" data-ei="${ei}" style="${feBtn}">+ HPO mayor</button></div>
+        <div class="dx-meta" style="font-weight:700;margin-bottom:2px">Menores</div>
+        <div>${hpoChipsEn(e.menores,ei,'min')} <button class="btn ghost" data-en="addmin" data-ei="${ei}" style="${feBtn}">+ HPO menor</button></div>
+      </div>`).join(''):'<div class="dx-meta" style="margin-bottom:6px">Sin entidades todavía.</div>')
+      +`<button class="btn ghost" data-en="add" style="${feBtn};margin-top:4px">+ entidad</button>`;
+  }
+  renderEntidades();
+  if(enDet) enDet.addEventListener('toggle', ()=>{ if(enDet.open) renderEntidades(); });
+  if(enbox){
+    const EN_TXT=['nom','genes','minmaj','minmen','umbral'];
+    enbox.addEventListener('input', e=>{
+      const el=e.target.closest('[data-en]'); if(!el) return; const en=el.dataset.en;
+      if(!EN_TXT.includes(en)) return;
+      const j=feModel(); if(!j || !Array.isArray(j.entidades)) return; const ent=j.entidades[+el.dataset.ei]; if(!ent) return;
+      if(en==='nom') ent.nombre=el.value;
+      else if(en==='genes') ent.genes=el.value.split(',').map(s=>s.trim()).filter(Boolean);
+      else if(en==='minmaj') ent.min_mayores=+el.value||0;
+      else if(en==='minmen') ent.min_menores=+el.value||0;
+      else if(en==='umbral') ent.umbral=el.value;
+      enWrite(j, false); // no re-render: conserva el foco mientras se teclea
+    });
+    enbox.addEventListener('change', e=>{
+      const el=e.target.closest('[data-en="logica"]'); if(!el) return;
+      const j=feModel(); if(!j || !Array.isArray(j.entidades)) return; j.entidades[+el.dataset.ei].logica=el.value; enWrite(j, false);
+    });
+    enbox.addEventListener('click', e=>{
+      const b=e.target.closest('[data-en]'); if(!b) return; const en=b.dataset.en;
+      if(EN_TXT.includes(en) || en==='logica') return;
+      const j=feModel(); if(!j){ showToast('Corrige el JSON antes de editar el diferencial'); return; }
+      if(!Array.isArray(j.entidades)) j.entidades=[];
+      const ei=+b.dataset.ei, hi=+b.dataset.hi;
+      if(en==='add'){ j.entidades.push({nombre:'Nueva entidad', genes:[], mayores:[], menores:[], min_mayores:0, min_menores:0, logica:'and'}); enWrite(j,true); }
+      else if(en==='del'){ j.entidades.splice(ei,1); enWrite(j,true); }
+      else if(en==='delmaj'){ j.entidades[ei].mayores.splice(hi,1); enWrite(j,true); }
+      else if(en==='delmin'){ j.entidades[ei].menores.splice(hi,1); enWrite(j,true); }
+      else if(en==='addmaj'){ buildHpoSearchPop(b, (id,name)=>{ const jj=feModel(); if(!jj) return; const arr=(jj.entidades[ei].mayores=jj.entidades[ei].mayores||[]); if(!arr.includes(id)) arr.push(id); enWrite(jj,true); }, 'Buscar HPO para añadir como criterio MAYOR…'); }
+      else if(en==='addmin'){ buildHpoSearchPop(b, (id,name)=>{ const jj=feModel(); if(!jj) return; const arr=(jj.entidades[ei].menores=jj.entidades[ei].menores||[]); if(!arr.includes(id)) arr.push(id); enWrite(jj,true); }, 'Buscar HPO para añadir como criterio MENOR…'); }
+    });
+  }
+
   // ---- Editor visual de referencias bibliográficas (fuentes): título/url/año/doi/pmid/pmcid, sin tocar JSON ----
   const fubox=ov.querySelector('#fuentesEditor'), fuDet=ov.querySelector('#fuDetails');
   const fuWrite=(j, rerender)=>{ ta.value=JSON.stringify(j,null,2); renderPrev(); if(rerender) renderFuentes(); };
@@ -3377,6 +3454,7 @@ function openFichaReview(f, opts){
       <div style="border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0">
         <div style="display:flex;gap:6px;align-items:center;margin-bottom:5px">
           <input class="fe-i" data-fu="tit" data-fi="${fi}" value="${A(s.titulo)}" placeholder="Título" style="flex:1;font-weight:600;${feIn}">
+          <button class="btn ghost" data-fu="find" data-fi="${fi}" title="Buscar DOI/PMID/PMCID de esta referencia con IA">🔍</button>
           <button class="btn ghost" data-fu="del" data-fi="${fi}" title="Eliminar referencia" style="${feBtn}">🗑</button>
         </div>
         <input class="fe-i" data-fu="url" data-fi="${fi}" value="${A(s.url)}" placeholder="URL (https://…)" style="width:100%;box-sizing:border-box;margin-bottom:5px;${feIn}">
@@ -3386,11 +3464,36 @@ function openFichaReview(f, opts){
           <input class="fe-i" data-fu="pmid" data-fi="${fi}" value="${A(s.pmid)}" placeholder="PMID" style="width:100px;${feIn}">
           <input class="fe-i" data-fu="pmcid" data-fi="${fi}" value="${A(s.pmcid)}" placeholder="PMCID" style="width:110px;${feIn}">
         </div>
+        <div class="dx-meta" data-fu="findout" data-fi="${fi}" style="margin-top:3px;min-height:14px"></div>
       </div>`).join(''):'<div class="dx-meta" style="margin-bottom:6px">Sin referencias todavía.</div>')
       +`<button class="btn ghost" data-fu="add" style="${feBtn};margin-top:4px">+ referencia</button>`;
   }
   renderFuentes();
   if(fuDet) fuDet.addEventListener('toggle', ()=>{ if(fuDet.open) renderFuentes(); });
+  // Busca DOI/PMID/PMCID de UNA sola referencia (botón 🔍 de su fila). Misma exigencia de seguridad que el
+  // buscador en bloque: solo rellena si la IA está SEGURA de la coincidencia exacta; nunca inventa.
+  async function findOneFuente(fi){
+    const j=feModel(); if(!j || !Array.isArray(j.fuentes) || !j.fuentes[fi]) return;
+    const f=j.fuentes[fi];
+    const outEl=fubox.querySelector('[data-fu="findout"][data-fi="'+fi+'"]');
+    if(!f.titulo){ if(outEl) outEl.textContent='Pon un título antes de buscar.'; return; }
+    if(!anyProvider()){ if(outEl) outEl.textContent='Configura una API key (Claude u OpenAI) en ⚙ Ajustes.'; return; }
+    if(outEl) outEl.textContent='Buscando…';
+    try{
+      const system='Eres bibliotecario científico especializado en identificadores de publicaciones. Te doy el título (y URL si la hay) de UNA referencia bibliográfica. Busca en PubMed/CrossRef/DOI.org su identificador REAL: "doi" (sin el prefijo https://doi.org/), "pmid" (solo dígitos) y/o "pmcid" (formato PMCxxxxxxx). Devuelve un identificador SOLO si estás SEGURO de que corresponde EXACTAMENTE a esa referencia (mismo título/autores/año) — déjalo vacío ("") si no encuentras una coincidencia fiable. NUNCA inventes un identificador. Devuelve SOLO JSON {"doi":"","pmid":"","pmcid":""}.';
+      const user='Referencia: "'+f.titulo+'"'+(f.url?' — '+f.url:'');
+      const resp=await callLLM({system, user, webSearch:true, maxTokens:400, task:'eval'});
+      const r=extractJSON(resp)||{};
+      const jj=feModel(); if(!jj || !jj.fuentes || !jj.fuentes[fi]) return;
+      let hit=false;
+      if(r.doi){ jj.fuentes[fi].doi=String(r.doi).trim(); hit=true; }
+      if(r.pmid){ jj.fuentes[fi].pmid=String(r.pmid).trim(); hit=true; }
+      if(r.pmcid){ jj.fuentes[fi].pmcid=String(r.pmcid).trim(); hit=true; }
+      fuWrite(jj, true);   // re-renderiza: refleja lo encontrado en los campos
+      const outEl2=fubox.querySelector('[data-fu="findout"][data-fi="'+fi+'"]');
+      if(outEl2) outEl2.textContent = hit ? '✓ Identificador(es) encontrado(s).' : 'No se encontró ningún identificador fiable.';
+    }catch(e){ if(outEl) outEl.textContent='Error al buscar: '+e.message; }
+  }
   if(fubox){
     const FU_MAP={tit:'titulo', url:'url', anio:'anio', doi:'doi', pmid:'pmid', pmcid:'pmcid'};
     fubox.addEventListener('input', e=>{
@@ -3403,6 +3506,7 @@ function openFichaReview(f, opts){
     fubox.addEventListener('click', e=>{
       const b=e.target.closest('[data-fu]'); if(!b) return; const fu=b.dataset.fu;
       if(FU_MAP[fu]) return;
+      if(fu==='find'){ findOneFuente(+b.dataset.fi); return; }
       const j=feModel(); if(!j){ showToast('Corrige el JSON antes de editar las referencias'); return; }
       if(!Array.isArray(j.fuentes)) j.fuentes=[];
       if(fu==='add'){ j.fuentes.push({titulo:'', url:'', anio:''}); fuWrite(j,true); }
@@ -3411,7 +3515,7 @@ function openFichaReview(f, opts){
   }
 
   // ---- Resaltado enlazado: seleccionar texto en el JSON resalta la parte correspondiente en la vista previa y el editor visual, y viceversa ----
-  const linkScopes=()=>[prev, fbox, fubox].filter(Boolean);
+  const linkScopes=()=>[prev, fbox, enbox, fubox].filter(Boolean);
   const linkClear=()=>ov.querySelectorAll('.link-hl').forEach(e=>e.classList.remove('link-hl'));
   const linkNorm=s=>(s||'').replace(/^[\s"',:]+|[\s"',:]+$/g,'').trim();  // limpia comillas/comas del JSON
   function highlightInViews(text){
@@ -3423,7 +3527,15 @@ function openFichaReview(f, opts){
     });
     if(first && first.scrollIntoView) first.scrollIntoView({block:'nearest'});
   }
-  function selectInJson(text){ text=linkNorm(text); if(text.length<2) return; const i=ta.value.toLowerCase().indexOf(text.toLowerCase()); if(i<0) return; ta.focus(); ta.setSelectionRange(i, i+text.length); const line=ta.value.slice(0,i).split('\n').length; ta.scrollTop=Math.max(0,(line-3)*ta.clientHeight/((ta.value.split('\n').length)||1)); }
+  function selectInJson(text){
+    text=linkNorm(text); if(text.length<2) return;
+    const i=ta.value.toLowerCase().indexOf(text.toLowerCase()); if(i<0) return;
+    ta.focus(); ta.setSelectionRange(i, i+text.length);
+    const totalLines=(ta.value.split('\n').length)||1;
+    const line=ta.value.slice(0,i).split('\n').length;
+    const lineH=ta.scrollHeight/totalLines;   // altura media de línea (antes usaba clientHeight, la altura VISIBLE, no la total → el cálculo salía mal y no se veía el scroll)
+    ta.scrollTop=Math.max(0,(line-3)*lineH);
+  }
   const onTaSel=()=>{ const s=ta.value.substring(ta.selectionStart, ta.selectionEnd); if(linkNorm(s).length>=2) highlightInViews(s); else linkClear(); };
   ta.addEventListener('mouseup', onTaSel);
   ta.addEventListener('keyup', e=>{ if(e.shiftKey || e.key==='Shift' || /Arrow|Home|End/.test(e.key)) onTaSel(); });
@@ -3445,7 +3557,7 @@ function openFichaReview(f, opts){
     histBox.querySelectorAll('.fichaRevert').forEach(btn=>btn.addEventListener('click', ()=>{
       const b=baks[+btn.dataset.i]; if(!b) return;
       try{ ta.value=JSON.stringify(JSON.parse(b.json), null, 2); }catch(e){ return; }
-      renderPrev(); if(feDet&&feDet.open) renderForm();
+      renderPrev(); if(feDet&&feDet.open) renderForm(); if(enDet&&enDet.open) renderEntidades(); if(fuDet&&fuDet.open) renderFuentes();
       showToast('Versión rev '+b.rev+' cargada en el editor. Revisa y pulsa Guardar para aplicarla.');
     }));
   }
@@ -3464,7 +3576,7 @@ function openFichaReview(f, opts){
       const resp=await callLLM({ system, user, webSearch:false, maxTokens:16000, task:'author' });
       const j=extractJSON(resp); const nueva=j&&(j.ficha||j);
       if(!nueva||typeof nueva!=='object'){ eout.innerHTML='<div class="err">La IA no devolvió un JSON válido. Reintenta.</div>'; return; }
-      ta.value=JSON.stringify(nueva, null, 2); renderPrev();
+      ta.value=JSON.stringify(nueva, null, 2); renderPrev(); if(feDet&&feDet.open) renderForm(); if(enDet&&enDet.open) renderEntidades(); if(fuDet&&fuDet.open) renderFuentes();
       eout.innerHTML='<div style="color:var(--ok)">✓ '+escHtml((j&&j.cambios)||'Editado.')+' Revisa el JSON y la vista previa; puedes seguir pidiendo más cambios o guardar.</div>';
     }catch(e){ eout.innerHTML='<div class="err">Error al editar: '+escHtml(e.message)+'</div>'; }
   });
@@ -3488,6 +3600,7 @@ function openFichaReview(f, opts){
     if(af) af.addEventListener('click', ()=>{
       const fixes={}; fixable.forEach(it=>{ fixes[it.id]={to:it.fix.id, es:it.fix.es}; });
       applyHpoFixes(j, fixes); ta.value=JSON.stringify(j,null,2);
+      renderPrev(); if(feDet&&feDet.open) renderForm(); if(enDet&&enDet.open) renderEntidades(); if(fuDet&&fuDet.open) renderFuentes();
       out.className='test-out ok'; out.textContent='✓ Corregidos '+fixable.length+'. Revisa el JSON y guarda.';
     });
   }
@@ -3519,7 +3632,7 @@ function openFichaReview(f, opts){
         if(r.pmcid){ f.pmcid=String(r.pmcid).trim(); hit=true; }
         if(hit) found++;
       });
-      ta.value=JSON.stringify(j,null,2); renderPrev();
+      ta.value=JSON.stringify(j,null,2); renderPrev(); renderFuentes();   // refresca también el editor visual de referencias (si no, sus campos quedan desfasados y una edición posterior los sobrescribiría con el valor viejo)
       fout.className='test-out ok';
       fout.innerHTML='✓ Encontrado(s) identificador(es) para <b>'+found+'</b> de '+targets.length+' referencia(s) sin DOI/PMID/PMCID. Revisa el JSON y pulsa «Guardar y commitear» para conservarlos.';
     }catch(e){ fout.className='test-out bad'; fout.textContent='Error al buscar: '+e.message; }
@@ -3545,9 +3658,10 @@ function openFichaReview(f, opts){
       if(!j){ gout.innerHTML='<div class="err">La IA no devolvió un JSON válido. Reintenta.</div>'; return; }
       const nueva = j.ficha || j;
       ta.value = JSON.stringify(nueva, null, 2);
+      renderPrev(); if(feDet&&feDet.open) renderForm(); if(enDet&&enDet.open) renderEntidades(); if(fuDet&&fuDet.open) renderFuentes();
       const a=countFichaStats(cur), b=countFichaStats(nueva);
       const delta = `dominios ${a.dom}→${b.dom} · preguntas ${a.preg}→${b.preg} · entidades ${a.ent}→${b.ent} · genes ${a.genes}→${b.genes} · HPO ${a.hpo}→${b.hpo}`;
-      gout.innerHTML = `<div class="fresh-res new"><b>Ficha actualizada con la guía.</b>${j.cambios?`<div style="margin-top:4px">${String(j.cambios).replace(/</g,'&lt;')}</div>`:''}<div class="study-src">${delta}</div></div>`;
+      gout.innerHTML = `<div class="fresh-res new"><b>Protocolo actualizado con la guía.</b>${j.cambios?`<div style="margin-top:4px">${String(j.cambios).replace(/</g,'&lt;')}</div>`:''}<div class="study-src">${delta}</div></div>`;
     }catch(e){ gout.innerHTML='<div class="err">Error al aplicar la guía: '+e.message+'</div>'; }
   });
 
@@ -3566,7 +3680,7 @@ function openFichaReview(f, opts){
       bumpFichaRev(j, (ov.querySelector('#fichaNota')||{}).value||'');   // sube rev + changelog + copia de seguridad local
       const mode=await persistFicha(j);
       close();
-      const savedMsg='Ficha guardada'+(mode==='commit'?' y commiteada a GitHub':' (caché local · GitHub sin configurar)');
+      const savedMsg='Protocolo guardado'+(mode==='commit'?' y commiteado a GitHub':' (caché local · GitHub sin configurar)');
       if(opts.origin==='biblioteca'){
         showSection('biblioteca');
         await renderFichaView(j);
@@ -3731,13 +3845,13 @@ function studyHtml(){
       ${s.detalle?`<div style="margin-top:3px">${s.detalle}</div>`:''}
       ${ind?`<div style="margin-top:4px"><b>Cuándo:</b><ul style="margin:4px 0 0 16px; padding:0">${ind}</ul></div>`:''}
       ${src?`<div class="study-src">Guías: ${src}</div>`:''}
-    ` : '<div style="color:var(--ink3); font-size:11.5px">La ficha no detalla indicación; evalúala según guías vigentes.</div>'}
+    ` : '<div style="color:var(--ink3); font-size:11.5px">El protocolo no detalla indicación; evalúala según guías vigentes.</div>'}
     ${(function(){
       if(!(activeFicha.entidades||[]).length) return '';
       const cu=(activeFicha.entidades||[]).map(e=>({e,st:entidadStatus(e)})).filter(x=>x.st.cumple);
       return cu.length
-        ? `<div style="margin-top:7px; font-size:12px; color:var(--ok)"><b>✓ Cumple criterios formales</b> de la ficha — ${cu.map(x=>x.e.nombre).join(', ')} <span style="color:var(--ink3); font-weight:400">(en vivo · sin coste)</span></div>`
-        : `<div style="margin-top:7px; font-size:11.5px; color:var(--ink3)">Aún no se cumplen los criterios formales de la ficha (marca más rasgos). Se comprueba en vivo, sin coste.</div>`;
+        ? `<div style="margin-top:7px; font-size:12px; color:var(--ok)"><b>✓ Cumple criterios formales</b> del protocolo — ${cu.map(x=>x.e.nombre).join(', ')} <span style="color:var(--ink3); font-weight:400">(en vivo · sin coste)</span></div>`
+        : `<div style="margin-top:7px; font-size:11.5px; color:var(--ink3)">Aún no se cumplen los criterios formales del protocolo (marca más rasgos). Se comprueba en vivo, sin coste.</div>`;
     })()}
     <button class="btn" id="btnEvalGuias" style="margin-top:8px">Confirmar según guías vigentes (web · IA · usa tokens)</button>
     ${renderStudyEval()}
@@ -4284,7 +4398,7 @@ function renderPaneles(){
   box.querySelectorAll('[data-panopen]').forEach(c=>c.addEventListener('click', ()=>{ _panelSel=c.dataset.panopen; renderPaneles(); }));
 }
 function renderPanelDetalle(box, p){
-  const fichaChecks=(_libCache||[]).map(f=>`<label class="q-opt" style="display:inline-flex;margin:2px 10px 2px 0;font-size:12.5px"><input type="checkbox" class="panFichaTog" data-fid="${escHtml(f.id)}" ${(p.fichaIds||[]).includes(f.id)?'checked':''}> ${escHtml(f.nombre||f.id)}</label>`).join('') || '<span class="dx-meta">No hay protocolos. Crea fichas en Protocolos.</span>';
+  const fichaChecks=(_libCache||[]).map(f=>`<label class="q-opt" style="display:inline-flex;margin:2px 10px 2px 0;font-size:12.5px"><input type="checkbox" class="panFichaTog" data-fid="${escHtml(f.id)}" ${(p.fichaIds||[]).includes(f.id)?'checked':''}> ${escHtml(f.nombre||f.id)}</label>`).join('') || '<span class="dx-meta">No hay protocolos. Créalos en Protocolos.</span>';
   const cl=(p.changelog||[]).map(c=>`<div style="font-size:12px;border-top:1px solid var(--line);padding:5px 0"><b>v${escHtml(c.version)}</b> <span class="dx-meta">${String(c.date||'').slice(0,10)}</span>${c.nota?' · '+escHtml(c.nota):''}${(c.added&&c.added.length)?'<br><span style="color:var(--ok)">+ '+c.added.map(escHtml).join(', ')+'</span>':''}${(c.removed&&c.removed.length)?'<br><span style="color:#f2a">− '+c.removed.map(escHtml).join(', ')+'</span>':''}</div>`).join('');
   box.innerHTML=`
     <div class="fview-bar"><button class="btn" id="panBack">‹ Volver a paneles</button><button class="btn" id="panRename">✎ Renombrar</button><button class="btn ghost" id="panDel">🗑 Eliminar</button></div>
@@ -4464,7 +4578,7 @@ async function comprobarFreshness(){
       <b>${j.novedad?'Hay novedades':'Sin novedades relevantes'}</b>
       ${j.resumen?`<div style="margin-top:4px">${j.resumen}</div>`:''}
       ${src?`<div class="study-src">${src}</div>`:''}
-      ${j.novedad?'<button class="btn" id="btnRegen" style="margin-top:8px">Regenerar ficha con IA</button>':''}
+      ${j.novedad?'<button class="btn" id="btnRegen" style="margin-top:8px">Regenerar protocolo con IA</button>':''}
     </div>`;
     const rg=out.querySelector('#btnRegen'); if(rg) rg.addEventListener('click', ()=>openAutoriaModal(activeFicha.nombre_es||patient.motivo));
   }catch(e){ out.innerHTML='<div class="err">Error: '+e.message+'</div>'; }
@@ -5768,12 +5882,12 @@ async function renderBiblioteca(filter){
   if(filter===undefined){ box.innerHTML='<div class="loading">Cargando biblioteca…</div>'; const idx=await getIndex(); _libCache=idx.fichas||[]; }
   box.innerHTML=`
     <div class="lib-head">
-      <h2>📚 Protocolos <span style="font-size:12px;color:var(--ink3)">(${_libCache.length} fichas · ${allPrenatalSyndromes().length} prenatales)</span></h2>
+      <h2>📚 Protocolos <span style="font-size:12px;color:var(--ink3)">(${_libCache.length} protocolos · ${allPrenatalSyndromes().length} prenatales)</span></h2>
       <input class="lib-search" id="libSearch" placeholder="Buscar por nombre, id o sinónimo…" value="${(filter||'').replace(/"/g,'&quot;')}">
       <button class="btn" id="libRefresh">↻ Refrescar</button>
       <button class="btn" id="libImport">⬆ Importar JSON</button>
       <button class="btn" id="libValidate">🔧 Validar HPO de todos</button>
-      <button class="btn primary" id="libNueva">✨ Nueva ficha</button>
+      <button class="btn primary" id="libNueva">✨ Nuevo protocolo</button>
     </div>
     <div id="libValidateOut" style="margin:0 0 12px"></div>
     <div id="libResults">${libResultsHtml(filter||'')}</div>`;
@@ -5790,7 +5904,7 @@ function libResultsHtml(filter){
   const fichas=_libCache.filter(f=>!q || accLower(f.nombre||'').includes(q) || accLower(f.id||'').includes(q) || accLower((f.sinonimos||[]).join(' ')).includes(q));
   const prenat=allPrenatalSyndromes().filter(s=>!q || accLower(s.name||'').includes(q) || normSyndName(s.name).includes(normSyndName(q)));
   return (fichas.length? `<div class="lib-grid">${fichas.map(libCardHtml).join('')}</div>`
-       : `<div class="placeholder">${_libCache.length?'Sin fichas para el filtro.':'Aún no tienes fichas. Créalas desde Fenotipado o impórtalas con «⬆ Importar JSON».'}</div>`)
+       : `<div class="placeholder">${_libCache.length?'Sin protocolos para el filtro.':'Aún no tienes protocolos. Créalos desde Fenotipado o impórtalos con «⬆ Importar JSON».'}</div>`)
     + (prenat.length? `<div class="cart-group-title" style="margin:18px 0 8px">🤰 Síndromes prenatales <span class="dx-meta">(${prenat.length})</span></div><div class="lib-grid">${prenat.map(prenatalCardHtml).join('')}</div>`:'');
 }
 function wireLibCards(scope){
@@ -5826,8 +5940,8 @@ function verSindromePrenatal(name){
 /* Importar una ficha JSON propia → pasa por la MISMA revisión + verificación de HPO que las creadas por la IA. */
 function importarFichaJson(){
   const ov=document.createElement('div'); ov.className='overlay'; ov.id='importOverlay';
-  ov.innerHTML=`<div class="modal" style="max-width:640px"><h2>⬆ Importar ficha (JSON)</h2>
-    <div class="msub">Pega aquí el JSON de tu ficha/protocolo. Al revisar, pasa por las <b>mismas comprobaciones</b> que una ficha creada por la IA (validación de estructura y verificación de cada HPO contra JAX), y la guardas igual.</div>
+  ov.innerHTML=`<div class="modal" style="max-width:640px"><h2>⬆ Importar protocolo (JSON)</h2>
+    <div class="msub">Pega aquí el JSON de tu protocolo. Al revisar, pasa por las <b>mismas comprobaciones</b> que un protocolo creado por la IA (validación de estructura y verificación de cada HPO contra JAX), y lo guardas igual.</div>
     <textarea id="impJson" spellcheck="false" placeholder='{ "nombre_es": "…", "dominios": [...], "entidades": [...], "panel_genes": [...] }' style="width:100%;min-height:240px;box-sizing:border-box;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:12.5px;font-family:var(--mono,monospace)"></textarea>
     <div class="test-out" id="impOut"></div>
     <div class="modal-actions"><button class="btn ghost" id="impCancel">Cancelar</button><button class="btn primary" id="impGo">Revisar e importar</button></div></div>`;
@@ -5876,7 +5990,7 @@ function libCardHtml(f){
 }
 async function abrirFichaBiblioteca(id, edit){
   const ficha=await getFicha(id);
-  if(!ficha){ showToast('No se pudo cargar la ficha'); return; }
+  if(!ficha){ showToast('No se pudo cargar el protocolo'); return; }
   if(edit) openFichaReview(ficha, {origin:'biblioteca'}); else await renderFichaView(ficha);
 }
 let _viewedFicha=null;
@@ -5892,6 +6006,16 @@ async function renderFichaView(f){
   const study = eg ? `<h3>Indicación de estudio genético</h3>
     ${eg.tipo?`<div><b>Tipo:</b> ${eg.tipo}</div>`:''}${eg.detalle?`<div style="margin-top:3px">${eg.detalle}</div>`:''}
     ${(eg.indicaciones&&eg.indicaciones.length)?`<div style="margin-top:4px"><b>Cuándo:</b><ul>${eg.indicaciones.map(i=>`<li>${i}</li>`).join('')}</ul></div>`:''}` : '';
+  // Es el protocolo ACTIVO de la consulta en curso (no solo se está consultando la biblioteca) → puede mostrar
+  // el motivo de consulta y si el paciente CUMPLE cada criterio (con los HPO marcados hasta ahora).
+  const isActive = activeFicha && activeFicha.id===f.id;
+  const motivoLine = (isActive && patient.motivo) ? `<div class="fsub" style="margin-bottom:6px"><b>Motivo de consulta:</b> ${escHtml(patient.motivo)}</div>` : '';
+  const criteriosDx = (isActive && (f.entidades||[]).length) ? `<h3>Criterios diagnósticos</h3>${(f.entidades||[]).map(e=>{
+    const st=entidadStatus(e);
+    const label = (st.cond&&st.cond.fail) ? 'No aplica (edad/sexo)' : (st.cumple?'✓ Cumple':faltaLabel(st));
+    const color = (st.cond&&st.cond.fail) ? 'var(--ink3)' : (st.cumple?'var(--ok)':'#e8a13a');
+    return `<div class="ent"><b>${escHtml(e.nombre)}</b> — <span style="color:${color};font-weight:600">${label}</span><div class="dx-meta" style="margin-top:2px">${critDetalle(e,st)}</div></div>`;
+  }).join('')}` : '';
   box.innerHTML=`
     <div class="fview-bar">
       <button class="btn" id="fvBack">‹ Volver a la biblioteca</button>
@@ -5901,11 +6025,13 @@ async function renderFichaView(f){
     </div>
     <div class="fview" id="fviewDoc">
       <h1>${f.nombre_es||f.id}${f.validado?' <span class="pop-badge" style="background:#173d2a;color:#7fe0a6;border-color:#2f6b48;font-size:12px;vertical-align:middle">✓ Validado</span>':''}</h1>
+      ${motivoLine}
       <div class="fsub">${f.poblacion&&f.poblacion!=='unica'?(f.poblacion==='pediatrica'?'Población pediátrica · ':'Población adulta · '):''}${f.version?'v'+f.version+' · ':''}${f.rev?'rev '+f.rev+' · ':''}${(f.sinonimos||[]).join(', ')}</div>
       ${(f.historial&&f.historial.length)?`<details style="margin:4px 0 8px"><summary class="dx-meta" style="cursor:pointer">🕘 Changelog del protocolo (${f.historial.length})</summary><div style="margin-top:4px">${f.historial.slice(0,20).map(h=>`<div style="font-size:12px;border-top:1px solid var(--line);padding:4px 0"><b>rev ${h.rev}</b> <span class="dx-meta">${String(h.fecha||'').slice(0,16).replace('T',' ')}</span>${h.nota?' · '+escHtml(h.nota):''}</div>`).join('')}</div></details>`:''}
       ${doms?`<h3>Dominios y anamnesis</h3>${doms}`:''}
       ${ents?`<h3>Diferencial y criterios</h3>${ents}`:''}
       ${fichaPanelHtml(f)}
+      ${criteriosDx}
       ${study}
       ${fuentes?`<h3>Referencias</h3><ul class="src">${fuentes}</ul>`:''}
     </div>`;
