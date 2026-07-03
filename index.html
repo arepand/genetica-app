@@ -474,8 +474,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.40.0';
+const APP_VERSION='1.40.1';
 const CHANGELOG=[
+  {v:'1.40.1', d:'2026-07-03', c:['Arreglo: "Error al guardar: GitHub PUT 409" (sha desfasado por una escritura reciente al mismo fichero) ya no bloquea el guardado — reintenta automáticamente una vez con el sha actual antes de fallar.']},
   {v:'1.40.0', d:'2026-07-03', c:['Editor de protocolo: nuevo botón «🔗 Buscar DOI/PMID de las fuentes» — busca con IA (web) el DOI/PMID/PMCID de las referencias que aún no lo tienen (solo los añade si encuentra una coincidencia segura, nunca los inventa) y los deja listos en el JSON para guardar. Útil para activar el marcador de ReadCube Papers en protocolos ya existentes.']},
   {v:'1.39.0', d:'2026-07-03', c:['Marcador ReadCube Papers: además del DOI, ahora también reconoce PMID y PMCID (los tres identificadores que usa realmente la extensión, confirmado inspeccionando su código) — detectados automáticamente en URLs de PubMed/PMC o pedidos a la IA al crear/actualizar protocolos, así que también funciona con referencias que no tienen DOI.']},
   {v:'1.38.1', d:'2026-07-03', c:['Al crear o actualizar un protocolo con IA (incluida la vigilancia/tratamiento y las comprobaciones de novedades), ahora se pide EXPLÍCITAMENTE el DOI de cada referencia científica cuando exista, para que el marcador de ReadCube Papers funcione también en las fuentes que va incorporando la IA (antes solo se detectaba si la URL ya era un enlace doi.org).']},
@@ -1202,7 +1203,7 @@ async function ghGetFile(path){
   let json=null; try{ json=JSON.parse(text); }catch(e){}
   return {json, sha:d.sha, raw:text};
 }
-async function ghPutFile(path, obj, message, sha){
+async function ghPutFile(path, obj, message, sha, _retried){
   const c=loadCfg();
   const body = { message: message||('update '+path), content: b64EncodeUnicode(JSON.stringify(obj,null,2)), branch: c.gh_branch||'main' };
   if(sha) body.sha = sha;
@@ -1211,6 +1212,11 @@ async function ghPutFile(path, obj, message, sha){
     headers: Object.assign({}, ghHeaders(), {'Content-Type':'application/json'}),
     body: JSON.stringify(body)
   });
+  // 409 = el "sha" quedó desfasado (el archivo cambió justo antes, p. ej. por otro guardado tuyo muy reciente).
+  // Reintenta UNA vez con el sha actual antes de rendirte — evita el "no me deja guardar" por una condición de carrera benigna.
+  if(r.status===409 && !_retried){
+    try{ const fresh=await ghGetFile(path); return await ghPutFile(path, obj, message, fresh.sha, true); }catch(e){}
+  }
   if(!r.ok){ const t=await r.text(); throw new Error('GitHub PUT '+r.status+' '+t); }
   return r.json();
 }
