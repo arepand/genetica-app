@@ -474,8 +474,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.40.2';
+const APP_VERSION='1.40.3';
 const CHANGELOG=[
+  {v:'1.40.3', d:'2026-07-03', c:['Arreglo importante: el "Error al guardar: The quota has been exceeded" NO era de GitHub — era el navegador (localStorage lleno de copias de seguridad locales) rompiendo el guardado DESPUÉS de que el commit a GitHub ya hubiera funcionado. Ahora esa caché local nunca bloquea el guardado, y las copias de seguridad de protocolos/síndromes prenatales ocupan menos sitio (8 versiones en vez de 20).']},
   {v:'1.40.2', d:'2026-07-03', c:['Menos llamadas a la API de GitHub al guardar protocolos (para evitar el "quota exceeded"/límite de ráfaga): reutiliza el "sha" ya conocido en vez de pedirlo de nuevo, y el índice de protocolos solo se lee/escribe si realmente cambió el nombre/sinónimos/población/validado (la mayoría de guardados no lo tocan).']},
   {v:'1.40.1', d:'2026-07-03', c:['Arreglo: "Error al guardar: GitHub PUT 409" (sha desfasado por una escritura reciente al mismo fichero) ya no bloquea el guardado — reintenta automáticamente una vez con el sha actual antes de fallar.']},
   {v:'1.40.0', d:'2026-07-03', c:['Editor de protocolo: nuevo botón «🔗 Buscar DOI/PMID de las fuentes» — busca con IA (web) el DOI/PMID/PMCID de las referencias que aún no lo tienen (solo los añade si encuentra una coincidencia segura, nunca los inventa) y los deja listos en el JSON para guardar. Útil para activar el marcador de ReadCube Papers en protocolos ya existentes.']},
@@ -1113,7 +1114,7 @@ function loadCfg(){
   if(c.llmKey && !c.anthropicKey && !c.openaiKey){ if(c.provider==='openai') c.openaiKey=c.llmKey; else c.anthropicKey=c.llmKey; }
   return c;
 }
-function saveCfg(c){ localStorage.setItem(CFG_KEY, JSON.stringify(c)); }
+function saveCfg(c){ try{ localStorage.setItem(CFG_KEY, JSON.stringify(c)); }catch(e){ showToast('No se pudo guardar en localStorage (¿lleno?): '+e.message); } }
 
 /* ---- Enrutado automático de modelo por operación ----
    Pones las dos API keys; cada operación usa el modelo más adecuado del
@@ -1232,7 +1233,7 @@ async function ghPutFile(path, obj, message, sha, _retried){
 }
 
 /* ---- Librería de fichas (índice + fichas) con caché localStorage ---- */
-function cacheIndex(idx){ localStorage.setItem('fh_idx', JSON.stringify(idx)); }
+function cacheIndex(idx){ try{ localStorage.setItem('fh_idx', JSON.stringify(idx)); }catch(e){} }   // no debe romper el guardado si localStorage está lleno
 function cachedIndex(){ try{ return JSON.parse(localStorage.getItem('fh_idx')); }catch(e){ return null; } }
 async function getIndex(){
   if(ghConfigured()){
@@ -1270,7 +1271,7 @@ async function saveFicha(ficha){
     await ghPutFile(ipath, idx, 'index: '+ficha.id);
   } else if(iLocal>=0){ idx.fichas[iLocal]=entry; }
   cacheIndex(idx);
-  localStorage.setItem('fh_ficha_'+ficha.id, JSON.stringify(ficha));
+  try{ localStorage.setItem('fh_ficha_'+ficha.id, JSON.stringify(ficha)); }catch(e){}   // el commit a GitHub ya se hizo; que la caché local no lo eche a perder
   return idx;
 }
 
@@ -2676,7 +2677,7 @@ async function persistFicha(f){
   const entry={id:f.id, nombre:f.nombre_es, sinonimos:f.sinonimos||[], poblacion:f.poblacion||'unica', grupo:f.grupo||null, validado:!!f.validado};
   const i=idx.fichas.findIndex(x=>x.id===f.id);
   if(i>=0) idx.fichas[i]=entry; else idx.fichas.push(entry);
-  cacheIndex(idx); localStorage.setItem('fh_ficha_'+f.id, JSON.stringify(f));
+  cacheIndex(idx); try{ localStorage.setItem('fh_ficha_'+f.id, JSON.stringify(f)); }catch(e){}
   return 'cache';
 }
 function downloadJson(f){
@@ -2698,7 +2699,7 @@ function bumpFichaRev(f, nota){
     const key='fh_fichabak_'+f.id;
     const stack=fichaBackups(f.id);
     stack.unshift({rev:f.rev, fecha:new Date().toISOString(), nota:(nota||'').trim(), json:JSON.stringify(f)});
-    localStorage.setItem(key, JSON.stringify(stack.slice(0,20)));
+    localStorage.setItem(key, JSON.stringify(stack.slice(0,8)));   // menos copias → menos presión sobre la cuota de localStorage
   }catch(e){}
   return f;
 }
@@ -4789,7 +4790,7 @@ function bumpPrenatalRev(s, nota){
   s.historial=Array.isArray(s.historial)?s.historial:[];
   s.historial.unshift({rev:s.rev, fecha:new Date().toISOString(), nota:(nota||'').trim()});
   s.historial=s.historial.slice(0,50);
-  try{ const key=normSyndName(s.name); const st=prenatalBackups(key); st.unshift({rev:s.rev, fecha:new Date().toISOString(), nota:(nota||'').trim(), json:JSON.stringify(s)}); localStorage.setItem('fh_prenbak_'+key, JSON.stringify(st.slice(0,20))); }catch(e){}
+  try{ const key=normSyndName(s.name); const st=prenatalBackups(key); st.unshift({rev:s.rev, fecha:new Date().toISOString(), nota:(nota||'').trim(), json:JSON.stringify(s)}); localStorage.setItem('fh_prenbak_'+key, JSON.stringify(st.slice(0,8))); }catch(e){}
   return s;
 }
 /* Asegura los metadatos de un hallazgo prenatal (label/sistema) para un HPO añadido a mano. */
