@@ -474,8 +474,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.38.1';
+const APP_VERSION='1.39.0';
 const CHANGELOG=[
+  {v:'1.39.0', d:'2026-07-03', c:['Marcador ReadCube Papers: además del DOI, ahora también reconoce PMID y PMCID (los tres identificadores que usa realmente la extensión, confirmado inspeccionando su código) — detectados automáticamente en URLs de PubMed/PMC o pedidos a la IA al crear/actualizar protocolos, así que también funciona con referencias que no tienen DOI.']},
   {v:'1.38.1', d:'2026-07-03', c:['Al crear o actualizar un protocolo con IA (incluida la vigilancia/tratamiento y las comprobaciones de novedades), ahora se pide EXPLÍCITAMENTE el DOI de cada referencia científica cuando exista, para que el marcador de ReadCube Papers funcione también en las fuentes que va incorporando la IA (antes solo se detectaba si la URL ya era un enlace doi.org).']},
   {v:'1.38.0', d:'2026-07-03', c:['Bibliografía: las referencias con DOI ahora llevan el marcador oficial que reconoce la extensión "Papers by ReadCube" — si la tienes instalada, mostrará su icono de "en tu biblioteca / añadir" igual que en PubMed, directamente en Ariadna (sin llamadas de red: es la propia extensión la que lo detecta en la página).']},
   {v:'1.37.0', d:'2026-07-03', c:['Nuevo: editor de definición de cada HPO (enlace «✎ editar» en el tooltip «i»). Puedes escribir un texto libre, regenerar la traducción con IA, restaurar la definición automática, o recuperar cualquier versión anterior de un historial con fecha y hora — queda guardado para todos los usos futuros de ese HPO.']},
@@ -1336,12 +1337,23 @@ async function desregistrarDoc(id){
   return idx;
 }
 let _docsPrefetched=false;
-/* DOI a partir de una URL doi.org (la forma más habitual de guardar el enlace de una referencia). */
+/* DOI/PMID/PMCID a partir de URLs habituales para guardar el enlace de una referencia. */
 function doiFromUrl(u){ const m=String(u||'').match(/\bdoi\.org\/(10\.[^\s"'<>)\]]+)/i); return m ? decodeURIComponent(m[1]).replace(/[),.;]+$/,'') : ''; }
+function pmidFromUrl(u){ const m=String(u||'').match(/pubmed\.ncbi\.nlm\.nih\.gov\/(\d+)/i) || String(u||'').match(/ncbi\.nlm\.nih\.gov\/pubmed\/(\d+)/i); return m ? m[1] : ''; }
+function pmcidFromUrl(u){ const m=String(u||'').match(/\b(PMC\d+)\b/i); return m ? m[1].toUpperCase() : ''; }
 /* Marcador OFICIAL que reconoce la extensión "Papers by ReadCube" en cualquier página (no solo PubMed/editoriales):
-   un elemento .__readcube-library-button[data-doi] activa su icono de "en tu biblioteca / añadir", igual que en PubMed.
-   100% cliente (sin llamadas de red desde Ariadna, sin CORS): si el usuario tiene la extensión instalada, la inyecta ella misma. */
-function readcubeMarkerHtml(doi){ return doi ? ' <span class="__readcube-library-button" data-doi="'+escA(doi)+'" title="ReadCube Papers"></span>' : ''; }
+   un elemento .__readcube-library-button[data-doi|data-pmid|data-pmcid] activa su icono de "en tu biblioteca / añadir",
+   igual que en PubMed (confirmado inspeccionando el propio selector que usa la extensión para páginas genéricas).
+   100% cliente (sin llamadas de red desde Ariadna, sin CORS): si el usuario tiene la extensión instalada, la inyecta ella misma.
+   Acepta un DOI (string, forma antigua) o {doi,pmid,pmcid} — incluye TODOS los que se conozcan. */
+function readcubeMarkerHtml(ids){
+  const o = (typeof ids==='string') ? {doi:ids} : (ids||{});
+  const attrs=[];
+  if(o.doi) attrs.push('data-doi="'+escA(o.doi)+'"');
+  if(o.pmid) attrs.push('data-pmid="'+escA(o.pmid)+'"');
+  if(o.pmcid) attrs.push('data-pmcid="'+escA(o.pmcid)+'"');
+  return attrs.length ? ' <span class="__readcube-library-button" '+attrs.join(' ')+' title="ReadCube Papers"></span>' : '';
+}
 /* Componente reutilizable para CUALQUIER referencia bibliográfica:
    - si su PDF está indexado en docs/index.json → icono 📄 con tooltip (nombre + descripción + abrir PDF);
    - si no → botón "📎 asignar PDF" que abre el registro. fuente = {titulo,url,anio}. */
@@ -1349,7 +1361,11 @@ function bibRefHtml(fuente){
   if(!fuente || (!fuente.url && !fuente.titulo)) return '';
   const docs=(cachedDocs()||{}).docs||[];
   const d=matchDoc(fuente, docs);
-  const doi=fuente.doi||(d&&d.doi)||doiFromUrl(fuente.url)||doiFromUrl(d&&d.url);
+  const ids={
+    doi: fuente.doi||(d&&d.doi)||doiFromUrl(fuente.url)||doiFromUrl(d&&d.url),
+    pmid: fuente.pmid||(d&&d.pmid)||pmidFromUrl(fuente.url)||pmidFromUrl(d&&d.url),
+    pmcid: fuente.pmcid||(d&&d.pmcid)||pmcidFromUrl(fuente.url)||pmcidFromUrl(d&&d.url)
+  };
   if(d){
     const pdf=d.enlace||d.url||'';
     const tip=escHtml(d.titulo||fuente.titulo||'Documento')
@@ -1357,10 +1373,10 @@ function bibRefHtml(fuente){
       +(pdf?('<br><a href="'+escHtml(pdf).replace(/"/g,'&quot;')+'" target="_blank" rel="noopener">Abrir PDF ↗</a>'):'');
     return ' <span class="hastip bib-have" title="PDF en tu repositorio">📄<span class="tooltip">'+tip+'</span></span>'
       +(d.id?' <a class="tip-ai bib-unassign" data-docid="'+escHtml(String(d.id))+'" title="Eliminar este documento asignado del índice">✕</a>':'')
-      +readcubeMarkerHtml(doi);
+      +readcubeMarkerHtml(ids);
   }
   const enc=encodeURIComponent(JSON.stringify({titulo:fuente.titulo||'', url:fuente.url||'', anio:fuente.anio||''}));
-  return ' <a class="tip-ai bib-assign" data-bibref="'+enc+'" title="Asignar/registrar el PDF de esta referencia en tu repositorio">📎 asignar PDF</a>'+readcubeMarkerHtml(doi);
+  return ' <a class="tip-ai bib-assign" data-bibref="'+enc+'" title="Asignar/registrar el PDF de esta referencia en tu repositorio">📎 asignar PDF</a>'+readcubeMarkerHtml(ids);
 }
 function wireBibRefs(container, onDone){
   if(!container) return;
@@ -2474,7 +2490,7 @@ async function profundizarIA(){
    PARTE E — Módulo 4: Autoría de ficha con IA (web search) + revisión + commit
    =========================================================================== */
 /* Orden de prioridad de fuentes científicas (repositorio interno → ES → EU → US). */
-const SOURCE_PRIORITY = 'Consulta y prioriza fuentes científicas en ESTE ORDEN: (1) la guía o documento aportado por el clínico (repositorio interno), si lo hay; (2) sociedades científicas ESPAÑOLAS (p. ej. AEGH, AEP y las sociedades de la especialidad correspondiente); (3) EUROPEAS (p. ej. ESHG, ERN, EMA); (4) AMERICANAS (p. ej. ACMG, AAP, NIH/GeneReviews/OMIM). Busca en la web siguiendo ese orden de preferencia y CITA siempre las fuentes con su título, URL y año en "fuentes". Si la fuente es un artículo científico (no una guía/GeneReviews/OMIM sin DOI), añade TAMBIÉN su "doi" (identificador DOI real, sin el prefijo https://doi.org/) siempre que lo conozcas — permite detectar la referencia en gestores bibliográficos del clínico.';
+const SOURCE_PRIORITY = 'Consulta y prioriza fuentes científicas en ESTE ORDEN: (1) la guía o documento aportado por el clínico (repositorio interno), si lo hay; (2) sociedades científicas ESPAÑOLAS (p. ej. AEGH, AEP y las sociedades de la especialidad correspondiente); (3) EUROPEAS (p. ej. ESHG, ERN, EMA); (4) AMERICANAS (p. ej. ACMG, AAP, NIH/GeneReviews/OMIM). Busca en la web siguiendo ese orden de preferencia y CITA siempre las fuentes con su título, URL y año en "fuentes". Si la fuente es un artículo científico, añade TAMBIÉN, siempre que los conozcas: "doi" (identificador DOI real, sin el prefijo https://doi.org/), "pmid" (PubMed ID, solo dígitos) y "pmcid" (PubMed Central ID, formato PMCxxxxxxx) — permiten detectar la referencia en gestores bibliográficos del clínico (basta con UNO de los tres si no conoces los demás).';
 try{ if(typeof window!=='undefined') window.SOURCE_PRIORITY=SOURCE_PRIORITY; }catch(e){}
 
 const FICHA_SYSTEM_PROMPT = `Eres genetista clínico experto en fenotipado HPO. Genera una FICHA en JSON (y NADA más que el JSON) para la entidad o grupo nosológico del motivo dado, siguiendo EXACTAMENTE este esquema:
@@ -2485,7 +2501,7 @@ const FICHA_SYSTEM_PROMPT = `Eres genetista clínico experto en fenotipado HPO. 
   "poblacion": "pediatrica | adulta | unica",
   "grupo": "slug-de-la-entidad-compartido-entre-variantes-por-edad (opcional)",
   "version": "AAAA-MM",
-  "fuentes": [{"titulo":"...","url":"https://...","anio":"AAAA","doi":"10.xxxx (opcional, si es un artículo con DOI)"}],
+  "fuentes": [{"titulo":"...","url":"https://...","anio":"AAAA","doi":"10.xxxx (opcional)","pmid":"12345678 (opcional)","pmcid":"PMCxxxxxxx (opcional)"}],
   "modulos": { "beighton": false, "antropometria": false },
   "dominios": [
     { "nombre": "Dominio clínico (orden clínico, NO alfabético)",
@@ -2508,7 +2524,7 @@ const FICHA_SYSTEM_PROMPT = `Eres genetista clínico experto en fenotipado HPO. 
     "tipo": "panel dirigido | exoma | genoma | gen único | array-CGH | otro",
     "detalle": "qué estudio en primera línea y por qué; qué hacer si es negativo (escalado)",
     "indicaciones": ["circunstancia clínica concreta en que se indica el estudio", "..."],
-    "fuentes": [{"titulo":"...","url":"https://...","anio":"AAAA","doi":"10.xxxx (opcional)"}]
+    "fuentes": [{"titulo":"...","url":"https://...","anio":"AAAA","doi":"10.xxxx (opcional)","pmid":"(opcional)","pmcid":"(opcional)"}]
   }
 }
 Reglas: usa códigos HPO REALES y vigentes (formato HP:0000000, 7 dígitos). **CADA código HPO DEBE corresponder EXACTAMENTE al concepto que quieres expresar**: el nombre oficial del término en HPO tiene que coincidir con la "nombre" que pones; NUNCA uses un código que signifique otra cosa (p. ej. NO pongas un código de "ascitis" para "hernia umbilical"). En la duda, prefiere el término HPO más específico cuyo nombre oficial encaje con el concepto; los códigos se VERIFICAN contra JAX y los que no correspondan se rechazan o corrigen. Ordena dominios y preguntas por lógica clínica, NUNCA alfabético; sé exhaustivo según los criterios diagnósticos vigentes (busca en la web las guías/criterios actuales y cítalos en "fuentes"); en "poblacion" decide: si los criterios diagnósticos, los genes o el manejo difieren de forma RELEVANTE entre paciente pediátrico y adulto, genera la variante ("pediatrica" o "adulta") y comparte el mismo "grupo" entre ambas variantes (indica que conviene crear también la complementaria); si no difieren, usa "unica"; en "estudio_genetico" indica con apoyo de guías CUÁNDO está indicado el estudio, en qué circunstancias y QUÉ tipo de estudio (panel dirigido/exoma/genoma…) en primera línea y el escalado si es negativo; "logica" es "and" si exige mayores Y menores, "or" si basta uno de los dos umbrales; en cada entidad, SOLO si el criterio diagnóstico depende del sexo o de la edad, añade "sexo" ("Femenino"/"Masculino") y/o "edad_min_anios"/"edad_max_anios" (en años; usa fracciones para meses, p. ej. 0.5 = 6 meses) — OMÍTELOS si el criterio no depende de edad/sexo; la app ya conoce edad y sexo del paciente y marcará la entidad como "no aplica" fuera de rango; activa modulos.beighton o modulos.antropometria solo si son clínicamente pertinentes. ${SOURCE_PRIORITY} Devuelve SOLO el JSON.`;
@@ -3575,7 +3591,7 @@ function evalResultHtml(r, note){
   return `<div class="eval ${r.indicado?'on':'off'}">
     <b>${r.indicado?'✓ Estudio indicado':'✗ No indicado'}</b> · ${r.cumple_criterios?'cumple criterios':'no cumple criterios'}
     ${r.justificacion?`<div style="margin-top:4px">${r.justificacion}</div>`:''}
-    ${g.url?`<div class="study-src">Según: <a href="${g.url}" target="_blank" rel="noopener">${g.titulo||g.url}${g.anio?' ('+g.anio+')':''}</a>${bibRefHtml({titulo:g.titulo,url:g.url,anio:g.anio,doi:g.doi})}</div>`:(g.titulo?`<div class="study-src">Según: ${g.titulo}</div>`:'')}
+    ${g.url?`<div class="study-src">Según: <a href="${g.url}" target="_blank" rel="noopener">${g.titulo||g.url}${g.anio?' ('+g.anio+')':''}</a>${bibRefHtml({titulo:g.titulo,url:g.url,anio:g.anio,doi:g.doi,pmid:g.pmid,pmcid:g.pmcid})}</div>`:(g.titulo?`<div class="study-src">Según: ${g.titulo}</div>`:'')}
     ${note?`<div class="study-src" style="opacity:.85">${note}</div>`:''}
   </div>`;
 }
@@ -4054,7 +4070,7 @@ async function buscarSeguimiento(gene){
   out.innerHTML='<div class="loading">Buscando guías de vigilancia y tratamiento (web · IA)…</div>';
   try{
     let rag=''; try{ if(Object.keys(ragDocs).length){ rag=await ragContext(4, gene); } }catch(e){}
-    const sys='Eres genetista clínico. Para el GEN / alteración / entidad indicada, devuelve las recomendaciones de VIGILANCIA (cribado/seguimiento) y de MANEJO/TRATAMIENTO basadas en GUÍAS VIGENTES (GeneReviews, sociedades médicas, documentos de consenso). NO inventes URLs ni datos; si no hay evidencia clara, indícalo. '+SOURCE_PRIORITY+(rag?('\n\nDOCUMENTOS DE MI REPOSITORIO (tenlos en cuenta y cítalos en fuentes):\n'+rag):'')+' Devuelve SOLO JSON {"gen":"","entidad":"","herencia":"","resumen":"1-2 frases","vigilancia":[{"area":"","prueba":"","inicio":"","frecuencia":"","nota":""}],"tratamiento":[{"tema":"","recomendacion":""}],"fuentes":[{"titulo":"","url":"","anio":"","doi":"(opcional, si es un artículo con DOI)"}]}.';
+    const sys='Eres genetista clínico. Para el GEN / alteración / entidad indicada, devuelve las recomendaciones de VIGILANCIA (cribado/seguimiento) y de MANEJO/TRATAMIENTO basadas en GUÍAS VIGENTES (GeneReviews, sociedades médicas, documentos de consenso). NO inventes URLs ni datos; si no hay evidencia clara, indícalo. '+SOURCE_PRIORITY+(rag?('\n\nDOCUMENTOS DE MI REPOSITORIO (tenlos en cuenta y cítalos en fuentes):\n'+rag):'')+' Devuelve SOLO JSON {"gen":"","entidad":"","herencia":"","resumen":"1-2 frases","vigilancia":[{"area":"","prueba":"","inicio":"","frecuencia":"","nota":""}],"tratamiento":[{"tema":"","recomendacion":""}],"fuentes":[{"titulo":"","url":"","anio":"","doi":"(opcional)","pmid":"(opcional)","pmcid":"(opcional)"}]}.';
     const resp=await callLLM({system:sys, user:'Gen/alteración/entidad: '+gene, webSearch:true, maxTokens:2400, task:'eval'});
     const j=extractJSON(resp);
     if(!j){ out.innerHTML='<div class="err">La IA no devolvió datos válidos. Reintenta.</div>'; return; }
@@ -4075,7 +4091,7 @@ function renderSegResult(j, fromCache){
   const gl=geneLinks(j.gen||'');
   const vig=(j.vigilancia||[]).map(v=>`<tr><td style="padding:5px 8px;border-top:1px solid var(--line)"><b>${escHtml(v.area||'')}</b></td><td style="padding:5px 8px;border-top:1px solid var(--line)">${escHtml(v.prueba||'')}</td><td style="padding:5px 8px;border-top:1px solid var(--line)">${escHtml(v.inicio||'')}</td><td style="padding:5px 8px;border-top:1px solid var(--line)">${escHtml(v.frecuencia||'')}</td><td style="padding:5px 8px;border-top:1px solid var(--line);color:var(--ink3)">${escHtml(v.nota||'')}</td></tr>`).join('');
   const trt=(j.tratamiento||[]).map(t=>`<li><b>${escHtml(t.tema||'')}:</b> ${escHtml(t.recomendacion||'')}</li>`).join('');
-  const fuentes=(j.fuentes||[]).map(f=>`<li><a href="${escHtml(String(f.url||'')).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">${escHtml(f.titulo||f.url||'')}${f.anio?' ('+escHtml(String(f.anio))+')':''}</a>${bibRefHtml({titulo:f.titulo,url:f.url,anio:f.anio,doi:f.doi})}</li>`).join('');
+  const fuentes=(j.fuentes||[]).map(f=>`<li><a href="${escHtml(String(f.url||'')).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">${escHtml(f.titulo||f.url||'')}${f.anio?' ('+escHtml(String(f.anio))+')':''}</a>${bibRefHtml({titulo:f.titulo,url:f.url,anio:f.anio,doi:f.doi,pmid:f.pmid,pmcid:f.pmcid})}</li>`).join('');
   out.innerHTML=`<div class="study" style="margin:10px 0;padding:12px">
     <div style="font-size:16px;font-weight:600">${escHtml(j.gen||'')}${j.entidad?` <span class="dx-meta">· ${escHtml(j.entidad)}</span>`:''}${j.herencia?` <span class="pop-badge">${escHtml(j.herencia)}</span>`:''}${fromCache?' <span class="dx-meta">· guardado</span>':''}</div>
     ${j.resumen?`<div style="margin:6px 0;font-size:13px;line-height:1.6">${escHtml(j.resumen)}</div>`:''}
@@ -4329,7 +4345,7 @@ async function comprobarFreshness(){
   if(!anyProvider()){ out.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
   out.innerHTML='<div class="loading" style="padding:6px 0">Comprobando novedades en guías/criterios/genes (web)…</div>';
   try{
-    const system='Eres genetista clínico. Comprueba en la web si desde la versión indicada hay NOVEDADES relevantes en criterios diagnósticos, guías o genes para esta entidad. Devuelve SOLO JSON {"novedad":bool,"resumen":"texto breve","fuentes":[{"titulo":"...","url":"https://...","anio":"AAAA","doi":"(opcional)"}]}.';
+    const system='Eres genetista clínico. Comprueba en la web si desde la versión indicada hay NOVEDADES relevantes en criterios diagnósticos, guías o genes para esta entidad. Devuelve SOLO JSON {"novedad":bool,"resumen":"texto breve","fuentes":[{"titulo":"...","url":"https://...","anio":"AAAA","doi":"(opcional)","pmid":"(opcional)","pmcid":"(opcional)"}]}.';
     const user=JSON.stringify({ ficha:activeFicha.nombre_es, version:activeFicha.version||'desconocida' });
     const resp=await callLLM({ system, user, webSearch:true, maxTokens:700, task:'freshness' });
     const j=extractJSON(resp)||{};
