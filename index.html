@@ -474,8 +474,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.39.0';
+const APP_VERSION='1.40.0';
 const CHANGELOG=[
+  {v:'1.40.0', d:'2026-07-03', c:['Editor de protocolo: nuevo botón «🔗 Buscar DOI/PMID de las fuentes» — busca con IA (web) el DOI/PMID/PMCID de las referencias que aún no lo tienen (solo los añade si encuentra una coincidencia segura, nunca los inventa) y los deja listos en el JSON para guardar. Útil para activar el marcador de ReadCube Papers en protocolos ya existentes.']},
   {v:'1.39.0', d:'2026-07-03', c:['Marcador ReadCube Papers: además del DOI, ahora también reconoce PMID y PMCID (los tres identificadores que usa realmente la extensión, confirmado inspeccionando su código) — detectados automáticamente en URLs de PubMed/PMC o pedidos a la IA al crear/actualizar protocolos, así que también funciona con referencias que no tienen DOI.']},
   {v:'1.38.1', d:'2026-07-03', c:['Al crear o actualizar un protocolo con IA (incluida la vigilancia/tratamiento y las comprobaciones de novedades), ahora se pide EXPLÍCITAMENTE el DOI de cada referencia científica cuando exista, para que el marcador de ReadCube Papers funcione también en las fuentes que va incorporando la IA (antes solo se detectaba si la URL ya era un enlace doi.org).']},
   {v:'1.38.0', d:'2026-07-03', c:['Bibliografía: las referencias con DOI ahora llevan el marcador oficial que reconoce la extensión "Papers by ReadCube" — si la tienes instalada, mostrará su icono de "en tu biblioteca / añadir" igual que en PubMed, directamente en Ariadna (sin llamadas de red: es la propia extensión la que lo detecta en la página).']},
@@ -3187,9 +3188,11 @@ function openFichaReview(f, opts){
     <textarea id="fichaJson" spellcheck="false" style="width:100%; min-height:340px; font-family:'IBM Plex Mono',ui-monospace,monospace; font-size:12px; line-height:1.5; padding:12px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink)">${JSON.stringify(f,null,2).replace(/</g,'&lt;')}</textarea>
     <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap">
       <button class="btn" id="btnFichaVerify">Verificar/corregir HPO (todos)</button>
+      <button class="btn" id="btnFichaFindIds" title="Busca DOI/PMID/PMCID de las fuentes que aún no los tienen (para el marcador ReadCube Papers)">🔗 Buscar DOI/PMID de las fuentes</button>
       <button class="btn" id="btnFichaDownload">⬇ Descargar JSON</button>
     </div>
     <div class="test-out" id="fichaVerifyOut"></div>
+    <div class="test-out" id="fichaFindIdsOut"></div>
 
     <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; align-items:center">
       <input id="fichaEditInstr" type="text" placeholder="Dile a la IA qué modificar (p. ej. «añade un dominio ocular», «quita el gen X», «cambia el umbral»)…" style="flex:1; min-width:260px; padding:8px 11px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--ink); font-size:12.5px">
@@ -3416,6 +3419,38 @@ function openFichaReview(f, opts){
   }
   ov.querySelector('#btnFichaVerify').addEventListener('click', runVerify);
   if(opts.autoVerify) setTimeout(runVerify, 200); // autoría con IA → verificación automática al abrir
+  // Busca DOI/PMID/PMCID de las referencias que aún no los tienen (para el marcador ReadCube Papers).
+  async function runFindIds(){
+    const j=parse(); if(!j) return;
+    const fout=ov.querySelector('#fichaFindIdsOut');
+    const lists=[j.fuentes, j.estudio_genetico&&j.estudio_genetico.fuentes].filter(Array.isArray);
+    const targets=[];   // {list, idx, titulo, url}
+    lists.forEach(list=>list.forEach((f,idx)=>{ if(f && f.titulo && !f.doi && !f.pmid && !f.pmcid) targets.push({list, idx, titulo:f.titulo, url:f.url||''}); }));
+    if(!targets.length){ fout.className='test-out ok'; fout.textContent='Todas las fuentes con título ya tienen DOI/PMID/PMCID (o no hay fuentes).'; return; }
+    if(!anyProvider()){ fout.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
+    fout.className='test-out'; fout.textContent='Buscando DOI/PMID/PMCID de '+targets.length+' referencia(s)…';
+    try{
+      const system='Eres bibliotecario científico especializado en identificadores de publicaciones. Te doy una lista NUMERADA de referencias bibliográficas (título + URL si la hay). Para CADA una, busca en PubMed/CrossRef/DOI.org su identificador REAL: "doi" (sin el prefijo https://doi.org/), "pmid" (solo dígitos) y/o "pmcid" (formato PMCxxxxxxx). Devuelve un identificador SOLO si estás SEGURO de que corresponde EXACTAMENTE a esa referencia (mismo título/autores/año) — déjalo vacío ("") si no encuentras una coincidencia fiable. NUNCA inventes un identificador. Devuelve SOLO JSON {"resultados":[{"index":1,"doi":"","pmid":"","pmcid":""}]} — un elemento por cada referencia, mismo "index" que en la lista (empieza en 1).';
+      const user='Referencias:\n'+targets.map((t,i)=>(i+1)+'. "'+t.titulo+'"'+(t.url?' — '+t.url:'')).join('\n');
+      const resp=await callLLM({system, user, webSearch:true, maxTokens:2000, task:'eval'});
+      const j2=extractJSON(resp);
+      const results=(j2&&j2.resultados)||[];
+      let found=0;
+      results.forEach((r,i)=>{
+        const idx1 = (Number.isFinite(+r.index) && +r.index>=1) ? (+r.index-1) : i;
+        const t=targets[idx1]; if(!t) return;
+        const f=t.list[t.idx]; let hit=false;
+        if(r.doi){ f.doi=String(r.doi).trim(); hit=true; }
+        if(r.pmid){ f.pmid=String(r.pmid).trim(); hit=true; }
+        if(r.pmcid){ f.pmcid=String(r.pmcid).trim(); hit=true; }
+        if(hit) found++;
+      });
+      ta.value=JSON.stringify(j,null,2); renderPrev();
+      fout.className='test-out ok';
+      fout.innerHTML='✓ Encontrado(s) identificador(es) para <b>'+found+'</b> de '+targets.length+' referencia(s) sin DOI/PMID/PMCID. Revisa el JSON y pulsa «Guardar y commitear» para conservarlos.';
+    }catch(e){ fout.className='test-out bad'; fout.textContent='Error al buscar: '+e.message; }
+  }
+  ov.querySelector('#btnFichaFindIds').addEventListener('click', runFindIds);
   ov.querySelector('#btnAplicarGuia').addEventListener('click', async ()=>{
     const cur=parse(); if(!cur) return;
     const gout=ov.querySelector('#revGuiaOut');
