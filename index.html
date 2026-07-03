@@ -474,8 +474,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.37.0';
+const APP_VERSION='1.38.0';
 const CHANGELOG=[
+  {v:'1.38.0', d:'2026-07-03', c:['Bibliografía: las referencias con DOI ahora llevan el marcador oficial que reconoce la extensión "Papers by ReadCube" — si la tienes instalada, mostrará su icono de "en tu biblioteca / añadir" igual que en PubMed, directamente en Ariadna (sin llamadas de red: es la propia extensión la que lo detecta en la página).']},
   {v:'1.37.0', d:'2026-07-03', c:['Nuevo: editor de definición de cada HPO (enlace «✎ editar» en el tooltip «i»). Puedes escribir un texto libre, regenerar la traducción con IA, restaurar la definición automática, o recuperar cualquier versión anterior de un historial con fecha y hora — queda guardado para todos los usos futuros de ese HPO.']},
   {v:'1.36.1', d:'2026-07-03', c:['Cuadro de mando: botón «🗑 Borrar TODOS los registros» (con confirmación escribiendo BORRAR) para vaciar la tabla de actividad de golpe cuando haga falta.']},
   {v:'1.36.0', d:'2026-07-03', c:['Cuadro de mando: ahora puedes EDITAR o ELIMINAR cualquier registro ya importado (botones ✎/🗑 en la tabla).','Cuadro de mando: importación más fiable — elige modo «Página a página» (una imagen por llamada) o «En bloque: mismo encabezado» (fijas médico y agenda a mano, sin depender de que el modelo los detecte en cada página).','Cuadro de mando: ahora puedes arrastrar el PDF directamente sobre el recuadro de importar, sin tener que abrir el selector de archivo.','Protocolos: en el editor puedes activar o desactivar a mano los módulos anexos «Índice de Beighton» y «Antropometría» (por si la IA los añadió o quitó de forma incorrecta).','Diferencial cruzado: ahora muestra QUÉ hallazgos (HPO) concretos son los que cumplen en cada protocolo/entidad sugerida, no solo el recuento.']},
@@ -1334,6 +1335,12 @@ async function desregistrarDoc(id){
   return idx;
 }
 let _docsPrefetched=false;
+/* DOI a partir de una URL doi.org (la forma más habitual de guardar el enlace de una referencia). */
+function doiFromUrl(u){ const m=String(u||'').match(/\bdoi\.org\/(10\.[^\s"'<>)\]]+)/i); return m ? decodeURIComponent(m[1]).replace(/[),.;]+$/,'') : ''; }
+/* Marcador OFICIAL que reconoce la extensión "Papers by ReadCube" en cualquier página (no solo PubMed/editoriales):
+   un elemento .__readcube-library-button[data-doi] activa su icono de "en tu biblioteca / añadir", igual que en PubMed.
+   100% cliente (sin llamadas de red desde Ariadna, sin CORS): si el usuario tiene la extensión instalada, la inyecta ella misma. */
+function readcubeMarkerHtml(doi){ return doi ? ' <span class="__readcube-library-button" data-doi="'+escA(doi)+'" title="ReadCube Papers"></span>' : ''; }
 /* Componente reutilizable para CUALQUIER referencia bibliográfica:
    - si su PDF está indexado en docs/index.json → icono 📄 con tooltip (nombre + descripción + abrir PDF);
    - si no → botón "📎 asignar PDF" que abre el registro. fuente = {titulo,url,anio}. */
@@ -1341,16 +1348,18 @@ function bibRefHtml(fuente){
   if(!fuente || (!fuente.url && !fuente.titulo)) return '';
   const docs=(cachedDocs()||{}).docs||[];
   const d=matchDoc(fuente, docs);
+  const doi=(d&&d.doi)||doiFromUrl(fuente.url)||doiFromUrl(d&&d.url);
   if(d){
     const pdf=d.enlace||d.url||'';
     const tip=escHtml(d.titulo||fuente.titulo||'Documento')
       +(d.descripcion?('<br><span class="dx-meta">'+escHtml(d.descripcion)+'</span>'):'')
       +(pdf?('<br><a href="'+escHtml(pdf).replace(/"/g,'&quot;')+'" target="_blank" rel="noopener">Abrir PDF ↗</a>'):'');
     return ' <span class="hastip bib-have" title="PDF en tu repositorio">📄<span class="tooltip">'+tip+'</span></span>'
-      +(d.id?' <a class="tip-ai bib-unassign" data-docid="'+escHtml(String(d.id))+'" title="Eliminar este documento asignado del índice">✕</a>':'');
+      +(d.id?' <a class="tip-ai bib-unassign" data-docid="'+escHtml(String(d.id))+'" title="Eliminar este documento asignado del índice">✕</a>':'')
+      +readcubeMarkerHtml(doi);
   }
   const enc=encodeURIComponent(JSON.stringify({titulo:fuente.titulo||'', url:fuente.url||'', anio:fuente.anio||''}));
-  return ' <a class="tip-ai bib-assign" data-bibref="'+enc+'" title="Asignar/registrar el PDF de esta referencia en tu repositorio">📎 asignar PDF</a>';
+  return ' <a class="tip-ai bib-assign" data-bibref="'+enc+'" title="Asignar/registrar el PDF de esta referencia en tu repositorio">📎 asignar PDF</a>'+readcubeMarkerHtml(doi);
 }
 function wireBibRefs(container, onDone){
   if(!container) return;
