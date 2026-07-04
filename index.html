@@ -478,8 +478,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.47.0';
+const APP_VERSION='1.47.1';
 const CHANGELOG=[
+  {v:'1.47.1', d:'2026-07-04', c:['Diferencial cruzado (protocolos que también encajan): era demasiado laxo y proponía casi todos. Ahora solo aparece un protocolo si de verdad CUMPLE sus criterios, o si es una coincidencia parcial genuina (≥2 HPO compartidos y a un solo criterio de cumplir). Se acabó el proponer protocolos por un único HPO genérico compartido.']},
   {v:'1.47.0', d:'2026-07-04', c:['Antropometría: el peso ahora también sugiere HPO por edad — «Peso bajo para la edad» (HP:0004325) o «Peso elevado para la edad» (HP:0004324) según el z (0-18 a), complementando al IMC (útil sobre todo en lactantes, donde el IMC se usa poco). No duplica chips que ya aporte el IMC. La superficie corporal se mantiene como cálculo de Mosteller a propósito (no existe un HPO fenotípico para ella; es una magnitud de dosificación).']},
   {v:'1.46.0', d:'2026-07-04', c:['Biblioteca ReadCube: ahora al importar el CSV (que incluye la columna «Library URL») cada referencia que tengas en tu biblioteca se convierte en un ENLACE directo «📗 Papers ↗» que abre ese artículo en tu ReadCube — no solo un check. Puedes subir el archivo CSV (además de pegarlo). Si exportas en Excel: Archivo → Guardar como → CSV.','Nuevo campo «Enlace ReadCube Papers» por referencia en el editor de protocolo: pega ahí a mano el link del artículo en ReadCube y esa referencia mostrará el botón «📗 Papers ↗» (tiene prioridad sobre la biblioteca importada).']},
   {v:'1.45.0', d:'2026-07-04', c:['✅ Sincronización con tu biblioteca ReadCube Papers (sin depender de la extensión): en ⚙ Ajustes → «Biblioteca ReadCube Papers», exporta tu biblioteca/colección desde ReadCube (BibTeX, RIS o CSV) —o pega un listado de DOI/PMID— y pégalo. Ariadna extrae todos los DOI y PMID y marca con un check verde «✓ Papers» las referencias de tus protocolos que ya tienes en tu biblioteca. Todo local: sin API, sin permisos, sin CORS. Vuelve a pegar el export cuando tu biblioteca cambie.']},
@@ -4135,8 +4136,13 @@ function crossProtocolMatches(){
     if(fc.id===activeId) continue;
     const ents=[];
     for(const e of (fc.entidades||[])){ const st=entidadStatus(e); const feats=st.maj.length+st.min.length;
-      // MÁS LAXO: entra si cumple, o si ya hay ≥1 mayor o ≥2 rasgos (aparece antes, sin esperar a cumplir todo)
-      if(st.cumple || st.maj.length>=1 || feats>=2) ents.push({nombre:e.nombre, st, cumple:st.cumple, feats}); }
+      const hasThresh=(st.needMaj+st.needMin)>0;
+      // Umbral de relevancia (más estricto que antes, evita proponer "casi todos"):
+      //  · si CUMPLE criterios reales → se muestra (aunque sea con 1 rasgo, es un acierto diagnóstico);
+      //  · si la entidad no tiene umbral formal (cumple con cualquier rasgo) → exige ≥2 coincidencias;
+      //  · si NO cumple → solo como coincidencia PARCIAL genuina: ≥2 HPO compartidos y a ≤1 criterio de cumplir.
+      const show = st.cumple ? (hasThresh || feats>=2) : (feats>=2 && st.faltan<=1);
+      if(show) ents.push({nombre:e.nombre, st, cumple:st.cumple, feats}); }
     if(ents.length){ ents.sort((a,b)=> (b.cumple-a.cumple) || (b.st.score-a.st.score)); out.push({id:fc.id, nombre:fc.nombre, ents, score:Math.max(...ents.map(x=>x.st.score)), anyCumple:ents.some(x=>x.cumple)}); }
   }
   return out.sort((a,b)=> (b.anyCumple-a.anyCumple) || (b.score-a.score)).slice(0,5);   // hasta 5 protocolos
