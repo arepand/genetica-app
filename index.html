@@ -330,6 +330,9 @@
   #morfoSelected{margin-bottom:14px; padding-bottom:12px; border-bottom:2px solid var(--line);}
   .tip-ai{display:inline-block; margin-top:5px; color:var(--accent); cursor:pointer; font-size:11px; text-decoration:underline; font-weight:600;}
   .tip-edit{display:inline-block; margin:5px 0 0 8px; color:var(--ink3); cursor:pointer; font-size:11px; text-decoration:underline;}
+  .ref-ids{display:inline-flex; flex-wrap:wrap; gap:5px; margin-left:6px; vertical-align:middle;}
+  .ref-id{display:inline-block; font-size:10.5px; line-height:1.4; padding:1px 7px; border-radius:999px; background:var(--panel2); border:1px solid var(--line); color:var(--ink2); text-decoration:none; white-space:nowrap;}
+  .ref-id:hover{border-color:var(--accent); color:var(--accent);}
   .dx-src{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--accent); margin:4px 0 5px;}
   .prenatal-layout{display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:0; align-items:start;}
   .prenatal-main{padding-right:22px; min-width:0;}
@@ -474,8 +477,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.43.0';
+const APP_VERSION='1.44.0';
 const CHANGELOG=[
+  {v:'1.44.0', d:'2026-07-04', c:['Referencias estilo PubMed: cada referencia con identificadores muestra ahora etiquetas clicables PMID / DOI / PMCID que abren PubMed, doi.org o PMC — donde tu extensión ReadCube Papers sí muestra el indicador de biblioteca.','Nuevo botón «↗ Pestaña nueva» en cada protocolo (en la lista y en la vista): abre el protocolo en una pestaña aparte con carga completa de página. Además de ser más cómodo para tener varios abiertos, da a la extensión ReadCube una oportunidad real de detectar las referencias (que dentro de la app, por cómo funciona la extensión, no puede).']},
   {v:'1.43.0', d:'2026-07-04', c:['🐛 CAUSA RAÍZ del "no se guarda" (por fin): el guardado SÍ llegaba a GitHub, pero al reabrir el protocolo la app intentaba guardar una copia en la caché del navegador y, si esa caché estaba LLENA (el «quota exceeded» que salía), el error tumbaba la lectura entera y devolvía la versión VIEJA de la caché (sin los DOI/PMID recién puestos) — parecía que no se había guardado. Ahora un fallo de caché nunca descarta el dato real de GitHub.','Además, la app libera espacio automáticamente borrando solo cachés que puede reconstruir (traducciones, embeddings, textos de PDF), para que la caché llena deje de dar problemas.']},
   {v:'1.42.4', d:'2026-07-03', c:['Arreglo de fondo (causa real de "captura bien la referencia pero no se guarda"): «Buscar DOI/PMID de las fuentes» tarda varios segundos en responder; capturaba una foto del protocolo al empezar y, al terminar, la volvía a escribir ENTERA — borrando cualquier cambio hecho mientras tanto (otra búsqueda, una edición manual…). Ahora aplica lo encontrado sobre la versión más reciente en vez de sobrescribirla.']},
   {v:'1.42.3', d:'2026-07-03', c:['ReadCube Papers: como Ariadna nunca cambia la URL al navegar (así que una extensión que solo re-escanea al detectar navegación nunca vería el marcador insertado luego), ahora se simula una señal de "navegación" cada vez que se muestra bibliografía, por si la extensión la usa para volver a comprobar la página. Experimental — pendiente de confirmar si hace que aparezca el icono.']},
@@ -1453,6 +1457,19 @@ function nudgeSpaExtensionRescan(){
     history.replaceState(history.state, '', location.href);
     window.dispatchEvent(new PopStateEvent('popstate', {state: history.state}));
   }catch(e){}
+}
+/* Etiquetas pequeñas y clicables con los identificadores de una referencia (estilo PubMed): PMID → PubMed,
+   DOI → doi.org, PMCID → PMC. Al abrirlos en PubMed/DOI, la extensión ReadCube Papers muestra ahí su
+   indicador "en tu biblioteca". Deriva de la URL si no vienen explícitos. */
+function refIdChipsHtml(s){
+  s=s||{};
+  const doi=s.doi||doiFromUrl(s.url), pmid=s.pmid||pmidFromUrl(s.url), pmcid=s.pmcid||pmcidFromUrl(s.url);
+  const chip=(label,val,href)=>`<a class="ref-id" href="${escA(href)}" target="_blank" rel="noopener" title="Abrir en ${escHtml(label)} (ahí verás el indicador de ReadCube Papers)">${escHtml(label)}: ${escHtml(val)}</a>`;
+  const out=[];
+  if(pmid) out.push(chip('PMID', pmid, 'https://pubmed.ncbi.nlm.nih.gov/'+encodeURIComponent(pmid)+'/'));
+  if(doi) out.push(chip('DOI', doi, 'https://doi.org/'+encodeURIComponent(doi)));
+  if(pmcid) out.push(chip('PMCID', pmcid, 'https://www.ncbi.nlm.nih.gov/pmc/articles/'+encodeURIComponent(pmcid)+'/'));
+  return out.length ? ' <span class="ref-ids">'+out.join('')+'</span>' : '';
 }
 /* Componente reutilizable para CUALQUIER referencia bibliográfica:
    - si su PDF está indexado en docs/index.json → icono 📄 con tooltip (nombre + descripción + abrir PDF);
@@ -5995,6 +6012,7 @@ function libResultsHtml(filter){
 }
 function wireLibCards(scope){
   scope.querySelectorAll('[data-ver]').forEach(b=>b.addEventListener('click', ()=>abrirFichaBiblioteca(b.dataset.ver, false)));
+  scope.querySelectorAll('[data-vertab]').forEach(b=>b.addEventListener('click', ()=>abrirProtocoloEnPestana(b.dataset.vertab)));
   scope.querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click', ()=>abrirFichaBiblioteca(b.dataset.edit, true)));
   scope.querySelectorAll('[data-prenver]').forEach(b=>b.addEventListener('click', ()=>verSindromePrenatal(b.dataset.prenver)));
   scope.querySelectorAll('[data-prengo]').forEach(b=>b.addEventListener('click', ()=>showSection('prenatal')));
@@ -6071,9 +6089,15 @@ function libCardHtml(f){
     <div class="meta">${f.id}${(f.sinonimos&&f.sinonimos.length)?' · '+f.sinonimos.slice(0,4).join(', '):''}</div>
     <div class="acts">
       <button class="btn" data-ver="${f.id}">👁 Ver / imprimir</button>
+      <button class="btn" data-vertab="${f.id}" title="Abrir el protocolo en una pestaña nueva">↗ Pestaña nueva</button>
       <button class="btn" data-edit="${f.id}">✎ Editar</button>
     </div>
   </div>`;
+}
+/* Abre un protocolo en una PESTAÑA NUEVA (carga completa de la página) — deep-link ?proto=<id>. */
+function abrirProtocoloEnPestana(id){
+  try{ window.open(location.pathname+'?proto='+encodeURIComponent(id), '_blank', 'noopener'); }
+  catch(e){ showToast('No se pudo abrir la pestaña'); }
 }
 async function abrirFichaBiblioteca(id, edit){
   const ficha=await getFicha(id);
@@ -6084,9 +6108,9 @@ let _viewedFicha=null;
 async function renderFichaView(f){
   _viewedFicha=f;
   const box=document.getElementById('bibliotecaView'); if(!box) return;
-  const docs=(await getDocsIndex()).docs||[];
+  getDocsIndex();   // precarga la caché de documentos (bibRefHtml usa cachedDocs()); NO bloquea el render → refs en el DOM cuanto antes (mejor para la extensión ReadCube al abrir en pestaña nueva)
   const fuentesArr=f.fuentes||[];
-  const fuentes=fuentesArr.map((s,i)=>`<li><a href="${escHtml(String(s.url||'')).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">${escHtml(s.titulo||s.url||'')}</a>${s.anio?' ('+s.anio+')':''}${bibRefHtml(s)}</li>`).join('');
+  const fuentes=fuentesArr.map((s,i)=>`<li><a href="${escHtml(String(s.url||'')).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">${escHtml(s.titulo||s.url||'')}</a>${s.anio?' ('+s.anio+')':''}${refIdChipsHtml(s)}${bibRefHtml(s)}</li>`).join('');
   const doms=(f.dominios||[]).map(d=>`<div class="dom"><div class="dom-n">${d.nombre}</div><ul>${(d.preguntas||[]).map(q=>`<li>${q.texto}</li>`).join('')}</ul></div>`).join('');
   const ents=(f.entidades||[]).map(e=>`<div class="ent"><b>${e.nombre}</b>${e.genes&&e.genes.length?` · genes: ${e.genes.join(', ')}`:''}<br>Criterio: ${e.umbral||('≥'+(e.min_mayores||0)+' mayores '+(((e.logica||'and')==='or')?'o':'y')+' ≥'+(e.min_menores||0)+' menores')} · mayores: ${(e.mayores||[]).map(hpoCodeInfo).join(', ')||'—'} · menores: ${(e.menores||[]).map(hpoCodeInfo).join(', ')||'—'}</div>`).join('');
   const eg=f.estudio_genetico;
@@ -6108,6 +6132,7 @@ async function renderFichaView(f){
       <button class="btn" id="fvBack">‹ Volver a la biblioteca</button>
       <button class="btn" id="fvEdit">✎ Editar</button>
       <button class="btn" id="fvValidate">🔧 Validar HPO</button>
+      <button class="btn" id="fvTab" title="Abrir en una pestaña nueva">↗ Pestaña nueva</button>
       <button class="btn primary" id="fvPrint">🖨 Imprimir / PDF</button>
     </div>
     <div class="fview" id="fviewDoc">
@@ -6126,6 +6151,7 @@ async function renderFichaView(f){
   document.getElementById('fvBack').addEventListener('click', ()=>renderBiblioteca());
   document.getElementById('fvEdit').addEventListener('click', ()=>openFichaReview(f, {origin:'biblioteca'}));
   document.getElementById('fvValidate').addEventListener('click', ()=>openValidarHpo(f));
+  { const t=document.getElementById('fvTab'); if(t) t.addEventListener('click', ()=>abrirProtocoloEnPestana(f.id)); }
   document.getElementById('fvPrint').addEventListener('click', ()=>window.print());
   const bindPanTog=(scope)=>scope.querySelectorAll('.panTog').forEach(cb=>{ if(cb._bound) return; cb._bound=1; cb.addEventListener('change', async ()=>{ await togglePanelFicha(cb.dataset.pid, f.id, cb.checked); renderFichaView(f); }); });
   bindPanTog(box);
@@ -6267,6 +6293,21 @@ function init(){
   loadConsultas();
   // Chequeo periódico (7 días) de modelos IA nuevos (p. ej. Fable) → avisa y anota en el registro
   setTimeout(()=>{ checkModelsFreshness().catch(()=>{}); }, 3000);
+  // Deep-link ?proto=<id>: abrir un protocolo directamente (para «Abrir en pestaña nueva»).
+  let deepProto=''; try{ deepProto=new URLSearchParams(location.search).get('proto')||''; }catch(e){}
+  if(deepProto){
+    // Mostrar la vista de biblioteca SIN renderizar la lista (renderBiblioteca es async y sobrescribiría la vista).
+    currentSection='biblioteca';
+    document.querySelectorAll('#sectionNav .section-btn').forEach(b=>b.classList.toggle('on', b.dataset.section==='biblioteca'));
+    ['fenotipadoView','fenotipoView','documentosView','dismorfologiaView','antropometriaView','prenatalView','informesView','seguimientoView','panelesView','cuadromandoView'].forEach(idv=>{ const v=document.getElementById(idv); if(v) v.style.display='none'; });
+    const bibv=document.getElementById('bibliotecaView'); if(bibv) bibv.style.display='block';
+    // Render SÍNCRONO desde la caché local si la tenemos: pone las referencias (con sus identificadores) en el
+    // DOM cuanto antes, para que la extensión ReadCube Papers las vea al escanear esta pestaña recién abierta.
+    let cached=null; try{ cached=JSON.parse(localStorage.getItem('fh_ficha_'+deepProto)); }catch(e){}
+    if(cached) renderFichaView(cached);
+    abrirFichaBiblioteca(deepProto, false);   // refresca desde GitHub (por si cambió)
+    return;
+  }
   // Pestaña de inicio: Fenotipo (panel a pantalla completa)
   showSection('fenotipo');
 }
