@@ -478,8 +478,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.45.0';
+const APP_VERSION='1.46.0';
 const CHANGELOG=[
+  {v:'1.46.0', d:'2026-07-04', c:['Biblioteca ReadCube: ahora al importar el CSV (que incluye la columna «Library URL») cada referencia que tengas en tu biblioteca se convierte en un ENLACE directo «📗 Papers ↗» que abre ese artículo en tu ReadCube — no solo un check. Puedes subir el archivo CSV (además de pegarlo). Si exportas en Excel: Archivo → Guardar como → CSV.','Nuevo campo «Enlace ReadCube Papers» por referencia en el editor de protocolo: pega ahí a mano el link del artículo en ReadCube y esa referencia mostrará el botón «📗 Papers ↗» (tiene prioridad sobre la biblioteca importada).']},
   {v:'1.45.0', d:'2026-07-04', c:['✅ Sincronización con tu biblioteca ReadCube Papers (sin depender de la extensión): en ⚙ Ajustes → «Biblioteca ReadCube Papers», exporta tu biblioteca/colección desde ReadCube (BibTeX, RIS o CSV) —o pega un listado de DOI/PMID— y pégalo. Ariadna extrae todos los DOI y PMID y marca con un check verde «✓ Papers» las referencias de tus protocolos que ya tienes en tu biblioteca. Todo local: sin API, sin permisos, sin CORS. Vuelve a pegar el export cuando tu biblioteca cambie.']},
   {v:'1.44.0', d:'2026-07-04', c:['Referencias estilo PubMed: cada referencia con identificadores muestra ahora etiquetas clicables PMID / DOI / PMCID que abren PubMed, doi.org o PMC — donde tu extensión ReadCube Papers sí muestra el indicador de biblioteca.','Nuevo botón «↗ Pestaña nueva» en cada protocolo (en la lista y en la vista): abre el protocolo en una pestaña aparte con carga completa de página. Además de ser más cómodo para tener varios abiertos, da a la extensión ReadCube una oportunidad real de detectar las referencias (que dentro de la app, por cómo funciona la extensión, no puede).']},
   {v:'1.43.0', d:'2026-07-04', c:['🐛 CAUSA RAÍZ del "no se guarda" (por fin): el guardado SÍ llegaba a GitHub, pero al reabrir el protocolo la app intentaba guardar una copia en la caché del navegador y, si esa caché estaba LLENA (el «quota exceeded» que salía), el error tumbaba la lectura entera y devolvía la versión VIEJA de la caché (sin los DOI/PMID recién puestos) — parecía que no se había guardado. Ahora un fallo de caché nunca descarta el dato real de GitHub.','Además, la app libera espacio automáticamente borrando solo cachés que puede reconstruir (traducciones, embeddings, textos de PDF), para que la caché llena deje de dar problemas.']},
@@ -1439,47 +1440,86 @@ let _docsPrefetched=false;
    los guardamos. Luego cada referencia con un DOI/PMID que coincida se marca con un
    check verde «✓ En tu biblioteca», igual que el indicador de la extensión en PubMed.
    =========================================================================== */
-let READCUBE_LIB=null;   // {dois:Set<string minúsculas>, pmids:Set<string>, n:number, fecha:string}
+let READCUBE_LIB=null;   // {byDoi:{doiMinus:libraryUrl}, byPmid:{pmid:libraryUrl}, fecha}
 function normDoi(d){ return String(d||'').trim().toLowerCase().replace(/^https?:\/\/(dx\.)?doi\.org\//,'').replace(/[).,;]+$/,''); }
+function rcCounts(lib){ return { doi:Object.keys(lib.byDoi||{}).length, pmid:Object.keys(lib.byPmid||{}).length }; }
 function loadReadcubeLib(){
   if(READCUBE_LIB) return READCUBE_LIB;
   let raw=null; try{ raw=JSON.parse(localStorage.getItem('fh_readcube_lib')); }catch(e){}
-  READCUBE_LIB = raw && raw.dois ? {dois:new Set(raw.dois), pmids:new Set(raw.pmids||[]), n:raw.n||0, fecha:raw.fecha||''} : {dois:new Set(), pmids:new Set(), n:0, fecha:''};
+  if(raw && raw.byDoi){ READCUBE_LIB={byDoi:raw.byDoi||{}, byPmid:raw.byPmid||{}, fecha:raw.fecha||''}; }
+  else if(raw && raw.dois){ /* formato antiguo (solo membresía) → migra a mapas con url vacía */ READCUBE_LIB={byDoi:{}, byPmid:{}, fecha:raw.fecha||''}; (raw.dois||[]).forEach(d=>READCUBE_LIB.byDoi[normDoi(d)]=''); (raw.pmids||[]).forEach(p=>READCUBE_LIB.byPmid[String(p)]=''); }
+  else READCUBE_LIB={byDoi:{}, byPmid:{}, fecha:''};
   return READCUBE_LIB;
 }
-/* Extrae TODOS los DOI y PMID de un texto exportado (BibTeX/RIS/CSV/listado). Formato-agnóstico. */
+/* Parser CSV robusto (comillas, saltos internos; delimitador coma o punto y coma). Devuelve filas de campos. */
+function parseCsv(text){
+  text=String(text||'').replace(/\r\n?/g,'\n');
+  const nl=text.indexOf('\n'); const head=nl<0?text:text.slice(0,nl);
+  const delim=(head.split(';').length > head.split(',').length) ? ';' : ',';
+  const rows=[]; let row=[], field='', q=false;
+  for(let i=0;i<text.length;i++){ const ch=text[i];
+    if(q){ if(ch==='"'){ if(text[i+1]==='"'){ field+='"'; i++; } else q=false; } else field+=ch; }
+    else if(ch==='"') q=true;
+    else if(ch===delim){ row.push(field); field=''; }
+    else if(ch==='\n'){ row.push(field); rows.push(row); row=[]; field=''; }
+    else field+=ch;
+  }
+  if(field!==''||row.length){ row.push(field); rows.push(row); }
+  return rows;
+}
+/* Extrae {byDoi, byPmid} de un export. Si es CSV con cabecera (doi/pmid + «Library URL»), mapea DOI/PMID → enlace
+   directo al artículo en ReadCube. Si no reconoce cabecera, cae a extracción por regex (BibTeX/RIS/listado, sin enlace). */
 function parseReadcubeExport(text){
-  text=String(text||'');
-  const dois=new Set(), pmids=new Set();
-  // DOI: patrón estándar 10.xxxx/… en cualquier parte del texto
-  (text.match(/10\.\d{4,9}\/[^\s"'<>,;)\]}]+/g)||[]).forEach(d=>dois.add(normDoi(d)));
-  // PMID: solo cuando va etiquetado (evita capturar años/números sueltos). RIS: "PMID- 123" / BibTeX: "pmid = {123}" / "PMID: 123"
-  (text.match(/\bpmid\b\s*[-=:]?\s*\{?\s*(\d{4,9})/gi)||[]).forEach(m=>{ const n=(m.match(/(\d{4,9})/)||[])[1]; if(n) pmids.add(n); });
-  return {dois, pmids};
+  const byDoi={}, byPmid={};
+  const rows=parseCsv(text);
+  if(rows.length>=2){
+    const hdr=rows[0].map(h=>String(h||'').trim().toLowerCase());
+    const iDoi=hdr.indexOf('doi'), iPmid=hdr.indexOf('pmid');
+    let iUrl=hdr.findIndex(h=>h==='library url'||h==='libraryurl'); if(iUrl<0) iUrl=hdr.findIndex(h=>h==='pdf url'); if(iUrl<0) iUrl=hdr.indexOf('url');
+    if(iDoi>=0 || iPmid>=0){
+      for(let r=1;r<rows.length;r++){ const row=rows[r]; if(!row||!row.length) continue;
+        let url=iUrl>=0?String(row[iUrl]||'').trim():''; if(!/readcube\.com\/library\//i.test(url)) url='';
+        const doi=iDoi>=0?normDoi(row[iDoi]):''; if(doi && /^10\./.test(doi)) byDoi[doi]=url||byDoi[doi]||'';
+        const pmid=iPmid>=0?String(row[iPmid]||'').trim():''; if(/^\d{4,9}$/.test(pmid)) byPmid[pmid]=url||byPmid[pmid]||'';
+      }
+      if(Object.keys(byDoi).length||Object.keys(byPmid).length) return {byDoi, byPmid};
+    }
+  }
+  (text.match(/10\.\d{4,9}\/[^\s"'<>,;)\]}]+/g)||[]).forEach(d=>{ const n=normDoi(d); if(n) byDoi[n]=byDoi[n]||''; });
+  (text.match(/\bpmid\b\s*[-=:]?\s*\{?\s*(\d{4,9})/gi)||[]).forEach(m=>{ const n=(m.match(/(\d{4,9})/)||[])[1]; if(n) byPmid[n]=byPmid[n]||''; });
+  return {byDoi, byPmid};
 }
 async function importReadcubeLib(text){
-  const {dois, pmids}=parseReadcubeExport(text);
-  READCUBE_LIB={ dois, pmids, n:dois.size+pmids.size, fecha:new Date().toISOString() };
-  const store={ dois:[...dois], pmids:[...pmids], n:READCUBE_LIB.n, fecha:READCUBE_LIB.fecha };
+  const {byDoi, byPmid}=parseReadcubeExport(text);
+  READCUBE_LIB={ byDoi, byPmid, fecha:new Date().toISOString() };
+  const c=rcCounts(READCUBE_LIB);
+  const store={ byDoi, byPmid, n:c.doi+c.pmid, fecha:READCUBE_LIB.fecha };
   safeLocalSet('fh_readcube_lib', JSON.stringify(store));
-  try{ if(ghConfigured()){ let sha=null; try{ const ci=await ghGetFile('readcube_lib.json'); sha=ci.sha; }catch(e){} await ghPutFile('readcube_lib.json', store, 'readcube: importar biblioteca ('+READCUBE_LIB.n+')', sha); } }catch(e){}
+  try{ if(ghConfigured()){ let sha=null; try{ const ci=await ghGetFile('readcube_lib.json'); sha=ci.sha; }catch(e){} await ghPutFile('readcube_lib.json', store, 'readcube: importar biblioteca ('+(c.doi+c.pmid)+')', sha); } }catch(e){}
   return READCUBE_LIB;
 }
 async function loadReadcubeLibRemote(){
-  if(ghConfigured()){ try{ const r=await ghGetFile('readcube_lib.json'); if(r.json && r.json.dois){ READCUBE_LIB={dois:new Set(r.json.dois), pmids:new Set(r.json.pmids||[]), n:r.json.n||0, fecha:r.json.fecha||''}; safeLocalSet('fh_readcube_lib', JSON.stringify(r.json)); return; } }catch(e){} }
+  if(ghConfigured()){ try{ const r=await ghGetFile('readcube_lib.json'); if(r.json && (r.json.byDoi||r.json.dois)){ safeLocalSet('fh_readcube_lib', JSON.stringify(r.json)); READCUBE_LIB=null; loadReadcubeLib(); return; } }catch(e){} }
   loadReadcubeLib();
 }
-/* ¿Esta referencia está en la biblioteca ReadCube importada? Devuelve true/false. */
-function inReadcubeLib(s){
-  const lib=loadReadcubeLib(); if(!lib || (!lib.dois.size && !lib.pmids.size)) return false;
+/* Devuelve: null si la referencia NO está en la biblioteca; el enlace directo (string) si está y hay URL;
+   '' si está pero sin URL. Un enlace manual en la propia referencia (s.readcube) tiene prioridad. */
+function readcubeUrlFor(s){
   s=s||{};
+  if(s.readcube && String(s.readcube).trim()) return String(s.readcube).trim();
+  const lib=loadReadcubeLib();
   const doi=normDoi(s.doi||doiFromUrl(s.url));
+  if(doi && Object.prototype.hasOwnProperty.call(lib.byDoi, doi)) return lib.byDoi[doi]||'';
   const pmid=String(s.pmid||pmidFromUrl(s.url)||'').trim();
-  return !!((doi && lib.dois.has(doi)) || (pmid && lib.pmids.has(pmid)));
+  if(pmid && Object.prototype.hasOwnProperty.call(lib.byPmid, pmid)) return lib.byPmid[pmid]||'';
+  return null;
 }
-/* Chip verde «✓ En tu biblioteca» (estilo ReadCube "In Library") si la referencia coincide con la biblioteca importada. */
+function inReadcubeLib(s){ return readcubeUrlFor(s)!==null; }
+/* Insignia «Papers»: enlace verde directo al artículo en ReadCube si hay URL; si solo hay membresía, chip «✓ Papers». */
 function readcubeLibBadgeHtml(s){
-  return inReadcubeLib(s) ? ' <span class="rc-inlib" title="En tu biblioteca de ReadCube Papers">✓ Papers</span>' : '';
+  const u=readcubeUrlFor(s); if(u===null) return '';
+  return u ? ` <a class="rc-inlib" href="${escA(u)}" target="_blank" rel="noopener" title="Abrir el artículo en tu biblioteca ReadCube Papers">📗 Papers ↗</a>`
+           : ' <span class="rc-inlib" title="En tu biblioteca de ReadCube Papers">✓ Papers</span>';
 }
 /* DOI/PMID/PMCID a partir de URLs habituales para guardar el enlace de una referencia. */
 function doiFromUrl(u){ const m=String(u||'').match(/\bdoi\.org\/(10\.[^\s"'<>)\]]+)/i); return m ? decodeURIComponent(m[1]).replace(/[),.;]+$/,'') : ''; }
@@ -1532,7 +1572,8 @@ function bibRefHtml(fuente){
   const ids={
     doi: fuente.doi||(d&&d.doi)||doiFromUrl(fuente.url)||doiFromUrl(d&&d.url),
     pmid: fuente.pmid||(d&&d.pmid)||pmidFromUrl(fuente.url)||pmidFromUrl(d&&d.url),
-    pmcid: fuente.pmcid||(d&&d.pmcid)||pmcidFromUrl(fuente.url)||pmcidFromUrl(d&&d.url)
+    pmcid: fuente.pmcid||(d&&d.pmcid)||pmcidFromUrl(fuente.url)||pmcidFromUrl(d&&d.url),
+    readcube: fuente.readcube||''   // enlace ReadCube pegado a mano en la referencia (tiene prioridad)
   };
   if(d){
     const pdf=d.enlace||d.url||'';
@@ -1899,9 +1940,10 @@ function openSettings(){
     <label class="q-opt" style="font-size:13px"><input id="cfgDriveSub" type="checkbox" ${c.driveSubfolders?'checked':''}> Incluir también los PDFs de las subcarpetas</label>
 
     <h3>Biblioteca ReadCube Papers</h3>
-    <div class="sec-note">Exporta tu biblioteca (o una colección) desde ReadCube Papers a <b>BibTeX / RIS / CSV</b> —o pega un simple listado de DOI/PMID— y pégalo aquí. Ariadna extrae los DOI y PMID y marca con un check verde «✓ Papers» las referencias de tus protocolos que tengas en tu biblioteca. Vuelve a pegar el export cuando tu biblioteca cambie.</div>
+    <div class="sec-note">Exporta tu biblioteca (o una colección) desde ReadCube a <b>CSV</b> (recomendado: incluye la columna «Library URL» → cada referencia se enlaza directa a tu artículo). Sube el archivo o pégalo. También vale BibTeX/RIS o un listado de DOI/PMID (solo marca, sin enlace directo). Ariadna marca con «📗 Papers» las referencias de tus protocolos que tengas en tu biblioteca. Re-impórtalo cuando tu biblioteca cambie.</div>
     <div id="rcLibState" class="dx-meta" style="margin:2px 0 6px"></div>
-    <textarea id="cfgRcLib" placeholder="Pega aquí el export de ReadCube (BibTeX/RIS/CSV) o una lista de DOI/PMID…" style="width:100%;min-height:90px;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:12px;font-family:var(--mono,monospace)"></textarea>
+    <div style="margin:4px 0"><input id="cfgRcFile" type="file" accept=".csv,.tsv,.txt,.ris,.bib,.nbib"></div>
+    <textarea id="cfgRcLib" placeholder="…o pega aquí el export (CSV/BibTeX/RIS) o una lista de DOI/PMID" style="width:100%;min-height:80px;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:12px;font-family:var(--mono,monospace)"></textarea>
     <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
       <button class="btn" id="cfgRcImport">Importar / actualizar biblioteca</button>
       <button class="btn ghost" id="cfgRcClear">Vaciar</button>
@@ -1923,24 +1965,32 @@ function openSettings(){
     });
   });
 
-  // Biblioteca ReadCube: estado actual + importar/vaciar
+  // Biblioteca ReadCube: estado actual + importar (pegar o archivo) + vaciar
   (function(){
     const state=ov.querySelector('#rcLibState'), out=ov.querySelector('#cfgRcOut');
-    const showState=()=>{ const lib=loadReadcubeLib(); state.innerHTML = lib.n ? `Biblioteca cargada: <b>${lib.dois.size}</b> DOI · <b>${lib.pmids.size}</b> PMID${lib.fecha?` · ${String(lib.fecha).slice(0,10)}`:''}` : 'Sin biblioteca importada todavía.'; };
+    const showState=()=>{ const lib=loadReadcubeLib(); const c=rcCounts(lib); const conUrl=Object.values(lib.byDoi||{}).filter(Boolean).length+Object.values(lib.byPmid||{}).filter(Boolean).length;
+      state.innerHTML = (c.doi+c.pmid) ? `Biblioteca cargada: <b>${c.doi}</b> DOI · <b>${c.pmid}</b> PMID${conUrl?` · <b>${conUrl}</b> con enlace directo`:''}${lib.fecha?` · ${String(lib.fecha).slice(0,10)}`:''}` : 'Sin biblioteca importada todavía.'; };
     showState();
-    const imp=ov.querySelector('#cfgRcImport'); if(imp) imp.addEventListener('click', async ()=>{
-      const txt=ov.querySelector('#cfgRcLib').value;
-      if(!txt.trim()){ out.className='test-out bad'; out.textContent='Pega primero el export de ReadCube (o un listado de DOI/PMID).'; return; }
+    const doImport=async (txt)=>{
+      if(!txt || !txt.trim()){ out.className='test-out bad'; out.textContent='Sube el CSV o pega el export de ReadCube (o un listado de DOI/PMID).'; return; }
       out.className='test-out'; out.textContent='Importando…';
-      const lib=await importReadcubeLib(txt);
-      out.className='test-out ok'; out.textContent=`✓ Importados ${lib.dois.size} DOI y ${lib.pmids.size} PMID. Las referencias que coincidan mostrarán «✓ Papers».`;
+      const lib=await importReadcubeLib(txt); const c=rcCounts(lib);
+      const conUrl=Object.values(lib.byDoi||{}).filter(Boolean).length+Object.values(lib.byPmid||{}).filter(Boolean).length;
+      out.className='test-out ok'; out.textContent=`✓ Importados ${c.doi} DOI y ${c.pmid} PMID${conUrl?` (${conUrl} con enlace directo al artículo)`:''}. Las referencias que coincidan mostrarán «📗 Papers».`;
       showState(); ov.querySelector('#cfgRcLib').value='';
       try{ if(currentSection==='biblioteca' && _viewedFicha) renderFichaView(_viewedFicha); }catch(e){}
+    };
+    const fileEl=ov.querySelector('#cfgRcFile'); if(fileEl) fileEl.addEventListener('change', async e=>{
+      const f=e.target.files&&e.target.files[0]; if(!f) return;
+      if(/\.xlsx?$/i.test(f.name)){ out.className='test-out bad'; out.textContent='El formato Excel (.xlsx) no se puede leer directamente aquí. En Excel: Archivo → Guardar como → CSV, y sube ese CSV.'; return; }
+      out.className='test-out'; out.textContent='Leyendo archivo…';
+      try{ const txt=await f.text(); await doImport(txt); }catch(err){ out.className='test-out bad'; out.textContent='No se pudo leer el archivo: '+err.message; }
     });
+    const imp=ov.querySelector('#cfgRcImport'); if(imp) imp.addEventListener('click', ()=>doImport(ov.querySelector('#cfgRcLib').value));
     const clr=ov.querySelector('#cfgRcClear'); if(clr) clr.addEventListener('click', async ()=>{
-      READCUBE_LIB={dois:new Set(), pmids:new Set(), n:0, fecha:''};
+      READCUBE_LIB={byDoi:{}, byPmid:{}, fecha:''};
       try{ localStorage.removeItem('fh_readcube_lib'); }catch(e){}
-      try{ if(ghConfigured()){ let sha=null; try{ const ci=await ghGetFile('readcube_lib.json'); sha=ci.sha; }catch(e){} if(sha) await ghPutFile('readcube_lib.json', {dois:[],pmids:[],n:0,fecha:''}, 'readcube: vaciar', sha); } }catch(e){}
+      try{ if(ghConfigured()){ let sha=null; try{ const ci=await ghGetFile('readcube_lib.json'); sha=ci.sha; }catch(e){} if(sha) await ghPutFile('readcube_lib.json', {byDoi:{},byPmid:{},n:0,fecha:''}, 'readcube: vaciar', sha); } }catch(e){}
       out.className='test-out'; out.textContent='Biblioteca vaciada.'; showState();
     });
   })();
@@ -3632,6 +3682,7 @@ function openFichaReview(f, opts){
           <input class="fe-i" data-fu="pmid" data-fi="${fi}" value="${A(s.pmid)}" placeholder="PMID" style="width:100px;${feIn}">
           <input class="fe-i" data-fu="pmcid" data-fi="${fi}" value="${A(s.pmcid)}" placeholder="PMCID" style="width:110px;${feIn}">
         </div>
+        <input class="fe-i" data-fu="readcube" data-fi="${fi}" value="${A(s.readcube)}" placeholder="Enlace ReadCube Papers (pégalo del artículo: app.readcube.com/library/…/item/…)" style="width:100%;box-sizing:border-box;margin-top:5px;${feIn}">
         <div class="dx-meta" data-fu="findout" data-fi="${fi}" style="margin-top:3px;min-height:14px"></div>
       </div>`).join(''):'<div class="dx-meta" style="margin-bottom:6px">Sin referencias todavía.</div>')
       +`<button class="btn ghost" data-fu="add" style="${feBtn};margin-top:4px">+ referencia</button>`;
@@ -3663,7 +3714,7 @@ function openFichaReview(f, opts){
     }catch(e){ if(outEl) outEl.textContent='Error al buscar: '+e.message; }
   }
   if(fubox){
-    const FU_MAP={tit:'titulo', url:'url', anio:'anio', doi:'doi', pmid:'pmid', pmcid:'pmcid'};
+    const FU_MAP={tit:'titulo', url:'url', anio:'anio', doi:'doi', pmid:'pmid', pmcid:'pmcid', readcube:'readcube'};
     fubox.addEventListener('input', e=>{
       const el=e.target.closest('[data-fu]'); if(!el) return; const fu=el.dataset.fu;
       if(!FU_MAP[fu]) return;
