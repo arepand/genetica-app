@@ -478,8 +478,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.46.0';
+const APP_VERSION='1.47.0';
 const CHANGELOG=[
+  {v:'1.47.0', d:'2026-07-04', c:['Antropometría: el peso ahora también sugiere HPO por edad — «Peso bajo para la edad» (HP:0004325) o «Peso elevado para la edad» (HP:0004324) según el z (0-18 a), complementando al IMC (útil sobre todo en lactantes, donde el IMC se usa poco). No duplica chips que ya aporte el IMC. La superficie corporal se mantiene como cálculo de Mosteller a propósito (no existe un HPO fenotípico para ella; es una magnitud de dosificación).']},
   {v:'1.46.0', d:'2026-07-04', c:['Biblioteca ReadCube: ahora al importar el CSV (que incluye la columna «Library URL») cada referencia que tengas en tu biblioteca se convierte en un ENLACE directo «📗 Papers ↗» que abre ese artículo en tu ReadCube — no solo un check. Puedes subir el archivo CSV (además de pegarlo). Si exportas en Excel: Archivo → Guardar como → CSV.','Nuevo campo «Enlace ReadCube Papers» por referencia en el editor de protocolo: pega ahí a mano el link del artículo en ReadCube y esa referencia mostrará el botón «📗 Papers ↗» (tiene prioridad sobre la biblioteca importada).']},
   {v:'1.45.0', d:'2026-07-04', c:['✅ Sincronización con tu biblioteca ReadCube Papers (sin depender de la extensión): en ⚙ Ajustes → «Biblioteca ReadCube Papers», exporta tu biblioteca/colección desde ReadCube (BibTeX, RIS o CSV) —o pega un listado de DOI/PMID— y pégalo. Ariadna extrae todos los DOI y PMID y marca con un check verde «✓ Papers» las referencias de tus protocolos que ya tienes en tu biblioteca. Todo local: sin API, sin permisos, sin CORS. Vuelve a pegar el export cuando tu biblioteca cambie.']},
   {v:'1.44.0', d:'2026-07-04', c:['Referencias estilo PubMed: cada referencia con identificadores muestra ahora etiquetas clicables PMID / DOI / PMCID que abren PubMed, doi.org o PMC — donde tu extensión ReadCube Papers sí muestra el indicador de biblioteca.','Nuevo botón «↗ Pestaña nueva» en cada protocolo (en la lista y en la vista): abre el protocolo en una pestaña aparte con carga completa de página. Además de ser más cómodo para tener varios abiertos, da a la extensión ReadCube una oportunidad real de detectar las referencias (que dentro de la app, por cómo funciona la extensión, no puede).']},
@@ -2599,6 +2600,16 @@ function renderAnthroResult(boxId){
       else if(bmi<35) chips+=chipBtn('HP:0001513','Obesidad')+chipBtn('HP:0025499','Obesidad grado I','Antropometría');
       else if(bmi<40) chips+=chipBtn('HP:0001513','Obesidad')+chipBtn('HP:0025500','Obesidad grado II','Antropometría');
       else chips+=chipBtn('HP:0001513','Obesidad')+chipBtn('HP:0025501','Obesidad grado III (mórbida)','Antropometría');
+    }
+  }
+  // Peso para la edad (0-18 a; complementa al IMC, útil sobre todo en lactantes/niños donde el IMC se usa poco).
+  // Deduplica: no repite un chip que el bloque de IMC ya haya añadido.
+  if(peso>0 && sx && ageY!=null && ageY<=18){
+    const rW=growthZ('weight',sx,ageY,peso); const zW=rW?rW.z:null;
+    const has=(id)=>chips.includes('data-pid="'+id+'"');
+    if(zW!=null){
+      if(zW<=-2 && !has('HP:0004325')) chips+=chipBtn('HP:0004325','Peso bajo para la edad','Antropometría');
+      else if(zW>=2 && !has('HP:0001513') && !has('HP:0004324')) chips+=chipBtn('HP:0004324','Peso elevado para la edad','Antropometría');
     }
   }
   // Perímetro cefálico (OMS 0-5 + Orbegozo 5-18; adulto ancla a 18 a)
