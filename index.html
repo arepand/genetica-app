@@ -333,6 +333,7 @@
   .ref-ids{display:inline-flex; flex-wrap:wrap; gap:5px; margin-left:6px; vertical-align:middle;}
   .ref-id{display:inline-block; font-size:10.5px; line-height:1.4; padding:1px 7px; border-radius:999px; background:var(--panel2); border:1px solid var(--line); color:var(--ink2); text-decoration:none; white-space:nowrap;}
   .ref-id:hover{border-color:var(--accent); color:var(--accent);}
+  .rc-inlib{display:inline-block; font-size:10.5px; font-weight:700; padding:1px 8px; border-radius:999px; background:#173d2a; color:#7fe0a6; border:1px solid #2f6b48; white-space:nowrap; vertical-align:middle;}
   .dx-src{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--accent); margin:4px 0 5px;}
   .prenatal-layout{display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:0; align-items:start;}
   .prenatal-main{padding-right:22px; min-width:0;}
@@ -477,8 +478,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.44.0';
+const APP_VERSION='1.45.0';
 const CHANGELOG=[
+  {v:'1.45.0', d:'2026-07-04', c:['✅ Sincronización con tu biblioteca ReadCube Papers (sin depender de la extensión): en ⚙ Ajustes → «Biblioteca ReadCube Papers», exporta tu biblioteca/colección desde ReadCube (BibTeX, RIS o CSV) —o pega un listado de DOI/PMID— y pégalo. Ariadna extrae todos los DOI y PMID y marca con un check verde «✓ Papers» las referencias de tus protocolos que ya tienes en tu biblioteca. Todo local: sin API, sin permisos, sin CORS. Vuelve a pegar el export cuando tu biblioteca cambie.']},
   {v:'1.44.0', d:'2026-07-04', c:['Referencias estilo PubMed: cada referencia con identificadores muestra ahora etiquetas clicables PMID / DOI / PMCID que abren PubMed, doi.org o PMC — donde tu extensión ReadCube Papers sí muestra el indicador de biblioteca.','Nuevo botón «↗ Pestaña nueva» en cada protocolo (en la lista y en la vista): abre el protocolo en una pestaña aparte con carga completa de página. Además de ser más cómodo para tener varios abiertos, da a la extensión ReadCube una oportunidad real de detectar las referencias (que dentro de la app, por cómo funciona la extensión, no puede).']},
   {v:'1.43.0', d:'2026-07-04', c:['🐛 CAUSA RAÍZ del "no se guarda" (por fin): el guardado SÍ llegaba a GitHub, pero al reabrir el protocolo la app intentaba guardar una copia en la caché del navegador y, si esa caché estaba LLENA (el «quota exceeded» que salía), el error tumbaba la lectura entera y devolvía la versión VIEJA de la caché (sin los DOI/PMID recién puestos) — parecía que no se había guardado. Ahora un fallo de caché nunca descarta el dato real de GitHub.','Además, la app libera espacio automáticamente borrando solo cachés que puede reconstruir (traducciones, embeddings, textos de PDF), para que la caché llena deje de dar problemas.']},
   {v:'1.42.4', d:'2026-07-03', c:['Arreglo de fondo (causa real de "captura bien la referencia pero no se guarda"): «Buscar DOI/PMID de las fuentes» tarda varios segundos en responder; capturaba una foto del protocolo al empezar y, al terminar, la volvía a escribir ENTERA — borrando cualquier cambio hecho mientras tanto (otra búsqueda, una edición manual…). Ahora aplica lo encontrado sobre la versión más reciente en vez de sobrescribirla.']},
@@ -1430,6 +1432,55 @@ async function desregistrarDoc(id){
   return idx;
 }
 let _docsPrefetched=false;
+/* ===========================================================================
+   Sincronización con la biblioteca ReadCube Papers SIN API (que es de pago y CORS):
+   el usuario EXPORTA su biblioteca de ReadCube (BibTeX/RIS/CSV o un simple listado)
+   y la pega/sube aquí. Extraemos todos los DOI y PMID (independiente del formato) y
+   los guardamos. Luego cada referencia con un DOI/PMID que coincida se marca con un
+   check verde «✓ En tu biblioteca», igual que el indicador de la extensión en PubMed.
+   =========================================================================== */
+let READCUBE_LIB=null;   // {dois:Set<string minúsculas>, pmids:Set<string>, n:number, fecha:string}
+function normDoi(d){ return String(d||'').trim().toLowerCase().replace(/^https?:\/\/(dx\.)?doi\.org\//,'').replace(/[).,;]+$/,''); }
+function loadReadcubeLib(){
+  if(READCUBE_LIB) return READCUBE_LIB;
+  let raw=null; try{ raw=JSON.parse(localStorage.getItem('fh_readcube_lib')); }catch(e){}
+  READCUBE_LIB = raw && raw.dois ? {dois:new Set(raw.dois), pmids:new Set(raw.pmids||[]), n:raw.n||0, fecha:raw.fecha||''} : {dois:new Set(), pmids:new Set(), n:0, fecha:''};
+  return READCUBE_LIB;
+}
+/* Extrae TODOS los DOI y PMID de un texto exportado (BibTeX/RIS/CSV/listado). Formato-agnóstico. */
+function parseReadcubeExport(text){
+  text=String(text||'');
+  const dois=new Set(), pmids=new Set();
+  // DOI: patrón estándar 10.xxxx/… en cualquier parte del texto
+  (text.match(/10\.\d{4,9}\/[^\s"'<>,;)\]}]+/g)||[]).forEach(d=>dois.add(normDoi(d)));
+  // PMID: solo cuando va etiquetado (evita capturar años/números sueltos). RIS: "PMID- 123" / BibTeX: "pmid = {123}" / "PMID: 123"
+  (text.match(/\bpmid\b\s*[-=:]?\s*\{?\s*(\d{4,9})/gi)||[]).forEach(m=>{ const n=(m.match(/(\d{4,9})/)||[])[1]; if(n) pmids.add(n); });
+  return {dois, pmids};
+}
+async function importReadcubeLib(text){
+  const {dois, pmids}=parseReadcubeExport(text);
+  READCUBE_LIB={ dois, pmids, n:dois.size+pmids.size, fecha:new Date().toISOString() };
+  const store={ dois:[...dois], pmids:[...pmids], n:READCUBE_LIB.n, fecha:READCUBE_LIB.fecha };
+  safeLocalSet('fh_readcube_lib', JSON.stringify(store));
+  try{ if(ghConfigured()){ let sha=null; try{ const ci=await ghGetFile('readcube_lib.json'); sha=ci.sha; }catch(e){} await ghPutFile('readcube_lib.json', store, 'readcube: importar biblioteca ('+READCUBE_LIB.n+')', sha); } }catch(e){}
+  return READCUBE_LIB;
+}
+async function loadReadcubeLibRemote(){
+  if(ghConfigured()){ try{ const r=await ghGetFile('readcube_lib.json'); if(r.json && r.json.dois){ READCUBE_LIB={dois:new Set(r.json.dois), pmids:new Set(r.json.pmids||[]), n:r.json.n||0, fecha:r.json.fecha||''}; safeLocalSet('fh_readcube_lib', JSON.stringify(r.json)); return; } }catch(e){} }
+  loadReadcubeLib();
+}
+/* ¿Esta referencia está en la biblioteca ReadCube importada? Devuelve true/false. */
+function inReadcubeLib(s){
+  const lib=loadReadcubeLib(); if(!lib || (!lib.dois.size && !lib.pmids.size)) return false;
+  s=s||{};
+  const doi=normDoi(s.doi||doiFromUrl(s.url));
+  const pmid=String(s.pmid||pmidFromUrl(s.url)||'').trim();
+  return !!((doi && lib.dois.has(doi)) || (pmid && lib.pmids.has(pmid)));
+}
+/* Chip verde «✓ En tu biblioteca» (estilo ReadCube "In Library") si la referencia coincide con la biblioteca importada. */
+function readcubeLibBadgeHtml(s){
+  return inReadcubeLib(s) ? ' <span class="rc-inlib" title="En tu biblioteca de ReadCube Papers">✓ Papers</span>' : '';
+}
 /* DOI/PMID/PMCID a partir de URLs habituales para guardar el enlace de una referencia. */
 function doiFromUrl(u){ const m=String(u||'').match(/\bdoi\.org\/(10\.[^\s"'<>)\]]+)/i); return m ? decodeURIComponent(m[1]).replace(/[),.;]+$/,'') : ''; }
 function pmidFromUrl(u){ const m=String(u||'').match(/pubmed\.ncbi\.nlm\.nih\.gov\/(\d+)/i) || String(u||'').match(/ncbi\.nlm\.nih\.gov\/pubmed\/(\d+)/i); return m ? m[1] : ''; }
@@ -1488,12 +1539,12 @@ function bibRefHtml(fuente){
     const tip=escHtml(d.titulo||fuente.titulo||'Documento')
       +(d.descripcion?('<br><span class="dx-meta">'+escHtml(d.descripcion)+'</span>'):'')
       +(pdf?('<br><a href="'+escHtml(pdf).replace(/"/g,'&quot;')+'" target="_blank" rel="noopener">Abrir PDF ↗</a>'):'');
-    return ' <span class="hastip bib-have" title="PDF en tu repositorio">📄<span class="tooltip">'+tip+'</span></span>'
+    return readcubeLibBadgeHtml(ids)+' <span class="hastip bib-have" title="PDF en tu repositorio">📄<span class="tooltip">'+tip+'</span></span>'
       +(d.id?' <a class="tip-ai bib-unassign" data-docid="'+escHtml(String(d.id))+'" title="Eliminar este documento asignado del índice">✕</a>':'')
       +readcubeMarkerHtml(ids);
   }
   const enc=encodeURIComponent(JSON.stringify({titulo:fuente.titulo||'', url:fuente.url||'', anio:fuente.anio||''}));
-  return ' <a class="tip-ai bib-assign" data-bibref="'+enc+'" title="Asignar/registrar el PDF de esta referencia en tu repositorio">📎 asignar PDF</a>'+readcubeMarkerHtml(ids);
+  return readcubeLibBadgeHtml(ids)+' <a class="tip-ai bib-assign" data-bibref="'+enc+'" title="Asignar/registrar el PDF de esta referencia en tu repositorio">📎 asignar PDF</a>'+readcubeMarkerHtml(ids);
 }
 function wireBibRefs(container, onDone){
   if(!container) return;
@@ -1847,6 +1898,16 @@ function openSettings(){
       <input id="cfgDriveFolder" type="text" value="${(c.driveFolder||'').replace(/"/g,'&quot;')}" placeholder="ID de carpeta" autocomplete="off"></div>
     <label class="q-opt" style="font-size:13px"><input id="cfgDriveSub" type="checkbox" ${c.driveSubfolders?'checked':''}> Incluir también los PDFs de las subcarpetas</label>
 
+    <h3>Biblioteca ReadCube Papers</h3>
+    <div class="sec-note">Exporta tu biblioteca (o una colección) desde ReadCube Papers a <b>BibTeX / RIS / CSV</b> —o pega un simple listado de DOI/PMID— y pégalo aquí. Ariadna extrae los DOI y PMID y marca con un check verde «✓ Papers» las referencias de tus protocolos que tengas en tu biblioteca. Vuelve a pegar el export cuando tu biblioteca cambie.</div>
+    <div id="rcLibState" class="dx-meta" style="margin:2px 0 6px"></div>
+    <textarea id="cfgRcLib" placeholder="Pega aquí el export de ReadCube (BibTeX/RIS/CSV) o una lista de DOI/PMID…" style="width:100%;min-height:90px;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:12px;font-family:var(--mono,monospace)"></textarea>
+    <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+      <button class="btn" id="cfgRcImport">Importar / actualizar biblioteca</button>
+      <button class="btn ghost" id="cfgRcClear">Vaciar</button>
+    </div>
+    <div class="test-out" id="cfgRcOut"></div>
+
     <div class="modal-actions">
       <button class="btn ghost" id="cfgCancel">Cancelar</button>
       <button class="btn primary" id="cfgSave">Guardar</button>
@@ -1861,6 +1922,28 @@ function openSettings(){
       ov.querySelectorAll('#prefSeg button').forEach(x=>x.classList.toggle('on', x.dataset.pref===pref));
     });
   });
+
+  // Biblioteca ReadCube: estado actual + importar/vaciar
+  (function(){
+    const state=ov.querySelector('#rcLibState'), out=ov.querySelector('#cfgRcOut');
+    const showState=()=>{ const lib=loadReadcubeLib(); state.innerHTML = lib.n ? `Biblioteca cargada: <b>${lib.dois.size}</b> DOI · <b>${lib.pmids.size}</b> PMID${lib.fecha?` · ${String(lib.fecha).slice(0,10)}`:''}` : 'Sin biblioteca importada todavía.'; };
+    showState();
+    const imp=ov.querySelector('#cfgRcImport'); if(imp) imp.addEventListener('click', async ()=>{
+      const txt=ov.querySelector('#cfgRcLib').value;
+      if(!txt.trim()){ out.className='test-out bad'; out.textContent='Pega primero el export de ReadCube (o un listado de DOI/PMID).'; return; }
+      out.className='test-out'; out.textContent='Importando…';
+      const lib=await importReadcubeLib(txt);
+      out.className='test-out ok'; out.textContent=`✓ Importados ${lib.dois.size} DOI y ${lib.pmids.size} PMID. Las referencias que coincidan mostrarán «✓ Papers».`;
+      showState(); ov.querySelector('#cfgRcLib').value='';
+      try{ if(currentSection==='biblioteca' && _viewedFicha) renderFichaView(_viewedFicha); }catch(e){}
+    });
+    const clr=ov.querySelector('#cfgRcClear'); if(clr) clr.addEventListener('click', async ()=>{
+      READCUBE_LIB={dois:new Set(), pmids:new Set(), n:0, fecha:''};
+      try{ localStorage.removeItem('fh_readcube_lib'); }catch(e){}
+      try{ if(ghConfigured()){ let sha=null; try{ const ci=await ghGetFile('readcube_lib.json'); sha=ci.sha; }catch(e){} if(sha) await ghPutFile('readcube_lib.json', {dois:[],pmids:[],n:0,fecha:''}, 'readcube: vaciar', sha); } }catch(e){}
+      out.className='test-out'; out.textContent='Biblioteca vaciada.'; showState();
+    });
+  })();
 
   ov.querySelector('#cfgRefreshModels').addEventListener('click', async ()=>{
     const out=ov.querySelector('#cfgModelsOut');
@@ -6291,6 +6374,8 @@ function init(){
   loadPaneles();
   // Pre-carga del registro de actividad de consulta (GitHub / local)
   loadConsultas();
+  // Pre-carga de la biblioteca ReadCube importada (GitHub / local) → marca «✓ Papers» en las referencias
+  loadReadcubeLibRemote();
   // Chequeo periódico (7 días) de modelos IA nuevos (p. ej. Fable) → avisa y anota en el registro
   setTimeout(()=>{ checkModelsFreshness().catch(()=>{}); }, 3000);
   // Deep-link ?proto=<id>: abrir un protocolo directamente (para «Abrir en pestaña nueva»).
