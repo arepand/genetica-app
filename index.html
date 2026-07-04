@@ -474,8 +474,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.42.4';
+const APP_VERSION='1.43.0';
 const CHANGELOG=[
+  {v:'1.43.0', d:'2026-07-04', c:['🐛 CAUSA RAÍZ del "no se guarda" (por fin): el guardado SÍ llegaba a GitHub, pero al reabrir el protocolo la app intentaba guardar una copia en la caché del navegador y, si esa caché estaba LLENA (el «quota exceeded» que salía), el error tumbaba la lectura entera y devolvía la versión VIEJA de la caché (sin los DOI/PMID recién puestos) — parecía que no se había guardado. Ahora un fallo de caché nunca descarta el dato real de GitHub.','Además, la app libera espacio automáticamente borrando solo cachés que puede reconstruir (traducciones, embeddings, textos de PDF), para que la caché llena deje de dar problemas.']},
   {v:'1.42.4', d:'2026-07-03', c:['Arreglo de fondo (causa real de "captura bien la referencia pero no se guarda"): «Buscar DOI/PMID de las fuentes» tarda varios segundos en responder; capturaba una foto del protocolo al empezar y, al terminar, la volvía a escribir ENTERA — borrando cualquier cambio hecho mientras tanto (otra búsqueda, una edición manual…). Ahora aplica lo encontrado sobre la versión más reciente en vez de sobrescribirla.']},
   {v:'1.42.3', d:'2026-07-03', c:['ReadCube Papers: como Ariadna nunca cambia la URL al navegar (así que una extensión que solo re-escanea al detectar navegación nunca vería el marcador insertado luego), ahora se simula una señal de "navegación" cada vez que se muestra bibliografía, por si la extensión la usa para volver a comprobar la página. Experimental — pendiente de confirmar si hace que aparezca el icono.']},
   {v:'1.42.2', d:'2026-07-03', c:['Arreglo de fondo (probable causa real de "no se guarda"): las lecturas a GitHub no desactivaban la caché del navegador, así que justo después de guardar — o al refrescar la página — el navegador podía devolver una copia ANTIGUA guardada en su caché en vez de pedirla de nuevo, dando la falsa impresión de que los cambios se habían perdido aunque el commit sí se hubiera hecho. Ahora cada lectura fuerza ir siempre a buscar la versión real y actual.']},
@@ -1157,13 +1158,13 @@ async function fetchModels(p){
     const r=await fetch('https://api.anthropic.com/v1/models?limit=100', {headers:{'x-api-key':c.anthropicKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'}});
     if(!r.ok) throw new Error('Anthropic /models '+r.status);
     const d=await r.json(); const ids=(d.data||[]).map(m=>m.id);
-    localStorage.setItem('fh_models_anthropic', JSON.stringify(ids)); return ids;
+    try{ localStorage.setItem('fh_models_anthropic', JSON.stringify(ids)); }catch(e){} return ids;
   } else {
     if(!c.openaiKey) return [];
     const r=await fetch('https://api.openai.com/v1/models', {headers:{Authorization:'Bearer '+c.openaiKey}});
     if(!r.ok) throw new Error('OpenAI /models '+r.status);
     const d=await r.json(); const ids=(d.data||[]).map(m=>m.id).filter(id=>/^(gpt|o[0-9]|chatgpt)/i.test(id)).sort();
-    localStorage.setItem('fh_models_openai', JSON.stringify(ids)); return ids;
+    try{ localStorage.setItem('fh_models_openai', JSON.stringify(ids)); }catch(e){} return ids;
   }
 }
 
@@ -1195,6 +1196,33 @@ async function checkModelsFreshness(force){
   }
   if(anyNew){ try{ renderStatus(); }catch(e){} }
   return anyNew;
+}
+
+/* Libera espacio en localStorage borrando SOLO cachés que se pueden reconstruir (embeddings, texto de PDFs,
+   babelon HPO, listas de modelos). NUNCA borra fh_cfg, fichas, consultas, paneles ni copias de seguridad.
+   Devuelve el nº de claves eliminadas. Se llama al detectar un fallo de cuota. */
+function pruneRebuildableCache(){
+  const rebuildablePrefixes=['fh_emb_','fh_doctext_','fh_hpo_anc','fh_models_'];
+  const rebuildableExact=['fh_babelon','fh_ghdefs','fh_drive_files'];
+  let removed=0;
+  try{
+    const keys=[]; for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k) keys.push(k); }
+    for(const k of keys){
+      if(rebuildableExact.includes(k) || rebuildablePrefixes.some(p=>k.indexOf(p)===0)){
+        try{ localStorage.removeItem(k); removed++; }catch(e){}
+      }
+    }
+  }catch(e){}
+  return removed;
+}
+/* Escritura segura en localStorage: si falla por cuota, purga cachés reconstruibles y reintenta UNA vez.
+   Nunca lanza — devuelve true si guardó, false si no pudo (el llamador NO debe depender de que persista). */
+function safeLocalSet(key, val){
+  try{ localStorage.setItem(key, val); return true; }
+  catch(e){
+    if(pruneRebuildableCache()>0){ try{ localStorage.setItem(key, val); return true; }catch(e2){} }
+    return false;
+  }
 }
 
 /* ---- base64 con soporte UTF-8 (GitHub Contents API usa base64) ---- */
@@ -1248,7 +1276,7 @@ async function ghPutFile(path, obj, message, sha, _retried){
 }
 
 /* ---- Librería de fichas (índice + fichas) con caché localStorage ---- */
-function cacheIndex(idx){ try{ localStorage.setItem('fh_idx', JSON.stringify(idx)); }catch(e){} }   // no debe romper el guardado si localStorage está lleno
+function cacheIndex(idx){ safeLocalSet('fh_idx', JSON.stringify(idx)); }   // no debe romper el guardado si localStorage está lleno (safeLocalSet purga cachés reconstruibles si hace falta)
 function cachedIndex(){ try{ return JSON.parse(localStorage.getItem('fh_idx')); }catch(e){ return null; } }
 async function getIndex(){
   if(ghConfigured()){
@@ -1259,7 +1287,15 @@ async function getIndex(){
 }
 async function getFicha(id){
   if(ghConfigured()){
-    try{ const {json}=await ghGetFile('fichas/'+id+'.json'); if(json){ localStorage.setItem('fh_ficha_'+id, JSON.stringify(json)); return json; } }
+    try{ const {json}=await ghGetFile('fichas/'+id+'.json');
+      if(json){
+        // IMPORTANTE: cachear en localStorage NO debe poder descartar el dato fresco de GitHub. Si el
+        // localStorage está lleno (quota), un setItem sin proteger lanzaría y caeríamos al `catch`,
+        // devolviendo la versión VIEJA de la caché (sin los últimos DOI/PMID) — parecía que "no se guardó".
+        safeLocalSet('fh_ficha_'+id, JSON.stringify(json));   // si falla por cuota, purga cachés reconstruibles y reintenta; nunca descarta el dato de GitHub
+        return json;
+      }
+    }
     catch(e){ console.warn('getFicha → caché', e.message); }
   }
   try{ return JSON.parse(localStorage.getItem('fh_ficha_'+id)); }catch(e){ return null; }
@@ -1300,14 +1336,14 @@ async function saveFicha(ficha){
     await ghPutFile(ipath, idx, 'index: '+ficha.id);
   } else if(iLocal>=0){ idx.fichas[iLocal]=entry; }
   cacheIndex(idx);
-  try{ localStorage.setItem('fh_ficha_'+ficha.id, JSON.stringify(ficha)); }catch(e){}   // el commit a GitHub ya se hizo; que la caché local no lo eche a perder
+  safeLocalSet('fh_ficha_'+ficha.id, JSON.stringify(ficha));   // el commit a GitHub ya se hizo; que la caché local no lo eche a perder (purga cachés reconstruibles si está llena)
   return idx;
 }
 
 /* ---- Registro de documentos (docs/index.json en GitHub) ----
    El usuario descarga el PDF (acceso propio) y lo registra con un ENLACE (su nube).
    El programa compara cada referencia de la ficha con el registro y la marca. */
-function cacheDocs(idx){ try{ localStorage.setItem('fh_docs', JSON.stringify(idx)); }catch(e){} }
+function cacheDocs(idx){ safeLocalSet('fh_docs', JSON.stringify(idx)); }
 function cachedDocs(){ try{ return JSON.parse(localStorage.getItem('fh_docs')); }catch(e){ return null; } }
 function normUrl(u){ return (u||'').toLowerCase().trim().replace(/^https?:\/\//,'').replace(/^www\./,'').replace(/[#?].*$/,'').replace(/\/+$/,''); }
 async function getDocsIndex(){
@@ -4621,7 +4657,7 @@ async function comprobarFreshness(){
     const user=JSON.stringify({ ficha:activeFicha.nombre_es, version:activeFicha.version||'desconocida' });
     const resp=await callLLM({ system, user, webSearch:true, maxTokens:700, task:'freshness' });
     const j=extractJSON(resp)||{};
-    localStorage.setItem('fh_fresh_'+activeFicha.id, new Date().toISOString());
+    try{ localStorage.setItem('fh_fresh_'+activeFicha.id, new Date().toISOString()); }catch(e){}
     const src=(j.fuentes||[]).map(f=>`<a href="${f.url}" target="_blank" rel="noopener">${f.titulo}${f.anio?' ('+f.anio+')':''}</a>`).join(' · ');
     out.innerHTML=`<div class="fresh-res ${j.novedad?'new':''}">
       <b>${j.novedad?'Hay novedades':'Sin novedades relevantes'}</b>
@@ -5585,7 +5621,7 @@ async function loadConsultas(){
   if(migrateConsultas()>0){ try{ await persistConsultas('consultas: normalizar médico SC'); }catch(e){} }
 }
 async function persistConsultas(msg){
-  try{ localStorage.setItem('fh_consultas', JSON.stringify(CONSULTAS)); }catch(e){}
+  safeLocalSet('fh_consultas', JSON.stringify(CONSULTAS));
   try{ if(ghConfigured()){ let sha=null; try{ const ci=await ghGetFile('consultas.json'); sha=ci.sha; }catch(e){} await ghPutFile('consultas.json', {consultas:CONSULTAS}, msg||'consultas: actualizar', sha); } }catch(e){}
 }
 /* dd/mm/yyyy → yyyy-mm-dd para comparar/ordenar. */
