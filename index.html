@@ -478,8 +478,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.47.1';
+const APP_VERSION='1.48.0';
 const CHANGELOG=[
+  {v:'1.48.0', d:'2026-07-04', c:['Antecedentes familiares: nuevo selector «Herencia» en la barra del paciente (autosómica dominante/recesiva, ligada al X, mitocondrial, de novo). El diferencial (JAX y PubCaseFinder) lo tiene en cuenta: sube en el ranking las enfermedades cuya herencia encaja con la sospechada y baja las que la contradicen, con una insignia «✓ AD / ligada X…» en las que coinciden. Cambiar la herencia re-ordena al momento, sin volver a consultar.']},
   {v:'1.47.1', d:'2026-07-04', c:['Diferencial cruzado (protocolos que también encajan): era demasiado laxo y proponía casi todos. Ahora solo aparece un protocolo si de verdad CUMPLE sus criterios, o si es una coincidencia parcial genuina (≥2 HPO compartidos y a un solo criterio de cumplir). Se acabó el proponer protocolos por un único HPO genérico compartido.']},
   {v:'1.47.0', d:'2026-07-04', c:['Antropometría: el peso ahora también sugiere HPO por edad — «Peso bajo para la edad» (HP:0004325) o «Peso elevado para la edad» (HP:0004324) según el z (0-18 a), complementando al IMC (útil sobre todo en lactantes, donde el IMC se usa poco). No duplica chips que ya aporte el IMC. La superficie corporal se mantiene como cálculo de Mosteller a propósito (no existe un HPO fenotípico para ella; es una magnitud de dosificación).']},
   {v:'1.46.0', d:'2026-07-04', c:['Biblioteca ReadCube: ahora al importar el CSV (que incluye la columna «Library URL») cada referencia que tengas en tu biblioteca se convierte en un ENLACE directo «📗 Papers ↗» que abre ese artículo en tu ReadCube — no solo un check. Puedes subir el archivo CSV (además de pegarlo). Si exportas en Excel: Archivo → Guardar como → CSV.','Nuevo campo «Enlace ReadCube Papers» por referencia en el editor de protocolo: pega ahí a mano el link del artículo en ReadCube y esa referencia mostrará el botón «📗 Papers ↗» (tiene prioridad sobre la biblioteca importada).']},
@@ -1041,7 +1042,7 @@ function attachSearchRowHandlers(box, regionLabel){
 
 /* ---- Estado de la sesión (scope de módulo, NO en window) ---- */
 let selections = {};                 // id -> {hpo, es, en, region, origen, verified}
-let patient = {motivo:'', edadValor:'', edadUnidad:'años', fnac:'', sexo:'', tallaCm:'', pesoKg:'', envergaduraCm:'', perimetroCranealCm:'', gestacion:false, gestSemanas:'', gestDias:'', edad:''};
+let patient = {motivo:'', edadValor:'', edadUnidad:'años', fnac:'', sexo:'', herencia:'', tallaCm:'', pesoKg:'', envergaduraCm:'', perimetroCranealCm:'', gestacion:false, gestSemanas:'', gestDias:'', edad:''};
 let beighton = {};
 
 function patientAgeYears(){
@@ -1059,22 +1060,40 @@ function ageFromDob(dob){
   return {value:String(Math.round(years*10)/10), unit:'años'};
 }
 /* Etiqueta del paciente: adulto/a · niño/a · feto varón/mujer (gestación sem+días). */
+/* Antecedentes familiares / patrón de herencia sospechado — pondera el diferencial (JAX/PubCaseFinder). */
+const HER_OPTS=[['','—'],['AD','Autosómica dominante'],['AR','Autosómica recesiva'],['XL','Ligada al X'],['MT','Mitocondrial / materna'],['denovo','De novo / esporádico']];
+function herShort(v){ return ({AD:'AD', AR:'AR', XL:'ligada X', MT:'mitocondrial', denovo:'de novo'})[v]||''; }
+/* +1 si el nombre/herencia de la enfermedad ENCAJA con el patrón sospechado, -1 si lo CONTRADICE, 0 si no hay dato. */
+function inheritanceScore(text, her){
+  if(!her) return 0; const n=String(text||'').toLowerCase();
+  const isXL=/x[- ]linked/.test(n);
+  const isAD=(/autosomal dominant/.test(n) || (/\bdominant\b/.test(n) && !isXL));
+  const isAR=(/autosomal recessive/.test(n) || (/\brecessive\b/.test(n) && !isXL));
+  const isMT=/mitochondrial|maternally inherited/.test(n);
+  if(!(isXL||isAD||isAR||isMT)) return 0;   // el nombre no dice la herencia → no penalizar
+  if(her==='AD') return isAD?1:-1;
+  if(her==='AR') return isAR?1:-1;
+  if(her==='XL') return isXL?1:-1;
+  if(her==='MT') return isMT?1:-1;
+  return 0;   // de novo/esporádico no se refleja en el nombre
+}
 function patientLabel(){
   if(patient.gestacion){
     const sem=String(patient.gestSemanas||'').trim(), d=String(patient.gestDias||'').trim();
     if(!sem && !d) return '';
     const ga = sem + '+' + (d!==''?d:'0');
     const w = patient.sexo==='Masculino'?'Feto varón':(patient.sexo==='Femenino'?'Feto mujer':'Feto');
-    return `${w} · ${ga}`;
+    return `${w} · ${ga}${herSuffix()}`;
   }
   const v=String(patient.edadValor||'').trim();
-  if(!v) return '';
+  if(!v) return herSuffix().replace(/^ · /,'');
   const y=patientAgeYears(); const unit=patient.edadUnidad||'años';
   let w;
   if(y!=null && y<PED_MAX_AGE) w = patient.sexo==='Masculino'?'Niño':(patient.sexo==='Femenino'?'Niña':'Menor');
   else w = patient.sexo==='Masculino'?'Adulto':(patient.sexo==='Femenino'?'Adulta':'Adulto/a');
-  return `${w} · ${v} ${unit}`;
+  return `${w} · ${v} ${unit}${herSuffix()}`;
 }
+function herSuffix(){ return patient.herencia ? ` · ${herShort(patient.herencia)}` : ''; }
 function afterPatientChange(){
   patient.edad = patient.edadValor ? `${patient.edadValor} ${patient.edadUnidad}` : '';
   const lab=document.getElementById('pbLabel'); if(lab) lab.textContent=patientLabel();
@@ -1094,6 +1113,10 @@ function renderPatientBar(){
         <option value="Masculino" ${patient.sexo==='Masculino'?'selected':''}>Masculino</option>
         <option value="Indeterminado" ${patient.sexo==='Indeterminado'?'selected':''}>Indeterminado</option>
       </select></div>
+    <div class="pb-group"><span class="pb-l" title="Patrón/sospecha de herencia por los antecedentes familiares. Pondera el diferencial (JAX/PubCaseFinder).">Herencia</span>
+      <select id="pbHer" class="pb-sel" title="Patrón/sospecha de herencia por los antecedentes familiares">
+        ${HER_OPTS.map(([v,l])=>`<option value="${v}" ${patient.herencia===v?'selected':''}>${l}</option>`).join('')}
+      </select></div>
     <label class="pb-gest"><input type="checkbox" id="pbGest" ${gest?'checked':''}> Gestación</label>
     ${gest ? `<div class="pb-group"><span class="pb-l">EG</span>
         <input id="pbSem" class="pb-in" type="text" inputmode="numeric" value="${patient.gestSemanas||''}" placeholder="sem" style="width:52px"><span>+</span>
@@ -1107,6 +1130,7 @@ function renderPatientBar(){
     <span class="pb-spacer"></span>
     <button class="btn ghost" id="pbReset" title="Borrar todos los datos e iniciar un paciente nuevo">↺ Nuevo paciente</button>`;
   const s=document.getElementById('pbSexo'); if(s) s.addEventListener('change', ()=>{ patient.sexo=s.value; afterPatientChange(); });
+  const her=document.getElementById('pbHer'); if(her) her.addEventListener('change', ()=>{ patient.herencia=her.value; afterPatientChange(); try{ reweightDx(); renderMonarch(); }catch(e){} });
   const g=document.getElementById('pbGest'); if(g) g.addEventListener('change', ()=>{ patient.gestacion=g.checked; renderPatientBar(); afterPatientChange(); });
   const bind=(id,key,ev)=>{ const e=document.getElementById(id); if(e) e.addEventListener(ev||'input', ()=>{ patient[key]=e.value; afterPatientChange(); }); };
   bind('pbEdad','edadValor'); bind('pbEdadU','edadUnidad','change'); bind('pbSem','gestSemanas'); bind('pbDia','gestDias');
@@ -1115,7 +1139,7 @@ function renderPatientBar(){
 }
 function resetPatient(){
   if(typeof confirm==='function' && !confirm('¿Borrar TODOS los datos del paciente actual (sexo, edad, motivo, fenotipo, ficha) e iniciar uno nuevo?')) return;
-  patient = {motivo:'', edadValor:'', edadUnidad:'años', fnac:'', sexo:'', tallaCm:'', pesoKg:'', envergaduraCm:'', perimetroCranealCm:'', gestacion:false, gestSemanas:'', gestDias:'', edad:''};
+  patient = {motivo:'', edadValor:'', edadUnidad:'años', fnac:'', sexo:'', herencia:'', tallaCm:'', pesoKg:'', envergaduraCm:'', perimetroCranealCm:'', gestacion:false, gestSemanas:'', gestDias:'', edad:''};
   for(const k in selections) delete selections[k];
   for(const k in qOwned) delete qOwned[k];
   activeFicha=null; studyEval=null;
@@ -4240,7 +4264,18 @@ const PCF_TOP=10; // PubCaseFinder en directo: hasta 10
 let monarchResults=null, monarchLoading=false, monarchError=null, monarchForIds='', monarchTimer=null;
 let pcfResults=null, pcfLoading=false, pcfError=null, pcfForIds='', pcfTimer=null;
 let pcfGenes=null, pcfGenesLoading=false, pcfGenesError=null, pcfGenesForIds='';
-let jaxResults=null, jaxLoading=false, jaxError=null, jaxForIds='';
+let jaxResults=null, jaxLoading=false, jaxError=null, jaxForIds='', jaxRawRanked=null, pcfRawResults=null;
+/* Re-pondera el diferencial (JAX + PubCaseFinder) por la herencia sospechada SIN re-consultar la red. */
+function reweightDx(){
+  if(jaxRawRanked) jaxResults=applyPatientWeighting(jaxRawRanked).slice(0,DX_TOP);
+  if(pcfRawResults) pcfResults=rankPcfByInheritance(pcfRawResults);
+}
+/* Ordena los resultados de PubCaseFinder aplicando un empujón por la herencia sospechada (usa su campo inheritance). */
+function rankPcfByInheritance(list){
+  const her=patient.herencia;
+  return (list||[]).map(r=>{ const hs=inheritanceScore(r.inh, her); return Object.assign({}, r, {herMatch:hs, _w:(r.score||0)+hs*0.15}); })
+    .sort((a,b)=> (b._w-a._w) || ((b.score||0)-(a.score||0)));
+}
 const jaxDiseaseCache={};
 function diseaseLinks(id){
   const m=/^([A-Za-z]+):(.+)$/.exec(id||''); if(!m) return [id||''];
@@ -4263,9 +4298,15 @@ function jaxRowHtml(r){
   const tip='Coinciden ('+matched.length+'): '+(matched.map(hpoShort).join(', ')||'—')
     +(noMatch.length?'  |  No coinciden: '+noMatch.map(hpoShort).join(', '):'');
   return `<div class="dx">
-    <div class="dx-hd"><span class="dx-nm">${escHtml(r.name||r.id)}</span><span class="pill sug" title="${escHtml(tip)}">${r.count}/${r.total} rasgos</span></div>
+    <div class="dx-hd"><span class="dx-nm">${escHtml(r.name||r.id)}</span>${herMatchBadge(r.herMatch)}<span class="pill sug" title="${escHtml(tip)}">${r.count}/${r.total} rasgos</span></div>
     <div class="dx-meta" title="${escHtml(tip)}">${diseaseLinks(r.id).join(' · ')} · <span style="cursor:help;text-decoration:underline dotted">qué rasgos coinciden</span></div>
   </div>`;
+}
+/* Insignia de coincidencia con la herencia sospechada del paciente. */
+function herMatchBadge(hs){
+  if(!patient.herencia || !hs) return '';
+  return hs>0 ? ` <span class="pill ok" title="Coincide con la herencia sospechada (${herShort(patient.herencia)})">✓ ${herShort(patient.herencia)}</span>`
+              : ` <span class="pill near" title="La herencia descrita no encaja con la sospechada (${herShort(patient.herencia)})">≠ herencia</span>`;
 }
 // Categoría del paciente para el ajuste del diferencial (gestación → prenatal).
 function patientCatForDx(){
@@ -4284,7 +4325,8 @@ function applyPatientWeighting(ranked){
     if(patient.sexo==='Femenino' && /x-linked/.test(n) && !/dominant/.test(n)) w-=0.5;
     if(cat==='adulto' && /(infantile|neonatal|congenital)/.test(n)) w-=0.3;
     if((cat==='neonatal'||cat==='prenatal') && /adult[- ]onset/.test(n)) w-=0.3;
-    return Object.assign({}, d, {weight:w});
+    const hs=inheritanceScore(d.name, patient.herencia); w += hs*0.6;   // antecedentes familiares: sube si la herencia encaja, baja si contradice
+    return Object.assign({}, d, {weight:w, herMatch:hs});
   }).sort((a,b)=> (b.weight-a.weight) || (b.count-a.count));
 }
 async function runJaxDx(){
@@ -4298,7 +4340,7 @@ async function runJaxDx(){
     const counts={}, names={}, matched={};
     lists.forEach((list,i)=> list.forEach(x=>{ counts[x.id]=(counts[x.id]||0)+1; names[x.id]=x.name; (matched[x.id]=matched[x.id]||[]).push(subset[i]); }));
     const ranked=Object.keys(counts).map(id=>({id, name:names[id], count:counts[id], total:subset.length, matched:matched[id]||[], subset})).filter(d=>d.count>=2);
-    jaxResults=applyPatientWeighting(ranked).slice(0,DX_TOP);
+    jaxRawRanked=ranked; jaxResults=applyPatientWeighting(ranked).slice(0,DX_TOP);
   }catch(e){ jaxError='No se pudo consultar JAX ('+e.message+').'; }
   jaxLoading=false; renderMonarch();
 }
@@ -4346,7 +4388,7 @@ function pcfRowHtml(r){
   if(r.omim) links.push(`<a href="https://omim.org/entry/${r.omim}" target="_blank" rel="noopener">OMIM:${r.omim}</a>`);
   if(r.mondo) links.push(`<a href="https://monarchinitiative.org/${r.mondo}" target="_blank" rel="noopener">${r.mondo}</a>`);
   return `<div class="dx">
-    <div class="dx-hd"><span class="dx-nm">${escHtml(r.name||r.id)}</span><span class="pill sug" title="Puntuación de ranking de PubCaseFinder (0–1) expresada en %. NO es probabilidad ni grado de evidencia.">${r.score!=null?(+r.score*100).toFixed(1)+'%':('#'+(r.rank||'?'))}</span></div>
+    <div class="dx-hd"><span class="dx-nm">${escHtml(r.name||r.id)}</span>${herMatchBadge(r.herMatch)}<span class="pill sug" title="Puntuación de ranking de PubCaseFinder (0–1) expresada en %. NO es probabilidad ni grado de evidencia.">${r.score!=null?(+r.score*100).toFixed(1)+'%':('#'+(r.rank||'?'))}</span></div>
     <div class="dx-meta">${r.gene?'gen '+geneChipsInline(r.gene)+' · ':''}${r.inh?escHtml(r.inh)+' · ':''}${links.join(' · ')}</div>
   </div>`;
 }
@@ -4359,13 +4401,14 @@ async function runPcfDx(){
     if(!resp.ok) throw new Error('HTTP '+resp.status);
     const data=await resp.json();
     if(pcfForIds!==Object.keys(selections).join(',')){ pcfLoading=false; return; }
-    pcfResults=(Array.isArray(data)?data:[]).slice(0,PCF_TOP).map(r=>({
+    pcfRawResults=(Array.isArray(data)?data:[]).slice(0,PCF_TOP).map(r=>({
       name:r.omim_disease_name_en||r.id, omim:(r.id||'').replace('OMIM:',''),
       mondo:(r.mondo_id&&r.mondo_id[0])||'',
       gene:(r.hgnc_gene_symbol&&r.hgnc_gene_symbol.join(', '))||'',
       inh:(r.inheritance_en?Object.values(r.inheritance_en).join(', '):''),
       score:r.score, rank:r.rank
     }));
+    pcfResults=rankPcfByInheritance(pcfRawResults);
   }catch(e){ pcfError='No se pudo consultar PubCaseFinder ('+e.message+').'; }
   pcfLoading=false; renderMonarch();
 }
