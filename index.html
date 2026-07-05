@@ -478,8 +478,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.48.0';
+const APP_VERSION='1.49.0';
 const CHANGELOG=[
+  {v:'1.49.0', d:'2026-07-04', c:['Repositorio documental (paso 1 de la reorientación): fuera la casilla «RAG». Ahora TODO documento que indexas queda automáticamente en el contexto de la IA al crear protocolos — ya no hay que marcar nada. Al indexar se guarda además el texto para la búsqueda. (Siguientes pasos: autocompletar DOI/PMID/PMCID al indexar, badges, y elegir las fuentes desde el repositorio en la autoría.)']},
   {v:'1.48.0', d:'2026-07-04', c:['Antecedentes familiares: nuevo selector «Herencia» en la barra del paciente (autosómica dominante/recesiva, ligada al X, mitocondrial, de novo). El diferencial (JAX y PubCaseFinder) lo tiene en cuenta: sube en el ranking las enfermedades cuya herencia encaja con la sospechada y baja las que la contradicen, con una insignia «✓ AD / ligada X…» en las que coinciden. Cambiar la herencia re-ordena al momento, sin volver a consultar.']},
   {v:'1.47.1', d:'2026-07-04', c:['Diferencial cruzado (protocolos que también encajan): era demasiado laxo y proponía casi todos. Ahora solo aparece un protocolo si de verdad CUMPLE sus criterios, o si es una coincidencia parcial genuina (≥2 HPO compartidos y a un solo criterio de cumplir). Se acabó el proponer protocolos por un único HPO genérico compartido.']},
   {v:'1.47.0', d:'2026-07-04', c:['Antropometría: el peso ahora también sugiere HPO por edad — «Peso bajo para la edad» (HP:0004325) o «Peso elevado para la edad» (HP:0004324) según el z (0-18 a), complementando al IMC (útil sobre todo en lactantes, donde el IMC se usa poco). No duplica chips que ya aporte el IMC. La superficie corporal se mantiene como cálculo de Mosteller a propósito (no existe un HPO fenotípico para ella; es una magnitud de dosificación).']},
@@ -3070,11 +3071,22 @@ async function ensureDocEmbeddings(id, name, text){
   if(ghConfigured()){ try{ let sha=null; try{ const ci=await ghGetFile('docs/emb/'+id+'.json'); sha=ci.sha; }catch(e){} await ghPutFile('docs/emb/'+id+'.json', rec, 'rag: embeddings '+(name||id), sha); }catch(e){} }
   return rec;
 }
-/* Recupera los fragmentos más relevantes para una consulta entre los documentos marcados RAG. */
+/* Corpus RAG = TODOS los documentos indexados del repositorio (docs/index.json con driveId).
+   Ya no hay flag «RAG»: indexar un documento lo incorpora automáticamente al contexto. Incluye por
+   compatibilidad los que estuvieran marcados a mano en el esquema antiguo (ragDocs). */
+async function ragDocList(){
+  const out=[]; const seen=new Set();
+  try{ const docs=(await getDocsIndex()).docs||[];
+    docs.forEach(d=>{ if(d.driveId && !seen.has(d.driveId)){ seen.add(d.driveId); out.push({id:d.driveId, name:d.titulo||d.nombre||d.driveId, mt:d.mt||''}); } });
+  }catch(e){}
+  Object.keys(ragDocs||{}).forEach(id=>{ if(!seen.has(id)){ seen.add(id); out.push({id, name:(ragDocs[id]&&ragDocs[id].name)||id, mt:(ragDocs[id]&&ragDocs[id].mt)||''}); } });
+  return out;
+}
+/* Recupera los fragmentos más relevantes para una consulta entre los documentos del repositorio. */
 async function ragRetrieve(query, k){
-  const ids=Object.keys(ragDocs); if(!ids.length || !loadCfg().openaiKey) return null;
+  const list=await ragDocList(); if(!list.length || !loadCfg().openaiKey) return null;
   const recs=[];
-  for(const id of ids){ let rec=cachedEmb(id); if(!rec){ try{ const t=await driveDownloadText(id, ragDocs[id].mt); rec=await ensureDocEmbeddings(id, ragDocs[id].name, t); }catch(e){} } if(rec&&rec.chunks) recs.push(rec); }
+  for(const {id,name,mt} of list){ let rec=cachedEmb(id); if(!rec){ try{ const t=await driveDownloadText(id, mt); rec=await ensureDocEmbeddings(id, name, t); }catch(e){} } if(rec&&rec.chunks) recs.push(rec); }
   if(!recs.length) return null;
   const qv=(await embedTexts([query]))?.[0]; if(!qv) return null;
   const scored=[];
@@ -3085,17 +3097,17 @@ async function ragRetrieve(query, k){
 async function buscarDocsRAG(query){
   const out=document.getElementById('docSearchOut'); if(!out) return;
   query=(query||'').trim(); if(!query){ out.innerHTML=''; return; }
-  const ids=Object.keys(ragDocs);
-  if(!ids.length){ out.innerHTML='<div class="study-flag">⚠ No tienes documentos marcados como <b>RAG</b>. Ve a «Documentos», conéctate a Drive y marca la casilla <b>RAG</b> de los PDF que quieras buscar.</div>'; return; }
+  const list=await ragDocList(); const nDocs=list.length;
+  if(!nDocs){ out.innerHTML='<div class="study-flag">⚠ No tienes documentos indexados todavía. Ve a «Documentos», conéctate a Drive e <b>indexa</b> tus PDF: quedan incorporados automáticamente.</div>'; return; }
   out.innerHTML='<div class="loading">Buscando en tus documentos…</div>';
   let res; try{ res=await ragRetrieveLocal(query, 6); }
   catch(e){ out.innerHTML='<div class="err">Error: '+escHtml(e.message)+'</div>'; return; }
   const {hits, sinTexto}=res;
   if(!hits.length){
-    if(sinTexto.length===ids.length){ out.innerHTML='<div class="study-flag">No pude leer el texto de tus documentos. Pulsa <b>Conectar</b> en «Documentos» (el acceso a Drive caduca a la hora) y vuelve a buscar — necesito extraer el texto del PDF una vez.</div>'; return; }
+    if(sinTexto.length===nDocs){ out.innerHTML='<div class="study-flag">No pude leer el texto de tus documentos. Pulsa <b>Conectar</b> en «Documentos» (el acceso a Drive caduca a la hora) y vuelve a buscar — necesito extraer el texto del PDF una vez.</div>'; return; }
     out.innerHTML='<div class="empty">Sin coincidencias para «'+escHtml(query)+'».'+(sinTexto.length?(' ('+sinTexto.length+' doc sin texto: conecta Drive)'):'')+'</div>'; return;
   }
-  out.innerHTML='<div class="cart-group-title">Fragmentos más relevantes <span class="dx-meta">(en '+(ids.length-sinTexto.length)+'/'+ids.length+' documento(s)'+(sinTexto.length?' · '+sinTexto.length+' sin texto':'')+')</span></div>'
+  out.innerHTML='<div class="cart-group-title">Fragmentos más relevantes <span class="dx-meta">(en '+(nDocs-sinTexto.length)+'/'+nDocs+' documento(s)'+(sinTexto.length?' · '+sinTexto.length+' sin texto':'')+')</span></div>'
     + hits.map(h=>`<div class="study" style="margin:6px 0"><div class="dx-meta"><b>${escHtml(h.doc||'doc')}</b> · relevancia ${h.s.toFixed(1)}</div><div style="font-size:12.5px;line-height:1.5">${escHtml(h.t.slice(0,420))}…</div></div>`).join('');
 }
 /* ---- RAG LOCAL (BM25, sin API externa: funciona solo con Claude) ----
@@ -3115,10 +3127,10 @@ async function docChunkTexts(id, mt){
   return chunkText(text);
 }
 async function ragRetrieveLocal(query, k){
-  const ids=Object.keys(ragDocs); if(!ids.length) return {hits:[], sinTexto:[]};
+  const list=await ragDocList(); if(!list.length) return {hits:[], sinTexto:[]};
   const all=[]; const sinTexto=[];
-  for(const id of ids){ const chs=await docChunkTexts(id, ragDocs[id].mt); if(!chs||!chs.length){ sinTexto.push(ragDocs[id].name||id); continue; }
-    chs.forEach(t=>all.push({doc:ragDocs[id].name||id, t, toks:ragTokens(t)})); }
+  for(const {id,name,mt} of list){ const chs=await docChunkTexts(id, mt); if(!chs||!chs.length){ sinTexto.push(name); continue; }
+    chs.forEach(t=>all.push({doc:name, t, toks:ragTokens(t)})); }
   if(!all.length) return {hits:[], sinTexto};
   const N=all.length, df={}; all.forEach(c=>{ new Set(c.toks).forEach(w=>df[w]=(df[w]||0)+1); });
   const qset=[...new Set(ragTokens(query))]; const k1=1.5, b=0.75;
@@ -3130,13 +3142,13 @@ async function ragRetrieveLocal(query, k){
   return {hits, sinTexto};
 }
 async function ragContext(maxDocs, query){
-  const ids=Object.keys(ragDocs); if(!ids.length) return '';
+  const list=await ragDocList(); if(!list.length) return '';
   // Recuperación LOCAL por relevancia (BM25) — sin OpenAI; solo necesita el texto del PDF.
   if(query){ try{ const {hits}=await ragRetrieveLocal(query, 8); if(hits&&hits.length)
     return hits.map(h=>'\n--- '+(h.doc||'doc')+' ---\n'+h.t).join('\n'); }catch(e){} }
   // Respaldo: "stuffing" (primeros caracteres de cada documento).
   let out=''; let n=0;
-  for(const id of ids){ if(n>=(maxDocs||4)) break; try{ const t=await driveDownloadText(id, ragDocs[id].mt); if(t){ out += '\n--- '+(ragDocs[id].name||id)+' ---\n'+t.slice(0,7000); n++; } }catch(e){} }
+  for(const {id,name,mt} of list){ if(n>=(maxDocs||4)) break; try{ const t=await driveDownloadText(id, mt); if(t){ out += '\n--- '+(name||id)+' ---\n'+t.slice(0,7000); n++; } }catch(e){} }
   return out;
 }
 
@@ -3152,9 +3164,9 @@ function renderDocumentos(){
       <button class="btn" id="docRefresh">↻ Refrescar</button>
       <button class="btn primary" id="docConnect">Conectar</button>
     </div>
-    <div class="sec-note">Flags por documento: <b>RAG</b> (la IA lo lee al crear protocolos) · <b>indexado</b> (analizado por IA → docs/index.json) · <b>unido a bibliografía</b> (citado por un protocolo). Marcar RAG <b>auto-indexa</b>.</div>
+    <div class="sec-note">Al <b>indexar</b> un documento, la IA lo analiza (nombre + resumen) y queda incorporado automáticamente: la IA lo tendrá en cuenta al crear protocolos (RAG) y podrás citarlo. Ya no hay que marcar nada. <b>unido a bibliografía</b> = citado por algún protocolo.</div>
     <div style="display:flex;gap:8px;margin:6px 0 12px">
-      <input id="docSearch" type="text" placeholder="🔎 Buscar en el texto de tus documentos RAG (relevancia, sin coste)…" autocomplete="off" style="flex:1;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
+      <input id="docSearch" type="text" placeholder="🔎 Buscar en el texto de tus documentos indexados (relevancia, sin coste)…" autocomplete="off" style="flex:1;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
       <button class="btn" id="docSearchBtn">Buscar</button>
     </div>
     <div id="docSearchOut"></div>
@@ -3185,27 +3197,26 @@ async function renderDriveList(files){
   const refset=await fichaRefSet();
   const regOf=(f)=> docs.find(d=>d.driveId===f.id) || matchDoc({url:f.webViewLink, titulo:f.name}, docs);
   const flag=(on,label,title)=> `<span class="dx-meta hastip" style="color:${on?'var(--ok)':'var(--ink3)'}">${on?'✓':'–'} ${label}<span class="tooltip">${escHtml(title)}</span></span>`;
-  list.innerHTML=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} PDF(s) · ${Object.keys(ragDocs).length} en RAG · <span class="dx-meta">flags: RAG · indexado (IA) · unido a bibliografía</span></div>
+  const nIdx=files.filter(f=>!!regOf(f)).length;
+  list.innerHTML=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} PDF(s) · ${nIdx} indexado(s) (en el contexto de la IA) · <span class="dx-meta">flags: indexado (IA) · unido a bibliografía</span></div>
     <div class="lib-grid">`+files.map((f,i)=>{
     const reg=regOf(f);
     const indexado=!!reg;
     const enBib=!!(reg && docUsedInFicha(reg, refset));
-    const esRag=!!ragDocs[f.id] || !!(reg&&reg.rag);
     const descTip=(reg&&reg.descripcion)?(' <span class="hastip dx-meta" style="color:var(--accent)">ⓘ<span class="tooltip">'+escHtml(reg.titulo||f.name)+(reg.descripcion?'<br><span class=dx-meta>'+escHtml(reg.descripcion)+'</span>':'')+'</span></span>'):'';
     return `<div class="lib-card">
       <div class="nm">${escHtml(f.name)}${descTip}</div>
-      <div class="meta">${(f.modifiedTime||'').slice(0,10)} · ${flag(esRag,'RAG','¿Se usa para RAG (la IA lo lee al generar protocolos)?')} · ${flag(indexado,'indexado','¿Analizado por IA y guardado en tu repositorio (docs/index.json) con nombre+descripción?')} · ${flag(enBib,'bibliografía','¿Citado por alguna referencia/protocolo?')}</div>
+      <div class="meta">${(f.modifiedTime||'').slice(0,10)} · ${flag(indexado,'indexado','¿Analizado por IA y en el contexto (RAG) para crear protocolos?')} · ${flag(enBib,'bibliografía','¿Citado por alguna referencia/protocolo?')}</div>
       <div class="acts">
         ${f.webViewLink?`<a class="btn" href="${f.webViewLink}" target="_blank" rel="noopener">Abrir</a>`:''}
-        ${indexado ? `<button class="btn" data-editmeta="${i}" title="Editar nombre y descripción (a mano o regenerar con IA)">✏ Editar</button><button class="btn" data-reindex="${i}" title="Regenerar nombre+descripción con IA leyendo el texto del PDF">↻ IA</button><button class="btn ghost" data-unreg="${reg.id}" title="Quitar del índice">Quitar del índice</button>` : `<button class="btn primary" data-index="${i}" title="La IA lo analiza una vez y lo guarda en tu repositorio">✨ Indexar (IA)</button>`}
-        <label class="q-opt" style="font-size:11px"><input type="checkbox" data-rag="${i}" ${esRag?'checked':''}> RAG</label>
+        ${indexado ? `<button class="btn" data-editmeta="${i}" title="Editar nombre y descripción (a mano o regenerar con IA)">✏ Editar</button><button class="btn" data-reindex="${i}" title="Regenerar nombre+descripción con IA leyendo el texto del PDF">↻ IA</button><button class="btn ghost" data-unreg="${reg.id}" title="Quitar del índice">Quitar del índice</button>` : `<button class="btn primary" data-index="${i}" title="La IA lo analiza una vez y queda en el contexto para crear protocolos">✨ Indexar (IA)</button>`}
       </div>
     </div>`;
   }).join('')+'</div>';
   const idx=async(i,reanalyze)=>{ const f=files[i]; const reg=regOf(f);
     if(reg && !reanalyze) return;
     showToast('Indexando con IA…');
-    try{ await indexarDriveDoc(f, {rag: !!(reg&&reg.rag) || !!ragDocs[f.id]}); _fichaRefSet=null; showToast('Indexado'); renderDriveList(files); }
+    try{ await indexarDriveDoc(f); _fichaRefSet=null; showToast('Indexado'); renderDriveList(files); }
     catch(e){ showToast('Error al indexar: '+e.message); }
   };
   list.querySelectorAll('[data-index]').forEach(b=>b.addEventListener('click', ()=>idx(+b.dataset.index,false)));
@@ -3214,22 +3225,6 @@ async function renderDriveList(files){
   list.querySelectorAll('[data-unreg]').forEach(b=>b.addEventListener('click', async ()=>{
     try{ await desregistrarDoc(b.dataset.unreg); showToast('Quitado del índice'); renderDriveList(files); }
     catch(e){ showToast('Error: '+e.message); }
-  }));
-  list.querySelectorAll('[data-rag]').forEach(cb=>cb.addEventListener('change', async ()=>{
-    const f=files[+cb.dataset.rag]; let reg=regOf(f);
-    if(cb.checked){
-      ragDocs[f.id]={name:f.name, mt:f.modifiedTime}; saveRag();
-      if(!reg){ showToast('Marcado RAG → indexando con IA…'); try{ await indexarDriveDoc(f, {rag:true}); }catch(e){ showToast('Error: '+e.message); } }   // RAG ⇒ auto-indexa
-      else { reg.rag=true; try{ await registrarDoc(reg); }catch(e){} }
-      // RAG: extrae y GUARDA el texto del PDF (localStorage + GitHub docs/text) → indexado una vez, permanente. No hay que reindexar.
-      try{ let txt=null; try{ const c=JSON.parse(localStorage.getItem('fh_doctext_'+f.id)); if(c&&c.text) txt=c.text; }catch(e){}
-        if(!txt){ showToast('Leyendo y guardando el texto del PDF para RAG…'); txt=await driveDownloadText(f.id, f.modifiedTime); }
-        if(txt) await ghSaveDocText(f.id, txt); }catch(e){}
-    } else {
-      delete ragDocs[f.id]; saveRag();
-      if(reg){ reg.rag=false; try{ await registrarDoc(reg); }catch(e){} }
-    }
-    renderDriveList(files);
   }));
 }
 /* Indexa un PDF de Drive: la IA lo analiza una vez (nombre+descripción) y se guarda en docs/index.json. */
@@ -3267,9 +3262,10 @@ function editarDocMeta(f, reg, onDone){
 async function indexarDriveDoc(f, opts){
   opts=opts||{};
   let pdfText=null; try{ pdfText=await driveDownloadText(f.id, f.modifiedTime); }catch(e){}   // texto real del PDF → análisis preciso
+  if(pdfText) ghSaveDocText(f.id, pdfText);   // guarda el texto → el documento queda en el corpus RAG (ya no hace falta marcar «RAG»)
   const j = anyProvider() ? await analizarDocIA({titulo:f.name, url:f.webViewLink}, pdfText).catch(()=>null) : null;
   const doc={ titulo:(j&&j.nombre)||f.name, descripcion:(j&&j.descripcion)||'', tipo:(j&&j.tipo)||'', anio:(j&&j.anio)||(f.modifiedTime||'').slice(0,4),
-    url:f.webViewLink||('drive:'+f.id), enlace:f.webViewLink||('https://drive.google.com/file/d/'+f.id), driveId:f.id, iaAnalizado:!!j, rag:!!opts.rag };
+    url:f.webViewLink||('drive:'+f.id), enlace:f.webViewLink||('https://drive.google.com/file/d/'+f.id), driveId:f.id, mt:f.modifiedTime||'', iaAnalizado:!!j };
   await registrarDoc(doc);
   return doc;
 }
@@ -3284,7 +3280,7 @@ async function generarFichaIA(motivo, guiaContext, instructions){
     let user='Motivo de consulta: "'+(motivo||'')+'". Genera la ficha JSON más completa y vigente para esta entidad o grupo nosológico, con sus criterios diagnósticos actuales.';
     if(instructions && instructions.trim()){ user += '\n\nINSTRUCCIONES ADICIONALES DEL CLÍNICO (síguelas con prioridad; pueden incluir un JSON de referencia/plantilla a respetar):\n'+instructions.trim(); }
     if(guiaContext){ user += '\n\nGUÍA(S)/DOCUMENTO(S) APORTADO(S) POR EL CLÍNICO (úsalos como FUENTE PRINCIPAL y cítalos en "fuentes"):\n'+guiaContext; }
-    if(Object.keys(ragDocs).length){ if(box) box.innerHTML='<div class="loading">Recuperando lo relevante de tus documentos (RAG)…</div>'; const rag=await ragContext(4, motivo); if(rag) user += '\n\nDOCUMENTOS DE MI REPOSITORIO (tenlos en cuenta ADEMÁS de la búsqueda web — la COMPLEMENTAN, no la sustituyen — y cítalos en "fuentes"):\n'+rag; }
+    { if(box) box.innerHTML='<div class="loading">Recuperando lo relevante de tus documentos…</div>'; const rag=await ragContext(4, motivo); if(rag) user += '\n\nDOCUMENTOS DE MI REPOSITORIO (tenlos en cuenta ADEMÁS de la búsqueda web — la COMPLEMENTAN, no la sustituyen — y cítalos en "fuentes"):\n'+rag; }
     let resp=await callLLM({system:FICHA_SYSTEM_PROMPT, user, webSearch:true, maxTokens:16000, task:'author'});
     let f=extractJSON(resp);
     if(!f){ resp=await callLLM({system:FICHA_SYSTEM_PROMPT, user:user+'\n\nIMPORTANTE: devuelve SOLO el JSON, compacto y COMPLETO (sin texto fuera del JSON).', webSearch:true, maxTokens:16000, task:'author'}); f=extractJSON(resp); }  // reintento
