@@ -485,8 +485,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.52.0';
+const APP_VERSION='1.53.0';
 const CHANGELOG=[
+  {v:'1.53.0', d:'2026-07-05', c:['Repositorio (fase 3, cierre de la reorientación): en «Documentos» aparece ahora una sección «📑 Referencias sin PDF» con las citas de tus protocolos que aún no tienen un documento en Drive — con sus badges (PMID/DOI/PMCID, ReadCube, GeneReviews) y un botón «📎 Asignar PDF de Drive» para vincularles el fichero (y que pasen a indexarse) o quitarlas.','«Asignar PDF» ya no aparece en NINGUNA vista de solo lectura (protocolo, prenatal, seguimiento, indicación de estudio): la gestión de documentos se hace desde «Documentos» y desde el botón «📁 Repositorio» del editor.']},
   {v:'1.52.0', d:'2026-07-05', c:['Repositorio (fase 2b): al guardar un protocolo, todas sus referencias que aún no estén en el repositorio se añaden solas como entrada bibliográfica (con sus DOI/PMID/PMCID), para que el repositorio sea de verdad la lista única. Las que no tienen fichero PDF aparecen como «referencia externa» (solo badges, sin icono de Drive ni «asignar PDF»); cuando quieras, les asignas el PDF guardándolo en tu Drive.']},
   {v:'1.51.0', d:'2026-07-05', c:['El indicador de ReadCube Papers ahora es su icono (cubo de colores) en vez del texto «Papers», y el de «está en tu repositorio» es el icono de Google Drive.','En la vista de protocolo desaparece «asignar PDF» (era ruido); las referencias muestran solo sus badges e identificadores.','Repositorio (fase 2): en el editor de protocolo, cada referencia tiene un botón «📁» para VINCULARLA a un documento de tu repositorio (y «📁 + del repositorio» para añadir una referencia eligiéndola de la lista), en vez de asignar el PDF a mano. La cita pasa a ser ese documento, con sus identificadores y badges.']},
   {v:'1.50.0', d:'2026-07-04', c:['Repositorio (paso 2): al indexar un documento la IA busca y rellena su DOI/PMID/PMCID; cada documento del repositorio muestra ahora badges clicables (PMID/DOI/PMCID + «📗 Papers») y, si está identificado, su nombre visible pasa a ser la cita bibliográfica (el nombre + resumen siguen en el tooltip).','Nuevo badge propio «📖 GeneReviews»: detecta los capítulos de GeneReviews (NCBI Bookshelf), enlaza a la página, y en el tooltip muestra el NBK, la fecha de «última revisión» y un enlace al PDF (para guardarlo en tu Drive si quieres tenerlo en el repositorio). Como GeneReviews es un documento vivo, si su última revisión es POSTERIOR a la de tu protocolo, aparece un aviso «⟳ GeneReviews actualizado».']},
@@ -3281,10 +3282,12 @@ function renderDocumentos(){
       <button class="btn" id="docSearchBtn">Buscar</button>
     </div>
     <div id="docSearchOut"></div>
-    <div id="docList">${_driveFilesCache.length?'':'<div class="placeholder">'+(driveTokenValid()?'Cargando tus PDFs…':'Pulsa "Conectar" para listar tus PDFs.')+'</div>'}</div>`;
+    <div id="docList">${_driveFilesCache.length?'':'<div class="placeholder">'+(driveTokenValid()?'Cargando tus PDFs…':'Pulsa "Conectar" para listar tus PDFs.')+'</div>'}</div>
+    <div id="docExternos" style="margin-top:16px"></div>`;
   document.getElementById('docConnect').addEventListener('click', cargarDriveDocs);
   document.getElementById('docRefresh').addEventListener('click', cargarDriveDocs);
   document.getElementById('docToAjustes').addEventListener('click', openSettings);
+  renderExternalRefs();
   const ds=document.getElementById('docSearch'), dsb=document.getElementById('docSearchBtn');
   if(dsb) dsb.addEventListener('click', ()=>buscarDocsRAG(ds.value));
   if(ds) ds.addEventListener('keydown', e=>{ if(e.key==='Enter') buscarDocsRAG(ds.value); });
@@ -3342,6 +3345,56 @@ async function renderDriveList(files){
     try{ await desregistrarDoc(b.dataset.unreg); showToast('Quitado del índice'); renderDriveList(files); }
     catch(e){ showToast('Error: '+e.message); }
   }));
+  renderExternalRefs();
+}
+/* Referencias del repositorio SIN fichero (citas externas auto-añadidas al guardar protocolos). Se muestran
+   aparte de los PDFs de Drive, con sus badges; se les puede asignar un PDF de Drive o quitarlas. */
+function renderExternalRefs(){
+  const box=document.getElementById('docExternos'); if(!box) return;
+  const docs=((cachedDocs()||{}).docs||[]).filter(d=>d && !d.driveId && !d.enlace);
+  if(!docs.length){ box.innerHTML=''; return; }
+  box.innerHTML=`<div class="cart-group-title">📑 Referencias sin PDF <span class="dx-meta">(${docs.length}) — citas de tus protocolos que aún no tienen un documento en Drive</span></div>
+    <div class="lib-grid">`+docs.map(d=>`<div class="lib-card">
+      <div class="nm">${escHtml(d.titulo||d.id)}${refIdChipsHtml(d)}${readcubeLibBadgeHtml(d)}${geneReviewsBadgeHtml(d)}</div>
+      <div class="meta">${escHtml(d.tipo||'referencia')}${d.anio?' · '+escHtml(String(d.anio)):''}${d.url?` · <a href="${escA(d.url)}" target="_blank" rel="noopener">enlace</a>`:''}</div>
+      <div class="acts">
+        <button class="btn" data-assigndoc="${escA(String(d.id))}" title="Vincular un PDF de tu Drive a esta referencia">📎 Asignar PDF de Drive</button>
+        <button class="btn ghost" data-unreg="${escA(String(d.id))}" title="Quitar del repositorio">Quitar</button>
+      </div>
+    </div>`).join('')+'</div>';
+  box.querySelectorAll('[data-assigndoc]').forEach(b=>b.addEventListener('click', ()=>assignDriveToDoc(b.dataset.assigndoc)));
+  box.querySelectorAll('[data-unreg]').forEach(b=>b.addEventListener('click', async ()=>{ try{ await desregistrarDoc(b.dataset.unreg); showToast('Quitada del repositorio'); renderExternalRefs(); }catch(e){ showToast('Error: '+e.message); } }));
+}
+/* Selector de un PDF de Drive para vincularlo a una referencia externa del repositorio (le da fichero + texto). */
+function assignDriveToDoc(docId){
+  if(!_driveFilesCache.length){ showToast('Conéctate a Drive primero (botón «Conectar»)'); return; }
+  const files=_driveFilesCache.slice().sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
+  const ov=document.createElement('div'); ov.className='overlay'; ov.id='assignDriveOverlay';
+  const rowHtml=(f)=>`<div class="lib-card drive-pick" data-fid="${escA(f.id)}" style="cursor:pointer;margin:5px 0"><div class="nm">${escHtml(f.name)}</div><div class="meta">${(f.modifiedTime||'').slice(0,10)}</div></div>`;
+  ov.innerHTML=`<div class="modal" style="max-width:600px"><h2>📎 Asignar PDF de Drive</h2>
+    <div class="msub">Elige el PDF de tu Drive que corresponde a esta referencia. Se indexará y quedará como su documento.</div>
+    <input id="adSearch" type="text" placeholder="🔎 Filtrar por nombre…" autocomplete="off" style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px;margin-bottom:8px">
+    <div id="adList" style="max-height:50vh;overflow:auto">${files.map(rowHtml).join('')}</div>
+    <div class="modal-actions"><button class="btn ghost" id="adCancel">Cancelar</button></div></div>`;
+  document.body.appendChild(ov);
+  const close=()=>ov.remove();
+  ov.querySelector('#adCancel').addEventListener('click', close);
+  ov.addEventListener('click', e=>{ if(e.target===ov) close(); });
+  const si=ov.querySelector('#adSearch'), listEl=ov.querySelector('#adList');
+  if(si) si.addEventListener('input', ()=>{ const q=accLower(si.value); const f=files.filter(x=>!q||accLower(x.name||'').includes(q)); listEl.innerHTML=f.map(rowHtml).join('')||'<div class="placeholder">Sin coincidencias.</div>'; wire(); });
+  function wire(){ listEl.querySelectorAll('.drive-pick').forEach(r=>r.addEventListener('click', async ()=>{
+    const f=files.find(x=>x.id===r.dataset.fid); if(!f) return; close();
+    showToast('Vinculando y leyendo el PDF…');
+    try{
+      const idx=cachedDocs()||{docs:[]}; const d=(idx.docs||[]).find(x=>String(x.id)===String(docId)); if(!d){ showToast('Referencia no encontrada'); return; }
+      d.driveId=f.id; d.enlace=f.webViewLink||('https://drive.google.com/file/d/'+f.id); d.url=d.url||d.enlace; d.mt=f.modifiedTime||''; d.externo=false;
+      let txt=null; try{ txt=await driveDownloadText(f.id, f.modifiedTime); }catch(e){}
+      if(txt) ghSaveDocText(f.id, txt);
+      await registrarDoc(d); _fichaRefSet=null;
+      showToast('PDF asignado'); renderExternalRefs(); if(_driveFilesCache.length) renderDriveList(_driveFilesCache);
+    }catch(e){ showToast('Error: '+e.message); }
+  })); }
+  wire(); if(si) setTimeout(()=>si.focus(),30);
 }
 /* Indexa un PDF de Drive: la IA lo analiza una vez (nombre+descripción) y se guarda en docs/index.json. */
 /* Editar a mano (o regenerar con IA leyendo el PDF) el nombre y la descripción de un documento ya indexado. */
@@ -4210,7 +4263,7 @@ function evalResultHtml(r, note){
   return `<div class="eval ${r.indicado?'on':'off'}">
     <b>${r.indicado?'✓ Estudio indicado':'✗ No indicado'}</b> · ${r.cumple_criterios?'cumple criterios':'no cumple criterios'}
     ${r.justificacion?`<div style="margin-top:4px">${r.justificacion}</div>`:''}
-    ${g.url?`<div class="study-src">Según: <a href="${g.url}" target="_blank" rel="noopener">${g.titulo||g.url}${g.anio?' ('+g.anio+')':''}</a>${bibRefHtml({titulo:g.titulo,url:g.url,anio:g.anio,doi:g.doi,pmid:g.pmid,pmcid:g.pmcid})}</div>`:(g.titulo?`<div class="study-src">Según: ${g.titulo}</div>`:'')}
+    ${g.url?`<div class="study-src">Según: <a href="${g.url}" target="_blank" rel="noopener">${g.titulo||g.url}${g.anio?' ('+g.anio+')':''}</a>${bibRefHtml({titulo:g.titulo,url:g.url,anio:g.anio,doi:g.doi,pmid:g.pmid,pmcid:g.pmcid},{noAssign:true})}</div>`:(g.titulo?`<div class="study-src">Según: ${g.titulo}</div>`:'')}
     ${note?`<div class="study-src" style="opacity:.85">${note}</div>`:''}
   </div>`;
 }
@@ -4734,7 +4787,7 @@ function renderSegResult(j, fromCache){
   const gl=geneLinks(j.gen||'');
   const vig=(j.vigilancia||[]).map(v=>`<tr><td style="padding:5px 8px;border-top:1px solid var(--line)"><b>${escHtml(v.area||'')}</b></td><td style="padding:5px 8px;border-top:1px solid var(--line)">${escHtml(v.prueba||'')}</td><td style="padding:5px 8px;border-top:1px solid var(--line)">${escHtml(v.inicio||'')}</td><td style="padding:5px 8px;border-top:1px solid var(--line)">${escHtml(v.frecuencia||'')}</td><td style="padding:5px 8px;border-top:1px solid var(--line);color:var(--ink3)">${escHtml(v.nota||'')}</td></tr>`).join('');
   const trt=(j.tratamiento||[]).map(t=>`<li><b>${escHtml(t.tema||'')}:</b> ${escHtml(t.recomendacion||'')}</li>`).join('');
-  const fuentes=(j.fuentes||[]).map(f=>`<li><a href="${escHtml(String(f.url||'')).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">${escHtml(f.titulo||f.url||'')}${f.anio?' ('+escHtml(String(f.anio))+')':''}</a>${bibRefHtml({titulo:f.titulo,url:f.url,anio:f.anio,doi:f.doi,pmid:f.pmid,pmcid:f.pmcid})}</li>`).join('');
+  const fuentes=(j.fuentes||[]).map(f=>`<li><a href="${escHtml(String(f.url||'')).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">${escHtml(f.titulo||f.url||'')}${f.anio?' ('+escHtml(String(f.anio))+')':''}</a>${bibRefHtml({titulo:f.titulo,url:f.url,anio:f.anio,doi:f.doi,pmid:f.pmid,pmcid:f.pmcid},{noAssign:true})}</li>`).join('');
   out.innerHTML=`<div class="study" style="margin:10px 0;padding:12px">
     <div style="font-size:16px;font-weight:600">${escHtml(j.gen||'')}${j.entidad?` <span class="dx-meta">· ${escHtml(j.entidad)}</span>`:''}${j.herencia?` <span class="pop-badge">${escHtml(j.herencia)}</span>`:''}${fromCache?' <span class="dx-meta">· guardado</span>':''}</div>
     ${j.resumen?`<div style="margin:6px 0;font-size:13px;line-height:1.6">${escHtml(j.resumen)}</div>`:''}
@@ -5725,7 +5778,7 @@ const PRENATAL_REFS={
   overview:{t:'Santoli et al., Revisión de guías de cribado y diagnóstico prenatal (2025)', u:'https://obgyn.onlinelibrary.wiley.com/doi/full/10.1002/pmf2.70016', a:'2025'}
 };
 function refsHtml(keys){
-  return `<div class="study-src">Fuentes: `+keys.map(k=>{ const r=PRENATAL_REFS[k]; return `<a href="${r.u}" target="_blank" rel="noopener">${escHtml(r.t)} (${r.a})</a>`+bibRefHtml({titulo:r.t, url:r.u, anio:r.a}); }).join(' · ')+`</div>`;
+  return `<div class="study-src">Fuentes: `+keys.map(k=>{ const r=PRENATAL_REFS[k]; return `<a href="${r.u}" target="_blank" rel="noopener">${escHtml(r.t)} (${r.a})</a>`+bibRefHtml({titulo:r.t, url:r.u, anio:r.a},{noAssign:true}); }).join(' · ')+`</div>`;
 }
 function prenatalIndicacion(){
   // Excluye los ancestros auto-marcados por jerarquía: NO son una anomalía adicional (es el mismo hallazgo generalizado).
@@ -5766,7 +5819,7 @@ function renderPrenatalDx(){
         +`<div><b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">· IA</span>':''} <span class="dx-meta">· cumple ${s.matched.length}/${s.total} (mín. ${s.min})</span></div>`
         +`<div style="font-size:12px;line-height:1.5;margin:3px 0"><span style="color:var(--ok)">✓ presentes (${s.matched.length}):</span> ${pres}</div>`
         +(s.missing.length?`<div style="font-size:12px;line-height:1.5;margin:3px 0;color:var(--ink3)">○ faltan (${s.missing.length}): ${falt}</div>`:'')
-        +`<div style="font-size:12px;margin-top:3px">→ <b>${escHtml(s.test)}</b> · ${link}${s.ref?bibRefHtml(s.ref):''}</div></div>`; }).join('')
+        +`<div style="font-size:12px;margin-top:3px">→ <b>${escHtml(s.test)}</b> · ${link}${s.ref?bibRefHtml(s.ref,{noAssign:true}):''}</div></div>`; }).join('')
     + `<div class="am-note" style="margin-top:4px">Por solapamiento de hallazgos; no es diagnóstico.</div>`;
 }
 async function evalPrenatalGuias(){
@@ -5821,7 +5874,7 @@ function renderPrenatal(){
       <div style="margin-top:24px;border-top:1px solid var(--line);padding-top:16px">
         <div id="prenatalInd" style="margin:0 0 16px"></div>
         <details class="morfo-region"><summary>Síndromes incorporados <span style="color:var(--ink3);font-weight:400">· ${allPrenatalSyndromes().length}</span></summary>
-          <div style="font-size:12.5px;line-height:1.7;padding:4px 0">${allPrenatalSyndromes().map(s=>{ const editable=true; return `<div>· <b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)" title="Ficha Orphanet (español)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">IA</span>':''}${s.validado?' <span class="dx-meta" style="color:var(--ok)">✓ validado</span>':''}${s.rev?` <span class="dx-meta">rev ${s.rev}</span>`:''} <span class="dx-meta hastip">— ${(s.findings||[]).length} hallazgos<span class="tooltip">${syndromeFindingsTip(s)}</span></span> <span class="dx-meta">· ${escHtml(s.test||'')}</span>${(s.ref&&s.ref.url)?` <a class="dx-meta" href="${escA(String(s.ref.url))}" target="_blank" rel="noopener">bibliografía</a>`:''}${s.ref?bibRefHtml(s.ref):''}${editable?` <a class="tip-ai" data-editsyn="${escA(s.name)}">✎ editar</a>`:''}${s.ia?` <a class="tip-ai" data-rmsyn="${escA(s.name)}">quitar</a>`:''}</div>`; }).join('')}</div>
+          <div style="font-size:12.5px;line-height:1.7;padding:4px 0">${allPrenatalSyndromes().map(s=>{ const editable=true; return `<div>· <b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)" title="Ficha Orphanet (español)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">IA</span>':''}${s.validado?' <span class="dx-meta" style="color:var(--ok)">✓ validado</span>':''}${s.rev?` <span class="dx-meta">rev ${s.rev}</span>`:''} <span class="dx-meta hastip">— ${(s.findings||[]).length} hallazgos<span class="tooltip">${syndromeFindingsTip(s)}</span></span> <span class="dx-meta">· ${escHtml(s.test||'')}</span>${(s.ref&&s.ref.url)?` <a class="dx-meta" href="${escA(String(s.ref.url))}" target="_blank" rel="noopener">bibliografía</a>`:''}${s.ref?bibRefHtml(s.ref,{noAssign:true}):''}${editable?` <a class="tip-ai" data-editsyn="${escA(s.name)}">✎ editar</a>`:''}${s.ia?` <a class="tip-ai" data-rmsyn="${escA(s.name)}">quitar</a>`:''}</div>`; }).join('')}</div>
         </details>
         <div class="cart-group-title" style="margin-top:14px">Añadir / proponer síndromes (IA)</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">
@@ -6348,7 +6401,7 @@ function prenatalCardHtml(s){
 function verSindromePrenatal(name){
   const s=allPrenatalSyndromes().find(x=>x.name===name); if(!s) return;
   const ov=document.createElement('div'); ov.className='overlay'; ov.id='prenViewOverlay';
-  const link=(s.ref&&s.ref.url)?`<a href="${escHtml(String(s.ref.url)).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">${escHtml(s.ref.titulo||'Bibliografía')}</a>${bibRefHtml(s.ref)}`:`<a href="${grLink(s.name)}" target="_blank" rel="noopener">GeneReviews</a>`;
+  const link=(s.ref&&s.ref.url)?`<a href="${escHtml(String(s.ref.url)).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">${escHtml(s.ref.titulo||'Bibliografía')}</a>${bibRefHtml(s.ref,{noAssign:true})}`:`<a href="${grLink(s.name)}" target="_blank" rel="noopener">GeneReviews</a>`;
   ov.innerHTML=`<div class="modal" style="max-width:560px"><h2>🤰 ${escHtml(s.name)} <span class="pop-badge" style="background:rgba(120,180,255,.15);color:#9cc4ff">prenatal</span></h2>
     <div class="msub">Estudio dirigido: <b>${escHtml(s.test||'—')}</b> · mínimo ${s.min||2} hallazgo(s) para sugerirlo${s.orpha?` · <a href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener">ORPHA:${escHtml(String(s.orpha))}</a>`:''}</div>
     <div style="font-size:13px;line-height:1.7;max-height:50vh;overflow:auto">${(s.findings||[]).map(id=>'· '+escHtml(prenatalFindingLabel(id))+' <span class="hp">'+id+'</span>').join('<br>')||'—'}</div>
