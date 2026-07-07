@@ -334,6 +334,9 @@
   .ref-id{display:inline-block; font-size:10.5px; line-height:1.4; padding:1px 7px; border-radius:999px; background:var(--panel2); border:1px solid var(--line); color:var(--ink2); text-decoration:none; white-space:nowrap;}
   .ref-id:hover{border-color:var(--accent); color:var(--accent);}
   .rc-inlib{display:inline-block; font-size:10.5px; font-weight:700; padding:1px 8px; border-radius:999px; background:#173d2a; color:#7fe0a6; border:1px solid #2f6b48; white-space:nowrap; vertical-align:middle;}
+  .rc-ico{padding:0; background:none; border:none; text-decoration:none; line-height:1;}
+  .rc-ico:hover{filter:brightness(1.15);}
+  .drive-have{display:inline-block; text-decoration:none; line-height:1; vertical-align:middle;}
   .gr-badge{vertical-align:middle;}
   .gr-badge>a{display:inline-block; font-size:10.5px; font-weight:700; padding:1px 8px; border-radius:999px; background:#2a2140; color:#c7b3ff; border:1px solid #4a3d73; text-decoration:none; white-space:nowrap;}
   .gr-badge>a:hover{border-color:#7e63c9;}
@@ -482,8 +485,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.50.0';
+const APP_VERSION='1.51.0';
 const CHANGELOG=[
+  {v:'1.51.0', d:'2026-07-05', c:['El indicador de ReadCube Papers ahora es su icono (cubo de colores) en vez del texto «Papers», y el de «está en tu repositorio» es el icono de Google Drive.','En la vista de protocolo desaparece «asignar PDF» (era ruido); las referencias muestran solo sus badges e identificadores.','Repositorio (fase 2): en el editor de protocolo, cada referencia tiene un botón «📁» para VINCULARLA a un documento de tu repositorio (y «📁 + del repositorio» para añadir una referencia eligiéndola de la lista), en vez de asignar el PDF a mano. La cita pasa a ser ese documento, con sus identificadores y badges.']},
   {v:'1.50.0', d:'2026-07-04', c:['Repositorio (paso 2): al indexar un documento la IA busca y rellena su DOI/PMID/PMCID; cada documento del repositorio muestra ahora badges clicables (PMID/DOI/PMCID + «📗 Papers») y, si está identificado, su nombre visible pasa a ser la cita bibliográfica (el nombre + resumen siguen en el tooltip).','Nuevo badge propio «📖 GeneReviews»: detecta los capítulos de GeneReviews (NCBI Bookshelf), enlaza a la página, y en el tooltip muestra el NBK, la fecha de «última revisión» y un enlace al PDF (para guardarlo en tu Drive si quieres tenerlo en el repositorio). Como GeneReviews es un documento vivo, si su última revisión es POSTERIOR a la de tu protocolo, aparece un aviso «⟳ GeneReviews actualizado».']},
   {v:'1.49.0', d:'2026-07-04', c:['Repositorio documental (paso 1 de la reorientación): fuera la casilla «RAG». Ahora TODO documento que indexas queda automáticamente en el contexto de la IA al crear protocolos — ya no hay que marcar nada. Al indexar se guarda además el texto para la búsqueda. (Siguientes pasos: autocompletar DOI/PMID/PMCID al indexar, badges, y elegir las fuentes desde el repositorio en la autoría.)']},
   {v:'1.48.0', d:'2026-07-04', c:['Antecedentes familiares: nuevo selector «Herencia» en la barra del paciente (autosómica dominante/recesiva, ligada al X, mitocondrial, de novo). El diferencial (JAX y PubCaseFinder) lo tiene en cuenta: sube en el ranking las enfermedades cuya herencia encaja con la sospechada y baja las que la contradicen, con una insignia «✓ AD / ligada X…» en las que coinciden. Cambiar la herencia re-ordena al momento, sin volver a consultar.']},
@@ -1547,11 +1551,15 @@ function readcubeUrlFor(s){
   return null;
 }
 function inReadcubeLib(s){ return readcubeUrlFor(s)!==null; }
-/* Insignia «Papers»: enlace verde directo al artículo en ReadCube si hay URL; si solo hay membresía, chip «✓ Papers». */
+/* Icono ReadCube Papers (cubo multicolor) — SVG inline, sin red. */
+const RC_ICON='<svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align:-2px" aria-hidden="true"><g><rect x="8.5" y="1" width="8" height="8" rx="1.6" transform="rotate(20 12.5 5)" fill="#ef4d5a"/><rect x="14" y="8" width="8" height="8" rx="1.6" transform="rotate(-14 18 12)" fill="#f5a623"/><rect x="8" y="14" width="8" height="8" rx="1.6" transform="rotate(16 12 18)" fill="#3fb56a"/><rect x="1.5" y="8.5" width="8" height="8" rx="1.6" transform="rotate(-20 5.5 12.5)" fill="#3d8ef2"/><rect x="6.5" y="6.5" width="8.4" height="8.4" rx="1.6" transform="rotate(6 10.7 10.7)" fill="#9b5bd6"/></g></svg>';
+/* Icono Google Drive (triángulo tricolor oficial) — SVG inline, sin red. */
+const DRIVE_ICON='<svg viewBox="0 0 87.3 78" width="13" height="13" style="vertical-align:-2px" aria-hidden="true"><path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8H0c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/><path d="m43.65 25L29.9 1.2c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44C.4 49.9 0 51.45 0 53h27.5z" fill="#00ac47"/><path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5H59.8l5.85 11.5z" fill="#ea4335"/><path d="m43.65 25 13.75-23.8C56.05.4 54.5 0 52.9 0H34.4c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/><path d="m59.8 53H27.5L13.75 76.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/><path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3L43.65 25l16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/></svg>';
+/* Insignia «Papers»: icono ReadCube enlazado al artículo si hay URL; si solo hay membresía, icono sin enlace. */
 function readcubeLibBadgeHtml(s){
   const u=readcubeUrlFor(s); if(u===null) return '';
-  return u ? ` <a class="rc-inlib" href="${escA(u)}" target="_blank" rel="noopener" title="Abrir el artículo en tu biblioteca ReadCube Papers">📗 Papers ↗</a>`
-           : ' <span class="rc-inlib" title="En tu biblioteca de ReadCube Papers">✓ Papers</span>';
+  return u ? ` <a class="rc-inlib rc-ico" href="${escA(u)}" target="_blank" rel="noopener" title="Abrir el artículo en tu biblioteca ReadCube Papers">${RC_ICON}</a>`
+           : ` <span class="rc-inlib rc-ico" title="En tu biblioteca de ReadCube Papers">${RC_ICON}</span>`;
 }
 /* DOI/PMID/PMCID a partir de URLs habituales para guardar el enlace de una referencia. */
 function doiFromUrl(u){ const m=String(u||'').match(/\bdoi\.org\/(10\.[^\s"'<>)\]]+)/i); return m ? decodeURIComponent(m[1]).replace(/[),.;]+$/,'') : ''; }
@@ -1622,7 +1630,8 @@ function grStaleHtml(s, protoRevIso){
 /* Componente reutilizable para CUALQUIER referencia bibliográfica:
    - si su PDF está indexado en docs/index.json → icono 📄 con tooltip (nombre + descripción + abrir PDF);
    - si no → botón "📎 asignar PDF" que abre el registro. fuente = {titulo,url,anio}. */
-function bibRefHtml(fuente){
+function bibRefHtml(fuente, opts){
+  opts=opts||{};
   if(!fuente || (!fuente.url && !fuente.titulo)) return '';
   const docs=(cachedDocs()||{}).docs||[];
   const d=matchDoc(fuente, docs);
@@ -1637,11 +1646,15 @@ function bibRefHtml(fuente){
     const pdf=d.enlace||d.url||'';
     const tip=escHtml(d.titulo||fuente.titulo||'Documento')
       +(d.descripcion?('<br><span class="dx-meta">'+escHtml(d.descripcion)+'</span>'):'')
-      +(pdf?('<br><a href="'+escHtml(pdf).replace(/"/g,'&quot;')+'" target="_blank" rel="noopener">Abrir PDF ↗</a>'):'');
-    return readcubeLibBadgeHtml(ids)+grBadge+' <span class="hastip bib-have" title="PDF en tu repositorio">📄<span class="tooltip">'+tip+'</span></span>'
-      +(d.id?' <a class="tip-ai bib-unassign" data-docid="'+escHtml(String(d.id))+'" title="Eliminar este documento asignado del índice">✕</a>':'')
+      +(pdf?('<br><a href="'+escHtml(pdf).replace(/"/g,'&quot;')+'" target="_blank" rel="noopener">Abrir en Drive ↗</a>'):'');
+    // Está en el repositorio (Google Drive) → icono de Drive con tooltip y enlace a abrirlo.
+    const openHref = pdf ? ` href="${escA(pdf)}" target="_blank" rel="noopener"` : '';
+    return readcubeLibBadgeHtml(ids)+grBadge+` <a class="hastip drive-have"${openHref} title="En tu repositorio (Google Drive)">${DRIVE_ICON}<span class="tooltip">${tip}</span></a>`
+      +(d.id && !opts.noAssign?' <a class="tip-ai bib-unassign" data-docid="'+escHtml(String(d.id))+'" title="Eliminar este documento asignado del índice">✕</a>':'')
       +readcubeMarkerHtml(ids);
   }
+  // No está en el repositorio. En vistas de solo lectura (protocolo) NO mostramos «asignar PDF».
+  if(opts.noAssign) return readcubeLibBadgeHtml(ids)+grBadge+readcubeMarkerHtml(ids);
   const enc=encodeURIComponent(JSON.stringify({titulo:fuente.titulo||'', url:fuente.url||'', anio:fuente.anio||''}));
   return readcubeLibBadgeHtml(ids)+grBadge+' <a class="tip-ai bib-assign" data-bibref="'+enc+'" title="Asignar/registrar el PDF de esta referencia en tu repositorio">📎 asignar PDF</a>'+readcubeMarkerHtml(ids);
 }
@@ -1651,6 +1664,36 @@ function wireBibRefs(container, onDone){
     let fu={}; try{ fu=JSON.parse(decodeURIComponent(b.dataset.bibref)); }catch(_){}
     openRegistrarDoc(fu, onDone||(()=>{}));
   }));
+}
+/* Construye una referencia (fuente) a partir de un documento del repositorio: la CITA es el documento. */
+function fuenteFromDoc(d){
+  d=d||{};
+  return { titulo:d.titulo||d.nombre||'', url:d.url||d.enlace||'', anio:d.anio||'', doi:d.doi||'', pmid:d.pmid||'', pmcid:d.pmcid||'', readcube:d.readcube||'' };
+}
+/* Selector del repositorio: lista los documentos indexados (docs/index.json) para VINCULAR una referencia
+   a uno de ellos, en vez de «asignar PDF» a mano. onPick(doc) recibe el documento elegido. */
+function openRepoPicker(onPick){
+  const docs=((cachedDocs()||{}).docs||[]).slice().sort((a,b)=>String(a.titulo||'').localeCompare(String(b.titulo||'')));
+  const ov=document.createElement('div'); ov.className='overlay'; ov.id='repoPickerOverlay';
+  const rowHtml=(d)=>`<div class="lib-card repo-pick" data-id="${escA(String(d.id||''))}" style="cursor:pointer;margin:5px 0">
+      <div class="nm">${escHtml(d.titulo||d.nombre||d.id||'(sin título)')}${refIdChipsHtml(d)}${readcubeLibBadgeHtml(d)}</div>
+      <div class="meta">${escHtml(d.tipo||'')}${d.anio?' · '+escHtml(String(d.anio)):''}${d.descripcion?' · '+escHtml(String(d.descripcion).slice(0,90)):''}</div>
+    </div>`;
+  ov.innerHTML=`<div class="modal" style="max-width:640px"><h2>📁 Vincular al repositorio</h2>
+    <div class="msub">Elige el documento de tu repositorio que respalda esta referencia. La cita pasa a ser ese documento (con sus identificadores y badges). Si no está, indéxalo antes en «Documentos».</div>
+    <input id="repoPickSearch" type="text" placeholder="🔎 Filtrar por título, tipo o descripción…" autocomplete="off" style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px;margin-bottom:8px">
+    <div id="repoPickList" style="max-height:50vh;overflow:auto">${docs.length?docs.map(rowHtml).join(''):'<div class="placeholder">Tu repositorio está vacío. Ve a «Documentos», conéctate a Drive e indexa tus PDF.</div>'}</div>
+    <div class="modal-actions"><button class="btn ghost" id="repoPickCancel">Cancelar</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  const close=()=>ov.remove();
+  ov.querySelector('#repoPickCancel').addEventListener('click', close);
+  ov.addEventListener('click', e=>{ if(e.target===ov) close(); });
+  const si=ov.querySelector('#repoPickSearch'), listEl=ov.querySelector('#repoPickList');
+  if(si) si.addEventListener('input', ()=>{ const q=accLower(si.value); const f=docs.filter(d=>!q || accLower((d.titulo||'')+' '+(d.tipo||'')+' '+(d.descripcion||'')).includes(q)); listEl.innerHTML=f.length?f.map(rowHtml).join(''):'<div class="placeholder">Sin coincidencias.</div>'; wire(); });
+  function wire(){ listEl.querySelectorAll('.repo-pick').forEach(r=>r.addEventListener('click', ()=>{ const d=docs.find(x=>String(x.id||'')===r.dataset.id); if(d){ try{ onPick&&onPick(d); }catch(e){} close(); } })); }
+  wire();
+  if(si) setTimeout(()=>si.focus(), 30);
 }
 
 /* ---- Capa proveedor LLM (Claude / OpenAI) ---- */
@@ -2312,7 +2355,7 @@ function setActiveFicha(ficha, res, fichas){
   const nPreg = (ficha.dominios||[]).reduce((a,d)=>a+((d.preguntas||[]).length),0);
   const entidades = (ficha.entidades||[]).map(e=>`<span class="gene" title="${(e.genes||[]).join(', ')}">${e.nombre}</span>`).join(' ');
   const panel = (ficha.panel_genes||[]).map(g=>`<a class="gene" href="${panelAppLink(g)}" target="_blank" rel="noopener" style="text-decoration:none">${g}</a>`).join(' ');
-  const fuentes = (ficha.fuentes||[]).map(s=>`<a href="${s.url}" target="_blank" rel="noopener">${s.titulo}${s.anio?' ('+s.anio+')':''}</a>${bibRefHtml(s)}`).join(' · ');
+  const fuentes = (ficha.fuentes||[]).map(s=>`<a href="${s.url}" target="_blank" rel="noopener">${s.titulo}${s.anio?' ('+s.anio+')':''}</a>${bibRefHtml(s,{noAssign:true})}`).join(' · ');
   box.innerHTML = `
     <div style="border:1px solid var(--accent2); background:linear-gradient(180deg,#173430,#15201d); border-radius:12px; padding:16px 18px">
       <div style="display:flex; align-items:baseline; gap:10px; flex-wrap:wrap">
@@ -3747,6 +3790,7 @@ function openFichaReview(f, opts){
       <div style="border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0">
         <div style="display:flex;gap:6px;align-items:center;margin-bottom:5px">
           <input class="fe-i" data-fu="tit" data-fi="${fi}" value="${A(s.titulo)}" placeholder="Título" style="flex:1;font-weight:600;${feIn}">
+          <button class="btn ghost" data-fu="repo" data-fi="${fi}" title="Vincular esta referencia a un documento de tu repositorio">📁</button>
           <button class="btn ghost" data-fu="find" data-fi="${fi}" title="Buscar DOI/PMID/PMCID de esta referencia con IA">🔍</button>
           <button class="btn ghost" data-fu="del" data-fi="${fi}" title="Eliminar referencia" style="${feBtn}">🗑</button>
         </div>
@@ -3760,7 +3804,7 @@ function openFichaReview(f, opts){
         <input class="fe-i" data-fu="readcube" data-fi="${fi}" value="${A(s.readcube)}" placeholder="Enlace ReadCube Papers (pégalo del artículo: app.readcube.com/library/…/item/…)" style="width:100%;box-sizing:border-box;margin-top:5px;${feIn}">
         <div class="dx-meta" data-fu="findout" data-fi="${fi}" style="margin-top:3px;min-height:14px"></div>
       </div>`).join(''):'<div class="dx-meta" style="margin-bottom:6px">Sin referencias todavía.</div>')
-      +`<button class="btn ghost" data-fu="add" style="${feBtn};margin-top:4px">+ referencia</button>`;
+      +`<button class="btn ghost" data-fu="add" style="${feBtn};margin-top:4px">+ referencia</button> <button class="btn ghost" data-fu="addrepo" style="${feBtn};margin-top:4px">📁 + del repositorio</button>`;
   }
   renderFuentes();
   if(fuDet) fuDet.addEventListener('toggle', ()=>{ if(fuDet.open) renderFuentes(); });
@@ -3805,6 +3849,8 @@ function openFichaReview(f, opts){
       if(!Array.isArray(j.fuentes)) j.fuentes=[];
       if(fu==='add'){ j.fuentes.push({titulo:'', url:'', anio:''}); fuWrite(j,true); }
       else if(fu==='del'){ j.fuentes.splice(+b.dataset.fi,1); fuWrite(j,true); }
+      else if(fu==='repo'){ const fi=+b.dataset.fi; openRepoPicker(doc=>{ const jj=feModel(); if(!jj||!jj.fuentes||!jj.fuentes[fi]) return; jj.fuentes[fi]=fuenteFromDoc(doc); fuWrite(jj,true); }); }
+      else if(fu==='addrepo'){ openRepoPicker(doc=>{ const jj=feModel(); if(!jj) return; if(!Array.isArray(jj.fuentes)) jj.fuentes=[]; jj.fuentes.push(fuenteFromDoc(doc)); fuWrite(jj,true); }); }
     });
   }
 
@@ -6345,7 +6391,7 @@ async function renderFichaView(f){
   const fuentesArr=f.fuentes||[];
   // Fecha de la última revisión del protocolo (para avisar si un GeneReviews citado se ha revisado después).
   const protoRev=(f.historial&&f.historial[0]&&f.historial[0].fecha)||f.version||'';
-  const fuentes=fuentesArr.map((s,i)=>`<li><a href="${escHtml(String(s.url||'')).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">${escHtml(s.titulo||s.url||'')}</a>${s.anio?' ('+s.anio+')':''}${refIdChipsHtml(s)}${bibRefHtml(s)}${grStaleHtml(s, protoRev)}</li>`).join('');
+  const fuentes=fuentesArr.map((s,i)=>`<li><a href="${escHtml(String(s.url||'')).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">${escHtml(s.titulo||s.url||'')}</a>${s.anio?' ('+s.anio+')':''}${refIdChipsHtml(s)}${bibRefHtml(s,{noAssign:true})}${grStaleHtml(s, protoRev)}</li>`).join('');
   const doms=(f.dominios||[]).map(d=>`<div class="dom"><div class="dom-n">${d.nombre}</div><ul>${(d.preguntas||[]).map(q=>`<li>${q.texto}</li>`).join('')}</ul></div>`).join('');
   const ents=(f.entidades||[]).map(e=>`<div class="ent"><b>${e.nombre}</b>${e.genes&&e.genes.length?` · genes: ${e.genes.join(', ')}`:''}<br>Criterio: ${e.umbral||('≥'+(e.min_mayores||0)+' mayores '+(((e.logica||'and')==='or')?'o':'y')+' ≥'+(e.min_menores||0)+' menores')} · mayores: ${(e.mayores||[]).map(hpoCodeInfo).join(', ')||'—'} · menores: ${(e.menores||[]).map(hpoCodeInfo).join(', ')||'—'}</div>`).join('');
   const eg=f.estudio_genetico;
