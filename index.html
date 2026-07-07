@@ -485,8 +485,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.51.0';
+const APP_VERSION='1.52.0';
 const CHANGELOG=[
+  {v:'1.52.0', d:'2026-07-05', c:['Repositorio (fase 2b): al guardar un protocolo, todas sus referencias que aún no estén en el repositorio se añaden solas como entrada bibliográfica (con sus DOI/PMID/PMCID), para que el repositorio sea de verdad la lista única. Las que no tienen fichero PDF aparecen como «referencia externa» (solo badges, sin icono de Drive ni «asignar PDF»); cuando quieras, les asignas el PDF guardándolo en tu Drive.']},
   {v:'1.51.0', d:'2026-07-05', c:['El indicador de ReadCube Papers ahora es su icono (cubo de colores) en vez del texto «Papers», y el de «está en tu repositorio» es el icono de Google Drive.','En la vista de protocolo desaparece «asignar PDF» (era ruido); las referencias muestran solo sus badges e identificadores.','Repositorio (fase 2): en el editor de protocolo, cada referencia tiene un botón «📁» para VINCULARLA a un documento de tu repositorio (y «📁 + del repositorio» para añadir una referencia eligiéndola de la lista), en vez de asignar el PDF a mano. La cita pasa a ser ese documento, con sus identificadores y badges.']},
   {v:'1.50.0', d:'2026-07-04', c:['Repositorio (paso 2): al indexar un documento la IA busca y rellena su DOI/PMID/PMCID; cada documento del repositorio muestra ahora badges clicables (PMID/DOI/PMCID + «📗 Papers») y, si está identificado, su nombre visible pasa a ser la cita bibliográfica (el nombre + resumen siguen en el tooltip).','Nuevo badge propio «📖 GeneReviews»: detecta los capítulos de GeneReviews (NCBI Bookshelf), enlaza a la página, y en el tooltip muestra el NBK, la fecha de «última revisión» y un enlace al PDF (para guardarlo en tu Drive si quieres tenerlo en el repositorio). Como GeneReviews es un documento vivo, si su última revisión es POSTERIOR a la de tu protocolo, aparece un aviso «⟳ GeneReviews actualizado».']},
   {v:'1.49.0', d:'2026-07-04', c:['Repositorio documental (paso 1 de la reorientación): fuera la casilla «RAG». Ahora TODO documento que indexas queda automáticamente en el contexto de la IA al crear protocolos — ya no hay que marcar nada. Al indexar se guarda además el texto para la búsqueda. (Siguientes pasos: autocompletar DOI/PMID/PMCID al indexar, badges, y elegir las fuentes desde el repositorio en la autoría.)']},
@@ -1459,6 +1460,40 @@ async function registrarDoc(doc){
   cacheDocs(idx);
   return idx;
 }
+/* ¿El documento del índice corresponde a esta referencia? (por doi/pmid/pmcid, url o título). */
+function docMatchesFuente(d, f){
+  if(!d||!f) return false;
+  const fdoi=normDoi(f.doi||doiFromUrl(f.url)), ddoi=normDoi(d.doi||doiFromUrl(d.url));
+  if(fdoi && ddoi && fdoi===ddoi) return true;
+  const fpmid=String(f.pmid||pmidFromUrl(f.url)||'').trim(), dpmid=String(d.pmid||pmidFromUrl(d.url)||'').trim();
+  if(fpmid && dpmid && fpmid===dpmid) return true;
+  const furl=normUrl(f.url), durl=normUrl(d.url), den=normUrl(d.enlace);
+  if(furl && (furl===durl || furl===den)) return true;
+  const ft=normTxt(f.titulo), dt=normTxt(d.titulo);
+  if(ft && dt && ft===dt) return true;
+  return false;
+}
+/* Fase 2b: asegura que TODA cita del protocolo esté en el repositorio (repo = lista única). Las que no estén
+   se añaden como entrada bibliográfica SIN fichero (referencia externa, sin driveId) — en UN solo commit. */
+async function ensureFuentesInRepo(fuentes){
+  const list=(fuentes||[]).filter(f=>f && (f.titulo||f.url) && (f.doi||f.pmid||f.pmcid||f.url));   // con identidad mínima
+  if(!list.length) return 0;
+  let idx, sha=null;
+  try{ const ci=await ghGetFile('docs/index.json'); idx=ci.json||{docs:[]}; sha=ci.sha; }
+  catch(e){ idx=cachedDocs()||{docs:[]}; }
+  if(!idx.docs) idx.docs=[];
+  let added=0;
+  for(const f of list){
+    if(idx.docs.some(d=>docMatchesFuente(d, f))) continue;   // ya está
+    idx.docs.push({ id:slugify(f.titulo||f.url||'ref')+'-'+Math.random().toString(36).slice(2,6),
+      titulo:f.titulo||f.url||'', descripcion:'', tipo:'referencia', anio:f.anio||'',
+      doi:f.doi||'', pmid:f.pmid||'', pmcid:f.pmcid||'', readcube:f.readcube||'',
+      url:f.url||'', enlace:'', externo:true, iaAnalizado:false });
+    added++;
+  }
+  if(added){ try{ await ghPutFile('docs/index.json', idx, 'docs: +'+added+' referencia(s) de protocolo', sha); }catch(e){} cacheDocs(idx); }
+  return added;
+}
 async function desregistrarDoc(id){
   let idx, sha=null;
   try{ const ci=await ghGetFile('docs/index.json'); idx=ci.json||{docs:[]}; sha=ci.sha; }
@@ -1642,17 +1677,19 @@ function bibRefHtml(fuente, opts){
     readcube: fuente.readcube||''   // enlace ReadCube pegado a mano en la referencia (tiene prioridad)
   };
   const grBadge=geneReviewsBadgeHtml(Object.assign({}, d||{}, fuente));   // badge propio si es GeneReviews (fecha de revisión + página + PDF)
-  if(d){
+  // Documento del repositorio CON fichero en Drive → icono de Drive con tooltip y enlace a abrirlo.
+  if(d && (d.driveId || d.enlace)){
     const pdf=d.enlace||d.url||'';
     const tip=escHtml(d.titulo||fuente.titulo||'Documento')
       +(d.descripcion?('<br><span class="dx-meta">'+escHtml(d.descripcion)+'</span>'):'')
       +(pdf?('<br><a href="'+escHtml(pdf).replace(/"/g,'&quot;')+'" target="_blank" rel="noopener">Abrir en Drive ↗</a>'):'');
-    // Está en el repositorio (Google Drive) → icono de Drive con tooltip y enlace a abrirlo.
     const openHref = pdf ? ` href="${escA(pdf)}" target="_blank" rel="noopener"` : '';
     return readcubeLibBadgeHtml(ids)+grBadge+` <a class="hastip drive-have"${openHref} title="En tu repositorio (Google Drive)">${DRIVE_ICON}<span class="tooltip">${tip}</span></a>`
       +(d.id && !opts.noAssign?' <a class="tip-ai bib-unassign" data-docid="'+escHtml(String(d.id))+'" title="Eliminar este documento asignado del índice">✕</a>':'')
       +readcubeMarkerHtml(ids);
   }
+  // Referencia YA en el repositorio pero SIN fichero (cita externa auto-añadida) → solo badges, sin «asignar PDF».
+  if(d) return readcubeLibBadgeHtml(ids)+grBadge+readcubeMarkerHtml(ids);
   // No está en el repositorio. En vistas de solo lectura (protocolo) NO mostramos «asignar PDF».
   if(opts.noAssign) return readcubeLibBadgeHtml(ids)+grBadge+readcubeMarkerHtml(ids);
   const enc=encodeURIComponent(JSON.stringify({titulo:fuente.titulo||'', url:fuente.url||'', anio:fuente.anio||''}));
@@ -4036,6 +4073,8 @@ function openFichaReview(f, opts){
           return;   // no cerrar: conserva el editor con los datos intactos para reintentar
         }
       }
+      // Fase 2b: toda cita del protocolo entra en el repositorio (si no estaba) → repo = lista única. En segundo plano.
+      try{ const fs=(j.fuentes||[]).concat((j.estudio_genetico&&j.estudio_genetico.fuentes)||[]); ensureFuentesInRepo(fs); }catch(e){}
       close();
       const savedMsg='Protocolo guardado'+(mode==='commit'?' y commiteado a GitHub':' (caché local · GitHub sin configurar)');
       if(opts.origin==='biblioteca'){
