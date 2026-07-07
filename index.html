@@ -485,8 +485,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.53.0';
+const APP_VERSION='1.53.1';
 const CHANGELOG=[
+  {v:'1.53.1', d:'2026-07-05', c:['GeneReviews: el botón «🔍» de una referencia (y el buscador en bloque «Buscar DOI/PMID») ahora, si la referencia es un capítulo de GeneReviews, busca también su NBK y la fecha exacta de «Last Update» y la rellena — así el badge «📖 GeneReviews» muestra la fecha de revisión (antes salía «revisión: —» en las referencias antiguas que no la tenían guardada). También busca la fecha de las GeneReviews que ya tienen PMID pero les falta la revisión.']},
   {v:'1.53.0', d:'2026-07-05', c:['Repositorio (fase 3, cierre de la reorientación): en «Documentos» aparece ahora una sección «📑 Referencias sin PDF» con las citas de tus protocolos que aún no tienen un documento en Drive — con sus badges (PMID/DOI/PMCID, ReadCube, GeneReviews) y un botón «📎 Asignar PDF de Drive» para vincularles el fichero (y que pasen a indexarse) o quitarlas.','«Asignar PDF» ya no aparece en NINGUNA vista de solo lectura (protocolo, prenatal, seguimiento, indicación de estudio): la gestión de documentos se hace desde «Documentos» y desde el botón «📁 Repositorio» del editor.']},
   {v:'1.52.0', d:'2026-07-05', c:['Repositorio (fase 2b): al guardar un protocolo, todas sus referencias que aún no estén en el repositorio se añaden solas como entrada bibliográfica (con sus DOI/PMID/PMCID), para que el repositorio sea de verdad la lista única. Las que no tienen fichero PDF aparecen como «referencia externa» (solo badges, sin icono de Drive ni «asignar PDF»); cuando quieras, les asignas el PDF guardándolo en tu Drive.']},
   {v:'1.51.0', d:'2026-07-05', c:['El indicador de ReadCube Papers ahora es su icono (cubo de colores) en vez del texto «Papers», y el de «está en tu repositorio» es el icono de Google Drive.','En la vista de protocolo desaparece «asignar PDF» (era ruido); las referencias muestran solo sus badges e identificadores.','Repositorio (fase 2): en el editor de protocolo, cada referencia tiene un botón «📁» para VINCULARLA a un documento de tu repositorio (y «📁 + del repositorio» para añadir una referencia eligiéndola de la lista), en vez de asignar el PDF a mano. La cita pasa a ser ese documento, con sus identificadores y badges.']},
@@ -3908,18 +3909,21 @@ function openFichaReview(f, opts){
     if(!anyProvider()){ if(outEl) outEl.textContent='Configura una API key (Claude u OpenAI) en ⚙ Ajustes.'; return; }
     if(outEl) outEl.textContent='Buscando…';
     try{
-      const system='Eres bibliotecario científico especializado en identificadores de publicaciones. Te doy el título (y URL si la hay) de UNA referencia bibliográfica. Busca en PubMed/CrossRef/DOI.org su identificador REAL: "doi" (sin el prefijo https://doi.org/), "pmid" (solo dígitos) y/o "pmcid" (formato PMCxxxxxxx). Devuelve un identificador SOLO si estás SEGURO de que corresponde EXACTAMENTE a esa referencia (mismo título/autores/año) — déjalo vacío ("") si no encuentras una coincidencia fiable. NUNCA inventes un identificador. Devuelve SOLO JSON {"doi":"","pmid":"","pmcid":""}.';
+      const isGr=!!geneReviewsInfo(f);   // ¿es un capítulo de GeneReviews? → pedir también NBK + fecha de revisión
+      const system='Eres bibliotecario científico especializado en identificadores de publicaciones. Te doy el título (y URL si la hay) de UNA referencia bibliográfica. Busca en PubMed/CrossRef/DOI.org su identificador REAL: "doi" (sin el prefijo https://doi.org/), "pmid" (solo dígitos) y/o "pmcid" (formato PMCxxxxxxx). '+(isGr?'Es un capítulo de GeneReviews (NCBI Bookshelf): busca su "nbk" (formato NBKxxxxx) y "gr_updated" (la fecha EXACTA de «Last Update»/«Last Revision» tal cual aparece en la página, p. ej. "September 29, 2022"). ':'')+'Devuelve un identificador SOLO si estás SEGURO de que corresponde EXACTAMENTE a esa referencia (mismo título/autores/año) — déjalo vacío ("") si no encuentras una coincidencia fiable. NUNCA inventes nada. Devuelve SOLO JSON {"doi":"","pmid":"","pmcid":""'+(isGr?',"nbk":"","gr_updated":""':'')+'}.';
       const user='Referencia: "'+f.titulo+'"'+(f.url?' — '+f.url:'');
-      const resp=await callLLM({system, user, webSearch:true, maxTokens:400, task:'eval'});
+      const resp=await callLLM({system, user, webSearch:true, maxTokens:500, task:'eval'});
       const r=extractJSON(resp)||{};
       const jj=feModel(); if(!jj || !jj.fuentes || !jj.fuentes[fi]) return;
       let hit=false;
       if(r.doi){ jj.fuentes[fi].doi=String(r.doi).trim(); hit=true; }
       if(r.pmid){ jj.fuentes[fi].pmid=String(r.pmid).trim(); hit=true; }
       if(r.pmcid){ jj.fuentes[fi].pmcid=String(r.pmcid).trim(); hit=true; }
+      if(r.nbk){ jj.fuentes[fi].nbk=String(r.nbk).trim().toUpperCase(); hit=true; }
+      if(r.gr_updated){ jj.fuentes[fi].gr_updated=String(r.gr_updated).trim(); hit=true; }
       fuWrite(jj, true);   // re-renderiza: refleja lo encontrado en los campos
       const outEl2=fubox.querySelector('[data-fu="findout"][data-fi="'+fi+'"]');
-      if(outEl2) outEl2.textContent = hit ? '✓ Identificador(es) encontrado(s).' : 'No se encontró ningún identificador fiable.';
+      if(outEl2) outEl2.textContent = hit ? '✓ Encontrado'+(r.gr_updated?' · GeneReviews revisado '+escHtml(r.gr_updated):'')+'.' : 'No se encontró ningún dato fiable.';
     }catch(e){ if(outEl) outEl.textContent='Error al buscar: '+e.message; }
   }
   if(fubox){
@@ -4044,14 +4048,18 @@ function openFichaReview(f, opts){
     // seguir editando mientras tanto, así que el resultado se aplicará sobre una lectura FRESCA de ta.value,
     // no sobre esta foto inicial (si no, al terminar se pisaría cualquier cambio hecho durante la espera).
     const kinds=[['fuentes', j.fuentes], ['eg', j.estudio_genetico&&j.estudio_genetico.fuentes]];
-    const targets=[];   // {kind, idx, titulo, url}
-    kinds.forEach(([kind,list])=>{ if(Array.isArray(list)) list.forEach((f,idx)=>{ if(f && f.titulo && !f.doi && !f.pmid && !f.pmcid) targets.push({kind, idx, titulo:f.titulo, url:f.url||''}); }); });
-    if(!targets.length){ fout.className='test-out ok'; fout.textContent='Todas las fuentes con título ya tienen DOI/PMID/PMCID (o no hay fuentes).'; return; }
+    const targets=[];   // {kind, idx, titulo, url, isGr}
+    kinds.forEach(([kind,list])=>{ if(Array.isArray(list)) list.forEach((f,idx)=>{ if(!f||!f.titulo) return;
+      const isGr=!!geneReviewsInfo(f);
+      const faltaId=!f.doi && !f.pmid && !f.pmcid;
+      const faltaGr=isGr && !(f.gr_updated||'').trim();
+      if(faltaId || faltaGr) targets.push({kind, idx, titulo:f.titulo, url:f.url||'', isGr}); }); });
+    if(!targets.length){ fout.className='test-out ok'; fout.textContent='Todas las fuentes ya tienen sus identificadores (y las de GeneReviews su fecha de revisión).'; return; }
     if(!anyProvider()){ fout.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
-    fout.className='test-out'; fout.textContent='Buscando DOI/PMID/PMCID de '+targets.length+' referencia(s)…';
+    fout.className='test-out'; fout.textContent='Buscando datos de '+targets.length+' referencia(s)…';
     try{
-      const system='Eres bibliotecario científico especializado en identificadores de publicaciones. Te doy una lista NUMERADA de referencias bibliográficas (título + URL si la hay). Para CADA una, busca en PubMed/CrossRef/DOI.org su identificador REAL: "doi" (sin el prefijo https://doi.org/), "pmid" (solo dígitos) y/o "pmcid" (formato PMCxxxxxxx). Devuelve un identificador SOLO si estás SEGURO de que corresponde EXACTAMENTE a esa referencia (mismo título/autores/año) — déjalo vacío ("") si no encuentras una coincidencia fiable. NUNCA inventes un identificador. Devuelve SOLO JSON {"resultados":[{"index":1,"doi":"","pmid":"","pmcid":""}]} — un elemento por cada referencia, mismo "index" que en la lista (empieza en 1).';
-      const user='Referencias:\n'+targets.map((t,i)=>(i+1)+'. "'+t.titulo+'"'+(t.url?' — '+t.url:'')).join('\n');
+      const system='Eres bibliotecario científico especializado en identificadores de publicaciones. Te doy una lista NUMERADA de referencias bibliográficas (título + URL si la hay). Para CADA una, busca en PubMed/CrossRef/DOI.org su identificador REAL: "doi" (sin el prefijo https://doi.org/), "pmid" (solo dígitos) y/o "pmcid" (formato PMCxxxxxxx). Si una referencia es un capítulo de GeneReviews (URL con /books/NBK… o el título menciona GeneReviews), añade además su "nbk" (formato NBKxxxxx) y "gr_updated" (la fecha EXACTA de «Last Update»/«Last Revision» tal cual aparece, p. ej. "September 29, 2022"). Devuelve un dato SOLO si estás SEGURO de que corresponde EXACTAMENTE a esa referencia — déjalo vacío ("") si no. NUNCA inventes nada. Devuelve SOLO JSON {"resultados":[{"index":1,"doi":"","pmid":"","pmcid":"","nbk":"","gr_updated":""}]} — un elemento por cada referencia, mismo "index" que en la lista (empieza en 1).';
+      const user='Referencias:\n'+targets.map((t,i)=>(i+1)+'. "'+t.titulo+'"'+(t.url?' — '+t.url:'')+(t.isGr?' [GeneReviews: busca NBK y fecha de Last Update]':'')).join('\n');
       const resp=await callLLM({system, user, webSearch:true, maxTokens:2000, task:'eval'});
       const j2=extractJSON(resp);
       const results=(j2&&j2.resultados)||[];
@@ -4068,11 +4076,13 @@ function openFichaReview(f, opts){
         if(r.doi){ f.doi=String(r.doi).trim(); hit=true; }
         if(r.pmid){ f.pmid=String(r.pmid).trim(); hit=true; }
         if(r.pmcid){ f.pmcid=String(r.pmcid).trim(); hit=true; }
+        if(r.nbk){ f.nbk=String(r.nbk).trim().toUpperCase(); hit=true; }
+        if(r.gr_updated){ f.gr_updated=String(r.gr_updated).trim(); hit=true; }
         if(hit) found++;
       });
       ta.value=JSON.stringify(jj,null,2); renderPrev(); renderFuentes();   // refresca también el editor visual de referencias (si no, sus campos quedan desfasados y una edición posterior los sobrescribiría con el valor viejo)
       fout.className='test-out ok';
-      fout.innerHTML='✓ Encontrado(s) identificador(es) para <b>'+found+'</b> de '+targets.length+' referencia(s) sin DOI/PMID/PMCID. Revisa el JSON y pulsa «Guardar y commitear» para conservarlos.';
+      fout.innerHTML='✓ Datos encontrados para <b>'+found+'</b> de '+targets.length+' referencia(s) (incluye NBK/fecha de GeneReviews). Revisa el JSON y pulsa «Guardar y commitear» para conservarlos.';
     }catch(e){ fout.className='test-out bad'; fout.textContent='Error al buscar: '+e.message; }
   }
   ov.querySelector('#btnFichaFindIds').addEventListener('click', runFindIds);
