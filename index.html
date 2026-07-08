@@ -487,8 +487,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.61.0';
+const APP_VERSION='1.61.1';
 const CHANGELOG=[
+  {v:'1.61.1', d:'2026-07-08', c:['Botón global «🧠 Indexar semántico (N)» en la cabecera de «Documentos»: construye de una vez el índice semántico de todos los documentos que aún no lo tengan (los que tienen texto completo), con progreso documento a documento. Requiere clave de OpenAI.']},
   {v:'1.61.0', d:'2026-07-08', c:['Búsqueda SEMÁNTICA (por significado) en tus documentos: cada documento del repositorio tiene ahora un botón «🧠 Indexar semántico». La app trocea el documento, calcula sus embeddings por lotes (con tu clave de OpenAI) y los guarda comprimidos (int8) UNA vez en tu GitHub privado (docs/emb/…), reutilizables siempre. Al crear protocolos, la recuperación es HÍBRIDA: combina la búsqueda por palabras (BM25) con la semántica, así encuentra pasajes relevantes aunque estén escritos con otras palabras (p. ej. «nefropatía quística» cuando buscas «riñón poliquístico»). Coste único de céntimos por documento; requiere una clave de OpenAI en Ajustes (los embeddings solo los ofrece OpenAI, no Claude). Si no construyes el índice semántico, todo sigue funcionando con BM25 como hasta ahora.']},
   {v:'1.60.1', d:'2026-07-08', c:['RAG más rápido con bibliotecas grandes: la búsqueda por relevancia (BM25) ahora cachea la tokenización de cada documento (antes re-troceaba y re-tokenizaba TODOS los documentos en cada consulta). Además, si un documento es descomunal (más de 5.000.000 de caracteres, ~2000 páginas) se avisa de que se indexó solo esa parte (antes lo daba por completo).']},
   {v:'1.60.0', d:'2026-07-08', c:['Indicador de indexado completo: cada documento del repositorio muestra ahora cuánto texto se extrajo («📖 texto completo: 340k letras · 412 pág»). Si un documento se indexó en una versión anterior (posible recorte) o es un PDF escaneado sin texto, sale un aviso y un botón «↻ Re-indexar» que vuelve a leer el PDF entero. Así ves de un vistazo qué está indexado de verdad y qué no.']},
@@ -3479,7 +3480,9 @@ async function renderDriveList(files){
   const regOf=(f)=> docs.find(d=>d.driveId===f.id) || matchDoc({url:f.webViewLink, titulo:f.name}, docs);
   const flag=(on,label,title)=> `<span class="dx-meta hastip" style="color:${on?'var(--ok)':'var(--ink3)'}">${on?'✓':'–'} ${label}<span class="tooltip">${escHtml(title)}</span></span>`;
   const nIdx=files.filter(f=>!!regOf(f)).length;
-  list.innerHTML=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} PDF(s) · ${nIdx} indexado(s) (en el contexto de la IA) · <span class="dx-meta">flags: indexado (IA) · unido a bibliografía</span></div>
+  const semPend=files.filter(f=>{ const r=regOf(f); return r && r.textLen>=500 && !(r.embN && r.embMt===r.mt); }).length;   // indexados con texto y sin índice semántico al día
+  const hasOpenAIkey=!!loadCfg().openaiKey;
+  list.innerHTML=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} PDF(s) · ${nIdx} indexado(s) (en el contexto de la IA) · <span class="dx-meta">flags: indexado (IA) · unido a bibliografía</span>${(hasOpenAIkey&&semPend)?` · <button class="btn" id="docSemAll" style="padding:2px 9px;font-size:11px" title="Construye el índice semántico (embeddings) de todos los documentos que aún no lo tengan. Coste único de céntimos por documento (OpenAI); se guarda en tu GitHub.">🧠 Indexar semántico (${semPend})</button>`:''}</div>
     <div class="lib-grid">`+files.map((f,i)=>{
     const reg=regOf(f);
     const indexado=!!reg;
@@ -3535,6 +3538,19 @@ async function renderDriveList(files){
       showToast('Índice semántico listo ('+rec.n+' fragmentos)'); renderDriveList(files);
     }catch(e){ showToast('Error: '+e.message); } };
   list.querySelectorAll('[data-sem]').forEach(b=>b.addEventListener('click', ()=>buildSem(+b.dataset.sem)));
+  const semAllBtn=list.querySelector('#docSemAll');
+  if(semAllBtn) semAllBtn.addEventListener('click', async ()=>{
+    if(!loadCfg().openaiKey){ showToast('Configura tu clave de OpenAI en ⚙ Ajustes para el índice semántico'); return; }
+    const pend=files.filter(f=>{ const r=regOf(f); return r && r.textLen>=500 && !(r.embN && r.embMt===r.mt); });
+    if(!pend.length){ showToast('Todos los documentos ya tienen índice semántico'); return; }
+    semAllBtn.disabled=true; let done=0, err=0;
+    for(const f of pend){ const reg=regOf(f); if(!reg) continue;
+      try{ const rec=await buildDocEmbeddings(f.id, reg.titulo||f.name, f.modifiedTime, (d,t)=>showToast('🧠 '+(done+1)+'/'+pend.length+' · '+(reg.titulo||f.name).slice(0,40)+'… '+d+'/'+t+' frag'));
+        await registrarDoc(Object.assign({}, reg, {embMt:f.modifiedTime, embN:rec.n})); done++;
+      }catch(e){ err++; }
+    }
+    _fichaRefSet=null; showToast('Índice semántico: '+done+' listo(s)'+(err?(' · '+err+' con error'):'')); renderDriveList(files);
+  });
   list.querySelectorAll('[data-editmeta]').forEach(b=>b.addEventListener('click', ()=>editarDocMeta(files[+b.dataset.editmeta], regOf(files[+b.dataset.editmeta]), ()=>renderDriveList(files))));
   list.querySelectorAll('[data-unreg]').forEach(b=>b.addEventListener('click', async ()=>{
     try{ await desregistrarDoc(b.dataset.unreg); showToast('Quitado del índice'); renderDriveList(files); }
