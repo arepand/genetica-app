@@ -487,8 +487,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.63.0';
+const APP_VERSION='1.64.0';
 const CHANGELOG=[
+  {v:'1.64.0', d:'2026-07-08', c:['Nuevo modo «Automático» de proveedor de IA (⚙ Ajustes, junto a «Claude primero / OpenAI primero»): con las dos claves puestas, el programa decide por tarea con criterio claro — la autoría de protocolos y las búsquedas/verificaciones las hace Claude (calidad clínica), y la lectura/identificación de documentos el modelo más barato de OpenAI (gpt-4o-mini). Los embeddings del RAG semántico son siempre OpenAI, y en cualquier modo hay failover automático. El panel «🔀 Modelo por operación» de «Estado» muestra ahora el modo activo.','Aclarado el aviso de arriba durante las operaciones: donde ponía «(web)» ahora dice «🌐 buscando en la web» — significa que esa operación está consultando internet en directo (guías, PubMed), no solo tus documentos.']},
   {v:'1.63.0', d:'2026-07-08', c:['Enrutado de modelos y robustez de proveedores: (1) FAILOVER automático — si tu proveedor preferido (Claude por defecto) falla en una llamada, se reintenta al instante con el otro (OpenAI) si tienes su clave puesta. (2) Cada operación usa el modelo adecuado: autoría de protocolos con el más potente (Opus), búsquedas/verificaciones con un modelo medio, y la lectura/identificación de documentos (cuando ya hay texto) con un modelo barato (Haiku) para ahorrar. (3) Nuevo panel «🔀 Modelo por operación» dentro de «Estado» que audita, con tu configuración, qué proveedor y modelo usa cada tarea (y los embeddings de OpenAI para el RAG semántico). Recordatorio: los protocolos los redacta Claude; OpenAI solo hace los embeddings (búsqueda semántica) y el respaldo.']},
   {v:'1.62.0', d:'2026-07-08', c:['El buscador de tu biblioteca (la caja «Buscar en tus documentos») es ahora HÍBRIDO: busca por palabras (BM25) Y por significado (semántico, en los documentos con índice semántico construido), y combina ambos. Así puedes hacer una búsqueda semántica DIRECTA de tu biblioteca, no solo al crear protocolos. Cada resultado indica si vino por «palabras», por «significado» o por ambas.']},
   {v:'1.61.1', d:'2026-07-08', c:['Botón global «🧠 Indexar semántico (N)» en la cabecera de «Documentos»: construye de una vez el índice semántico de todos los documentos que aún no lo tengan (los que tienen texto completo), con progreso documento a documento. Requiere clave de OpenAI.']},
@@ -1205,18 +1206,28 @@ const DEFAULT_MODELS = {
 function providerKey(p){ const c=loadCfg(); return p==='anthropic' ? c.anthropicKey : c.openaiKey; }
 function anyProvider(){ return !!(providerKey('anthropic') || providerKey('openai')); }
 function modelForTier(p, tier){ const c=loadCfg(); return (c.models && c.models[p] && c.models[p][tier]) || DEFAULT_MODELS[p][tier]; }
+/* Modo AUTOMÁTICO: con las dos claves puestas, el programa decide el proveedor por tarea, con criterio claro:
+   - tareas triviales/masivas (tier «cheap»: identificar documentos) → OpenAI gpt-4o-mini (mucho más barato y suficiente, los IDs se verifican después);
+   - todo lo demás (autoría, búsqueda web, verificación, anamnesis) → Claude (calidad de razonamiento clínico). */
+function providerForTaskAuto(tier){
+  const hasA=providerKey('anthropic'), hasO=providerKey('openai');
+  if(!hasA) return 'openai'; if(!hasO) return 'anthropic';
+  return tier==='cheap' ? 'openai' : 'anthropic';
+}
 function pickModel(task){
   const tier = TASK_TIER[task] || 'mid';
-  const order = loadCfg().preferProvider==='openai' ? ['openai','anthropic'] : ['anthropic','openai'];
+  const pref = loadCfg().preferProvider || 'anthropic';
+  let order;
+  if(pref==='auto'){ const p=providerForTaskAuto(tier); order=[p, p==='anthropic'?'openai':'anthropic']; }   // el elegido + el otro como respaldo (failover)
+  else order = pref==='openai' ? ['openai','anthropic'] : ['anthropic','openai'];
   for(const p of order){ if(providerKey(p)) return { provider:p, model: modelForTier(p, tier), tier }; }
   return null;
 }
-/* Auditoría del enrutado: qué proveedor+modelo usa cada tipo de operación con la configuración actual. */
+/* Auditoría del enrutado: qué proveedor+modelo usa cada tipo de operación con la configuración actual (respeta el modo auto). */
 function modelRouting(){
   const c=loadCfg();
   const order = c.preferProvider==='openai' ? ['openai','anthropic'] : ['anthropic','openai'];
   const avail = order.filter(p=>providerKey(p));
-  const prov = avail[0], fb = avail[1];
   const ops=[
     {label:'Autoría de protocolos (lo más potente)', task:'author'},
     {label:'Búsqueda web / verificación', task:'eval'},
@@ -1224,8 +1235,9 @@ function modelRouting(){
     {label:'Lectura/identificación de documentos', task:'assign'},
   ];
   return {
-    provider: prov, fallback: fb,
-    ops: prov ? ops.map(o=>({label:o.label, model:prettyModel(prov, modelForTier(prov, TASK_TIER[o.task]||'mid'))})) : [],
+    mode: c.preferProvider || 'anthropic',
+    provider: avail[0]||null, fallback: avail[1]||null,
+    ops: ops.map(o=>{ const p=pickModel(o.task); return {label:o.label, model:p?prettyModel(p.provider, p.model):'—', provider:p?p.provider:null}; }),
     embeddings: c.openaiKey ? 'OpenAI text-embedding-3-small' : null
   };
 }
@@ -1874,7 +1886,7 @@ function extractJSON(text){
 }
 /* ---- Transparencia IA: indicador de proceso + log de depuración (opt-in) ---- */
 let AI_DEBUG=false; const AI_LOG=[]; let _aiBusyN=0;
-const AI_TASKS={assign:'asignando protocolo', extract:'extrayendo HPO del informe', deepen:'profundizando', author:'generando protocolo (web)', freshness:'comprobando novedades (web)', eval:'consultando guías (web)', actividad:'leyendo actividad (visión)'};
+const AI_TASKS={assign:'asignando protocolo', extract:'extrayendo HPO del informe', deepen:'profundizando', author:'generando protocolo · 🌐 buscando en la web', freshness:'comprobando novedades · 🌐 buscando en la web', eval:'consultando guías · 🌐 buscando en la web', actividad:'leyendo actividad (visión)'};
 function aiBusyStart(label){
   _aiBusyN++;
   let el=document.getElementById('aiBusy');
@@ -2070,7 +2082,8 @@ function renderStatus(){
         +(ml.length?`<details style="margin-top:6px"><summary class="dx-meta" style="cursor:pointer">Registro de modelos nuevos (${ml.length})</summary><div style="font-size:11.5px;margin-top:4px">${ml.slice(0,20).map(e=>`<div style="border-top:1px solid var(--line);padding:3px 0"><b>${String(e.d||'').slice(0,10)}</b> · ${escHtml(e.p)}: <span style="color:var(--ok)">+ ${escHtml((e.added||[]).join(', '))}</span></div>`).join('')}</div></details>`:`<div class="dx-meta" style="margin-top:4px">Sin modelos nuevos registrados todavía.</div>`)
         +`</div>`; })()
     +(function(){ const rt=modelRouting();
-        return `<div style="border-top:1px solid var(--line);margin-top:8px;padding-top:8px"><div style="font-size:12px;margin-bottom:4px">🔀 Modelo por operación <span class="dx-meta">· auditoría del enrutado</span></div>`
+        const modeLbl = rt.mode==='auto'?'Automático':(rt.mode==='openai'?'OpenAI primero':'Claude primero');
+        return `<div style="border-top:1px solid var(--line);margin-top:8px;padding-top:8px"><div style="font-size:12px;margin-bottom:4px">🔀 Modelo por operación <span class="dx-meta">· modo: ${escHtml(modeLbl)}</span></div>`
         +(rt.provider
           ? rt.ops.map(o=>`<div style="font-size:11.5px;display:flex;justify-content:space-between;gap:10px;padding:2px 0"><span>${escHtml(o.label)}</span><span class="dx-meta" style="text-align:right">${escHtml(o.model)}</span></div>`).join('')
             +`<div style="font-size:11.5px;display:flex;justify-content:space-between;gap:10px;padding:2px 0"><span>Embeddings (RAG semántico)</span><span class="dx-meta" style="text-align:right">${rt.embeddings?escHtml(rt.embeddings):'— (requiere OpenAI)'}</span></div>`
@@ -2190,11 +2203,13 @@ function openSettings(){
       <input id="cfgAnthropicKey" type="password" value="${c.anthropicKey||''}" placeholder="sk-ant-…" autocomplete="off"></div>
     <div class="field"><label>OpenAI — API key</label>
       <input id="cfgOpenaiKey" type="password" value="${c.openaiKey||''}" placeholder="sk-…" autocomplete="off"></div>
-    <div class="field"><label>Preferencia cuando ambos están disponibles</label>
+    <div class="field"><label>Proveedor de IA cuando tienes las dos claves</label>
       <div class="seg" id="prefSeg">
-        <button data-pref="anthropic" class="${c.preferProvider!=='openai'?'on':''}">Claude primero</button>
+        <button data-pref="anthropic" class="${(c.preferProvider||'anthropic')==='anthropic'?'on':''}">Claude primero</button>
         <button data-pref="openai" class="${c.preferProvider==='openai'?'on':''}">OpenAI primero</button>
+        <button data-pref="auto" class="${c.preferProvider==='auto'?'on':''}">Automático</button>
       </div>
+      <div class="dx-meta" style="margin-top:5px;font-size:11px;line-height:1.5"><b>Automático</b>: la autoría de protocolos y las búsquedas/verificaciones las hace <b>Claude</b> (calidad clínica); la lectura/identificación de documentos, el modelo más barato de <b>OpenAI</b> (gpt-4o-mini). Los embeddings del RAG semántico son siempre OpenAI. En los tres modos, si un proveedor falla se reintenta con el otro (failover). Puedes auditar el enrutado en «Estado → 🔀 Modelo por operación».</div>
     </div>
     <details style="margin-top:6px">
       <summary style="cursor:pointer; font-size:12px; color:var(--ink2)">Modelos por tarea (avanzado) — auto-actualizable</summary>
