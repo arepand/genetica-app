@@ -487,8 +487,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.60.1';
+const APP_VERSION='1.61.0';
 const CHANGELOG=[
+  {v:'1.61.0', d:'2026-07-08', c:['Búsqueda SEMÁNTICA (por significado) en tus documentos: cada documento del repositorio tiene ahora un botón «🧠 Indexar semántico». La app trocea el documento, calcula sus embeddings por lotes (con tu clave de OpenAI) y los guarda comprimidos (int8) UNA vez en tu GitHub privado (docs/emb/…), reutilizables siempre. Al crear protocolos, la recuperación es HÍBRIDA: combina la búsqueda por palabras (BM25) con la semántica, así encuentra pasajes relevantes aunque estén escritos con otras palabras (p. ej. «nefropatía quística» cuando buscas «riñón poliquístico»). Coste único de céntimos por documento; requiere una clave de OpenAI en Ajustes (los embeddings solo los ofrece OpenAI, no Claude). Si no construyes el índice semántico, todo sigue funcionando con BM25 como hasta ahora.']},
   {v:'1.60.1', d:'2026-07-08', c:['RAG más rápido con bibliotecas grandes: la búsqueda por relevancia (BM25) ahora cachea la tokenización de cada documento (antes re-troceaba y re-tokenizaba TODOS los documentos en cada consulta). Además, si un documento es descomunal (más de 5.000.000 de caracteres, ~2000 páginas) se avisa de que se indexó solo esa parte (antes lo daba por completo).']},
   {v:'1.60.0', d:'2026-07-08', c:['Indicador de indexado completo: cada documento del repositorio muestra ahora cuánto texto se extrajo («📖 texto completo: 340k letras · 412 pág»). Si un documento se indexó en una versión anterior (posible recorte) o es un PDF escaneado sin texto, sale un aviso y un botón «↻ Re-indexar» que vuelve a leer el PDF entero. Así ves de un vistazo qué está indexado de verdad y qué no.']},
   {v:'1.59.0', d:'2026-07-08', c:['Identificadores SEGUROS también para artículos normales (no solo GeneReviews): al indexar o buscar, el DOI/PMID/PMCID se verifican contra NCBI y CrossRef. El DOI es el ancla (fiable si está en el PDF) → de él se derivan el PMID/PMCID reales; un PMID que NCBI no reconoce se descarta (era inventado); un DOI que no existe en CrossRef se descarta. Nunca se muestra un identificador sin verificar.','Libros grandes: se indexa ahora el PDF ENTERO (antes solo las primeras ~40 páginas / 30.000 caracteres). El texto completo se guarda una vez (permanente) y la búsqueda por relevancia (BM25) cubre todo el documento. Al indexar un PDF largo verás el progreso por páginas. Para completar un libro que ya tenías indexado (y había quedado truncado), quítalo del índice y vuelve a indexarlo.']},
@@ -3276,24 +3277,49 @@ const EMBED_MODEL='text-embedding-3-small';
 function chunkText(text, size, overlap, max){ size=size||1100; overlap=overlap||150; max=max||60; const t=(text||'').replace(/\s+/g,' ').trim(); const out=[];
   for(let i=0;i<t.length && out.length<max;i+=(size-overlap)){ out.push(t.slice(i,i+size)); } return out; }
 function cosine(a,b){ let d=0,na=0,nb=0; for(let i=0;i<a.length;i++){ d+=a[i]*b[i]; na+=a[i]*a[i]; nb+=b[i]*b[i]; } return d/((Math.sqrt(na)*Math.sqrt(nb))||1); }
-async function embedTexts(texts){
+const EMB_DIMS=512, EMB_CHUNK=2000, EMB_OVERLAP=200, EMB_MAXCHUNKS=4000, EMB_BATCH=64;
+async function embedTexts(texts, dims){
   const c=loadCfg(); if(!c.openaiKey) return null;   // Anthropic no ofrece API de embeddings; se requiere OpenAI
-  const r=await fetch('https://api.openai.com/v1/embeddings',{ method:'POST', headers:{Authorization:'Bearer '+c.openaiKey,'Content-Type':'application/json'},
-    body:JSON.stringify({model:EMBED_MODEL, input:texts}) });
+  const body={model:EMBED_MODEL, input:texts}; if(dims) body.dimensions=dims;
+  const r=await fetch('https://api.openai.com/v1/embeddings',{ method:'POST', headers:{Authorization:'Bearer '+c.openaiKey,'Content-Type':'application/json'}, body:JSON.stringify(body) });
   if(!r.ok) throw new Error('embeddings '+r.status+' '+await r.text());
   const d=await r.json(); return (d.data||[]).map(x=>x.embedding);
 }
-function cachedEmb(id){ try{ return JSON.parse(localStorage.getItem('fh_emb_'+id)); }catch(e){ return null; } }
-/* Calcula (una vez) y cachea los embeddings de un documento; persiste en localStorage + GitHub (docs/emb/{id}.json). */
-async function ensureDocEmbeddings(id, name, text){
-  if(cachedEmb(id)) return cachedEmb(id);
-  if(loadCfg().openaiKey===''||!text) return null;
-  if(ghConfigured()){ try{ const r=await ghGetFile('docs/emb/'+id+'.json'); if(r.json && r.json.chunks){ localStorage.setItem('fh_emb_'+id, JSON.stringify(r.json)); return r.json; } }catch(e){} }
-  const chunks=chunkText(text); if(!chunks.length) return null;
-  const vecs=await embedTexts(chunks); if(!vecs) return null;
-  const rec={id, name:name||id, chunks:chunks.map((t,i)=>({t, v:vecs[i]}))};
+function cosineSafe(a,b){ const n=Math.min(a.length,b.length); let d=0,na=0,nb=0; for(let i=0;i<n;i++){ d+=a[i]*b[i]; na+=a[i]*a[i]; nb+=b[i]*b[i]; } return d/((Math.sqrt(na)*Math.sqrt(nb))||1); }
+// Cuantización a int8 (escala por-vector = máx |v|). El coseno es invariante a esa escala → no hace falta guardarla. ~1 byte/dim.
+function packInt8Vec(v){ let m=0; for(let i=0;i<v.length;i++){ const a=Math.abs(v[i]); if(a>m) m=a; } m=m||1;
+  const b=new Int8Array(v.length); for(let i=0;i<v.length;i++){ b[i]=Math.max(-127,Math.min(127,Math.round(v[i]/m*127))); }
+  const u=new Uint8Array(b.buffer); let s=''; for(let i=0;i<u.length;i++) s+=String.fromCharCode(u[i]); return btoa(s); }
+function unpackInt8Vec(b64){ const s=atob(b64); const u=new Uint8Array(s.length); for(let i=0;i<s.length;i++) u[i]=s.charCodeAt(i); return new Int8Array(u.buffer); }
+/* Construye el ÍNDICE SEMÁNTICO (embeddings) de un documento, por LOTES, y lo guarda una vez en tu GitHub privado
+   (docs/emb/{id}.json, vectores int8 compactos). Se reutiliza siempre; onProgress(hechos,total) para el avance. */
+async function buildDocEmbeddings(id, name, mt, onProgress){
+  if(!loadCfg().openaiKey) throw new Error('Necesitas una clave de OpenAI en ⚙ Ajustes para el índice semántico (embeddings).');
+  let text=null; try{ text=await driveDownloadText(id, mt); }catch(e){}
+  if(!text) throw new Error('No hay texto que indexar (conecta Drive y re-indexa el documento primero).');
+  const chunks=chunkText(text, EMB_CHUNK, EMB_OVERLAP, EMB_MAXCHUNKS);
+  const out=[];
+  for(let i=0;i<chunks.length;i+=EMB_BATCH){ const batch=chunks.slice(i,i+EMB_BATCH);
+    const vecs=await embedTexts(batch, EMB_DIMS); if(!vecs||!vecs.length) throw new Error('La API de embeddings no devolvió datos.');
+    batch.forEach((t,j)=>{ if(vecs[j]) out.push({t, q:packInt8Vec(vecs[j])}); });
+    if(onProgress){ try{ onProgress(Math.min(i+EMB_BATCH,chunks.length), chunks.length); }catch(_){ } }
+  }
+  const rec={v:1, model:EMBED_MODEL, dims:EMB_DIMS, mt:mt||'', n:out.length, chunks:out};
   try{ localStorage.setItem('fh_emb_'+id, JSON.stringify(rec)); }catch(e){}
-  if(ghConfigured()){ try{ let sha=null; try{ const ci=await ghGetFile('docs/emb/'+id+'.json'); sha=ci.sha; }catch(e){} await ghPutFile('docs/emb/'+id+'.json', rec, 'rag: embeddings '+(name||id), sha); }catch(e){} }
+  if(ghConfigured()){ let sha=null; try{ const ci=await ghGetFile('docs/emb/'+id+'.json'); sha=ci.sha; }catch(e){} await ghPutFile('docs/emb/'+id+'.json', rec, 'rag: índice semántico '+(name||id), sha); }
+  _embMemCache.delete(id+':'+(mt||''));
+  return rec;
+}
+const _embMemCache=new Map();
+/* Carga el índice semántico de un documento (localStorage o GitHub), decodifica los vectores una vez y lo cachea. */
+async function getDocEmb(id, mt){
+  const key=id+':'+(mt||'');
+  if(_embMemCache.has(key)) return _embMemCache.get(key);
+  let rec=null; try{ rec=JSON.parse(localStorage.getItem('fh_emb_'+id)); }catch(e){}
+  if((!rec || rec.mt!==mt || !rec.chunks) && ghConfigured()){ try{ const r=await ghGetFile('docs/emb/'+id+'.json'); if(r.json && r.json.chunks){ rec=r.json; try{ localStorage.setItem('fh_emb_'+id, JSON.stringify(rec)); }catch(e){} } }catch(e){} }
+  if(!rec || !rec.chunks || rec.mt!==mt){ _embMemCache.set(key, null); return null; }   // sin índice o desfasado (el PDF cambió)
+  rec._vecs=rec.chunks.map(c=>unpackInt8Vec(c.q));
+  _embMemCache.set(key, rec);
   return rec;
 }
 /* Corpus RAG = TODOS los documentos indexados del repositorio (docs/index.json con driveId).
@@ -3307,17 +3333,26 @@ async function ragDocList(){
   Object.keys(ragDocs||{}).forEach(id=>{ if(!seen.has(id)){ seen.add(id); out.push({id, name:(ragDocs[id]&&ragDocs[id].name)||id, mt:(ragDocs[id]&&ragDocs[id].mt)||''}); } });
   return out;
 }
-/* Recupera los fragmentos más relevantes para una consulta entre los documentos del repositorio. */
-async function ragRetrieve(query, k){
-  const list=await ragDocList(); if(!list.length || !loadCfg().openaiKey) return null;
+/* Recuperación SEMÁNTICA (por significado): compara el embedding de la consulta con los vectores del índice semántico.
+   Devuelve null si no hay clave OpenAI o ningún documento tiene índice semántico construido. */
+async function semRetrieve(query, k){
+  if(!loadCfg().openaiKey) return null;
+  const list=await ragDocList(); if(!list.length) return null;
   const recs=[];
-  for(const {id,name,mt} of list){ let rec=cachedEmb(id); if(!rec){ try{ const t=await driveDownloadText(id, mt); rec=await ensureDocEmbeddings(id, name, t); }catch(e){} } if(rec&&rec.chunks) recs.push(rec); }
+  for(const {id,name,mt} of list){ const rec=await getDocEmb(id, mt); if(rec&&rec._vecs&&rec._vecs.length) recs.push({name, rec}); }
   if(!recs.length) return null;
-  const qv=(await embedTexts([query]))?.[0]; if(!qv) return null;
+  let qv=null; try{ qv=(await embedTexts([query], EMB_DIMS))?.[0]; }catch(e){ return null; }
+  if(!qv) return null;
   const scored=[];
-  recs.forEach(rec=>rec.chunks.forEach(ch=>scored.push({doc:rec.name, t:ch.t, s:cosine(qv, ch.v)})));
+  recs.forEach(({name,rec})=>rec.chunks.forEach((ch,idx)=>scored.push({doc:name, t:ch.t, s:cosineSafe(qv, rec._vecs[idx])})));
   scored.sort((a,b)=>b.s-a.s);
   return scored.slice(0, k||6);
+}
+/* Fusiona listas de fragmentos (semántica + léxica BM25) por rango recíproco, sin duplicados. */
+function mergeRag(lists, k){
+  const map=new Map();
+  (lists||[]).forEach(arr=>{ (arr||[]).forEach((h,i)=>{ const key=(h.doc||'')+'|'+String(h.t||'').slice(0,80); const prev=map.get(key)||{h, score:0}; prev.score+=1/(i+1); map.set(key, prev); }); });
+  return [...map.values()].sort((a,b)=>b.score-a.score).slice(0, k||8).map(x=>x.h);
 }
 async function buscarDocsRAG(query){
   const out=document.getElementById('docSearchOut'); if(!out) return;
@@ -3380,9 +3415,13 @@ async function ragRetrieveLocal(query, k){
 }
 async function ragContext(maxDocs, query){
   const list=await ragDocList(); if(!list.length) return '';
-  // Recuperación LOCAL por relevancia (BM25) — sin OpenAI; solo necesita el texto del PDF.
-  if(query){ try{ const {hits}=await ragRetrieveLocal(query, 8); if(hits&&hits.length)
-    return hits.map(h=>'\n--- '+(h.doc||'doc')+' ---\n'+h.t).join('\n'); }catch(e){} }
+  // Recuperación HÍBRIDA: BM25 (por palabras, siempre) + semántica (por significado, si hay índice semántico).
+  if(query){ try{
+    const {hits:lex}=await ragRetrieveLocal(query, 8);
+    let sem=null; try{ sem=await semRetrieve(query, 8); }catch(e){}
+    const merged=mergeRag([sem, lex], 8);
+    if(merged.length) return merged.map(h=>'\n--- '+(h.doc||'doc')+' ---\n'+h.t).join('\n');
+  }catch(e){} }
   // Respaldo: "stuffing" (primeros caracteres de cada documento).
   let out=''; let n=0;
   for(const {id,name,mt} of list){ if(n>=(maxDocs||4)) break; try{ const t=await driveDownloadText(id, mt); if(t){ out += '\n--- '+(name||id)+' ---\n'+t.slice(0,7000); n++; } }catch(e){} }
@@ -3464,14 +3503,19 @@ async function renderDriveList(files){
       else if(tl<500){ idxInfo='<span class="dx-meta hastip" style="color:#e0704f">⚠ casi sin texto — ¿PDF escaneado?<span class="tooltip">Se extrajeron '+tl+' caracteres. Si es un PDF escaneado (imágenes sin capa de texto) no sirve para el RAG. Necesitaría OCR.</span></span>'; needReidx=true; }
       else { idxInfo='<span class="dx-meta hastip" style="color:var(--ok)">📖 texto completo: '+(tl>=1000?Math.round(tl/1000)+'k':tl)+' letras'+(reg.pages?(' · '+reg.pages+' pág'):'')+'<span class="tooltip">Caracteres de texto extraídos e indexados para el RAG (búsqueda por relevancia sobre TODO el documento).</span></span>'; }
     }
+    // Índice SEMÁNTICO (embeddings): estado + botón para construirlo (una vez, se guarda en tu GitHub).
+    const semOn = !!(reg && reg.embN && reg.embMt && reg.embMt===reg.mt);
+    const hasText = !!(reg && reg.textLen>=500);
+    const semInfo = semOn ? '<span class="dx-meta hastip" style="color:#9b8cff">🧠 semántico ✓<span class="tooltip">Índice semántico (búsqueda por significado) construido: '+reg.embN+' fragmentos. Se combina con la búsqueda por palabras (BM25).</span></span>' : '';
+    const semBtn = (indexado && hasText && !semOn) ? `<button class="btn" data-sem="${i}" title="Construir el índice SEMÁNTICO (busca por significado, no solo por palabras). Coste único de céntimos con tu clave de OpenAI; se guarda en tu GitHub y se reutiliza siempre.">🧠 Indexar semántico</button>` : '';
     return `<div class="lib-card">
       <div class="nm">${escHtml(cita)}${descTip}</div>
       ${mostrarArchivo?`<div class="meta" title="Nombre del archivo en Google Drive">📄 ${escHtml(f.name)}</div>`:''}
       ${badges?`<div style="margin:2px 0 4px">${badges}</div>`:''}
-      <div class="meta">${(f.modifiedTime||'').slice(0,10)} · ${flag(indexado,'indexado','¿Analizado por IA y en el contexto (RAG) para crear protocolos?')} · ${flag(enBib,'bibliografía','¿Citado por alguna referencia/protocolo?')}${idxInfo?' · '+idxInfo:''}</div>
+      <div class="meta">${(f.modifiedTime||'').slice(0,10)} · ${flag(indexado,'indexado','¿Analizado por IA y en el contexto (RAG) para crear protocolos?')} · ${flag(enBib,'bibliografía','¿Citado por alguna referencia/protocolo?')}${idxInfo?' · '+idxInfo:''}${semInfo?' · '+semInfo:''}</div>
       <div class="acts">
         ${f.webViewLink?`<a class="drive-ico" href="${f.webViewLink}" target="_blank" rel="noopener" title="Abrir en Google Drive">${DRIVE_ICON}</a>`:''}${papersBadge}
-        ${indexado ? `${needReidx?`<button class="btn" data-reindex="${i}" title="Vuelve a leer el PDF ENTERO y re-analizarlo (completa libros o documentos indexados en una versión anterior)">↻ Re-indexar</button>`:''}<button class="btn" data-editmeta="${i}" title="Editar el nombre y la descripción a mano, o regenerarlos con IA leyendo el PDF">✏ Editar</button><button class="btn ghost" data-unreg="${reg.id}" title="Quitar del índice (deja de estar indexado: la IA ya no lo tiene en cuenta ni se puede citar; el PDF NO se borra de tu Drive)">Quitar del índice</button>` : `<button class="btn primary" data-index="${i}" title="La IA lo analiza una vez y queda en el contexto para crear protocolos">✨ Indexar (IA)</button>`}
+        ${indexado ? `${needReidx?`<button class="btn" data-reindex="${i}" title="Vuelve a leer el PDF ENTERO y re-analizarlo (completa libros o documentos indexados en una versión anterior)">↻ Re-indexar</button>`:''}${semBtn}<button class="btn" data-editmeta="${i}" title="Editar el nombre y la descripción a mano, o regenerarlos con IA leyendo el PDF">✏ Editar</button><button class="btn ghost" data-unreg="${reg.id}" title="Quitar del índice (deja de estar indexado: la IA ya no lo tiene en cuenta ni se puede citar; el PDF NO se borra de tu Drive)">Quitar del índice</button>` : `<button class="btn primary" data-index="${i}" title="La IA lo analiza una vez y queda en el contexto para crear protocolos">✨ Indexar (IA)</button>`}
       </div>
     </div>`;
   }).join('')+'</div>';
@@ -3483,6 +3527,14 @@ async function renderDriveList(files){
   };
   list.querySelectorAll('[data-index]').forEach(b=>b.addEventListener('click', ()=>idx(+b.dataset.index,false)));
   list.querySelectorAll('[data-reindex]').forEach(b=>b.addEventListener('click', ()=>idx(+b.dataset.reindex,true)));   // re-lee el PDF entero (completa libros / versiones antiguas)
+  const buildSem=async(i)=>{ const f=files[i]; const reg=regOf(f); if(!reg) return;
+    if(!loadCfg().openaiKey){ showToast('Configura tu clave de OpenAI en ⚙ Ajustes para el índice semántico'); return; }
+    showToast('Construyendo índice semántico…');
+    try{ const rec=await buildDocEmbeddings(f.id, reg.titulo||f.name, f.modifiedTime, (d,t)=>showToast('Índice semántico… '+d+'/'+t+' fragmentos'));
+      await registrarDoc(Object.assign({}, reg, {embMt:f.modifiedTime, embN:rec.n})); _fichaRefSet=null;
+      showToast('Índice semántico listo ('+rec.n+' fragmentos)'); renderDriveList(files);
+    }catch(e){ showToast('Error: '+e.message); } };
+  list.querySelectorAll('[data-sem]').forEach(b=>b.addEventListener('click', ()=>buildSem(+b.dataset.sem)));
   list.querySelectorAll('[data-editmeta]').forEach(b=>b.addEventListener('click', ()=>editarDocMeta(files[+b.dataset.editmeta], regOf(files[+b.dataset.editmeta]), ()=>renderDriveList(files))));
   list.querySelectorAll('[data-unreg]').forEach(b=>b.addEventListener('click', async ()=>{
     try{ await desregistrarDoc(b.dataset.unreg); showToast('Quitado del índice'); renderDriveList(files); }
