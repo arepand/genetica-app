@@ -487,8 +487,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.54.1';
+const APP_VERSION='1.55.0';
 const CHANGELOG=[
+  {v:'1.55.0', d:'2026-07-08', c:['Repositorio más coherente: el nombre visible de cada documento es ahora SIEMPRE su cita bibliográfica (antes unas veces era la cita y otras un nombre-resumen de la IA). El nombre-resumen y el resumen pasan al tooltip (ⓘ), que ahora aparece de forma consistente. Al añadir una referencia sin PDF se guarda solo la cita; el nombre-resumen y el resumen se generan cuando el documento tenga un PDF indexado.','GeneReviews: si un PDF de tu Drive se llama «Bookshelf_NBKxxxx.pdf» se reconoce automáticamente como GeneReviews y se le asigna su NBK. Además, si una referencia de un protocolo y un PDF de Drive son el mismo capítulo de GeneReviews (mismo NBK, aunque el PMID esté mal capturado), se fusionan y desaparece el duplicado de «Referencias sin PDF».','La fecha de «última revisión» de GeneReviews se muestra ahora en español (p. ej. «29 sept 2022»).']},
   {v:'1.54.1', d:'2026-07-08', c:['En los protocolos (y prenatal/seguimiento), la referencia que está en tu repositorio se marca ahora con SOLO el icono de Google Drive (limpio, sin el texto «Abrir en Drive»); el nombre y la descripción salen al pasar el ratón y al pulsarlo se abre en Drive. El badge de ReadCube Papers ya aparece también en el repositorio (Documentos) para los documentos que estén en tu biblioteca importada.']},
   {v:'1.54.0', d:'2026-07-08', c:['Repositorio (Documentos): cada documento indexado muestra en la 1ª línea el NOMBRE CAPTURADO de la referencia (la cita bibliográfica que sacó la IA) y justo debajo el nombre del archivo en Drive (con «📄»), para identificar el fichero. Antes solo se veía uno de los dos. También se añade el badge de GeneReviews en la ficha del repositorio.']},
   {v:'1.53.1', d:'2026-07-05', c:['GeneReviews: el botón «🔍» de una referencia (y el buscador en bloque «Buscar DOI/PMID») ahora, si la referencia es un capítulo de GeneReviews, busca también su NBK y la fecha exacta de «Last Update» y la rellena — así el badge «📖 GeneReviews» muestra la fecha de revisión (antes salía «revisión: —» en las referencias antiguas que no la tenían guardada). También busca la fecha de las GeneReviews que ya tienen PMID pero les falta la revisión.']},
@@ -1473,6 +1474,9 @@ function docMatchesFuente(d, f){
   if(fdoi && ddoi && fdoi===ddoi) return true;
   const fpmid=String(f.pmid||pmidFromUrl(f.url)||'').trim(), dpmid=String(d.pmid||pmidFromUrl(d.url)||'').trim();
   if(fpmid && dpmid && fpmid===dpmid) return true;
+  // GeneReviews: el identificador estable es el NBK (aunque el PMID esté mal capturado). Sale del campo o de la URL /books/NBKxxxx.
+  const fnbk=String(f.nbk||(geneReviewsInfo(f)||{}).nbk||'').toUpperCase(), dnbk=String(d.nbk||(geneReviewsInfo(d)||{}).nbk||'').toUpperCase();
+  if(fnbk && dnbk && fnbk===dnbk) return true;
   const furl=normUrl(f.url), durl=normUrl(d.url), den=normUrl(d.enlace);
   if(furl && (furl===durl || furl===den)) return true;
   const ft=normTxt(f.titulo), dt=normTxt(d.titulo);
@@ -1490,10 +1494,12 @@ async function ensureFuentesInRepo(fuentes){
   if(!idx.docs) idx.docs=[];
   let added=0;
   for(const f of list){
-    if(idx.docs.some(d=>docMatchesFuente(d, f))) continue;   // ya está
+    if(idx.docs.some(d=>docMatchesFuente(d, f))) continue;   // ya está (incluye match por NBK de GeneReviews)
+    const gr=geneReviewsInfo(f);   // nombre visible = la cita del protocolo; el nombre-resumen y el resumen quedan pendientes hasta que tenga PDF
     idx.docs.push({ id:slugify(f.titulo||f.url||'ref')+'-'+Math.random().toString(36).slice(2,6),
-      titulo:f.titulo||f.url||'', descripcion:'', tipo:'referencia', anio:f.anio||'',
+      titulo:f.titulo||f.url||'', cita:f.titulo||f.url||'', descripcion:'', tipo:gr?'GeneReviews':'referencia', anio:f.anio||'',
       doi:f.doi||'', pmid:f.pmid||'', pmcid:f.pmcid||'', readcube:f.readcube||'',
+      nbk:(gr&&gr.nbk)||f.nbk||'', gr_updated:f.gr_updated||'',
       url:f.url||'', enlace:'', externo:true, iaAnalizado:false });
     added++;
   }
@@ -1508,6 +1514,21 @@ async function desregistrarDoc(id){
   await ghPutFile('docs/index.json', idx, 'docs: quitar '+id, sha);
   cacheDocs(idx);
   return idx;
+}
+/* Reconcilia el repositorio: si una referencia SIN fichero (externa) resulta ser el MISMO documento que uno que YA
+   tiene PDF en Drive (mismo DOI/PMID/NBK/título), se elimina la externa duplicada. Devuelve el índice ya limpio, o null. */
+async function reconcileRepo(idx){
+  idx=idx||cachedDocs()||{docs:[]};
+  const all=idx.docs||[];
+  const withFile=all.filter(d=>d.driveId||d.enlace);
+  if(!withFile.length) return null;
+  const dropIds=new Set(all.filter(d=>!(d.driveId||d.enlace) && withFile.some(w=>w.id!==d.id && docMatchesFuente(w, d))).map(d=>d.id));
+  if(!dropIds.size) return null;
+  const keep={docs:all.filter(d=>!dropIds.has(d.id))};
+  let sha=null; try{ const ci=await ghGetFile('docs/index.json'); sha=ci.sha; }catch(e){}
+  try{ await ghPutFile('docs/index.json', keep, 'docs: fusionar '+dropIds.size+' referencia(s) duplicada(s)', sha); }catch(e){}
+  cacheDocs(keep);
+  return keep;
 }
 let _docsPrefetched=false;
 /* ===========================================================================
@@ -1655,10 +1676,18 @@ function geneReviewsInfo(s){
   const url = nbk ? ('https://www.ncbi.nlm.nih.gov/books/'+nbk+'/') : (u||'https://www.ncbi.nlm.nih.gov/books/n/gene/');
   return { nbk, url, updated:(s.gr_updated||s.revisado||'').trim(), pdf: nbk?('https://www.ncbi.nlm.nih.gov/books/'+nbk+'/pdf/Bookshelf_'+nbk+'.pdf'):'' };
 }
+/* Fecha de «Last Update» de GeneReviews en español: "September 29, 2022" → "29 sept 2022" (se conserva el valor crudo para comparar). */
+function fmtGrDate(raw){
+  const s=String(raw||'').trim(); if(!s) return '';
+  if(/^\d{4}$/.test(s)) return s;                       // solo año → tal cual
+  const t=Date.parse(s); if(isNaN(t)) return s;         // no parseable → tal cual
+  const d=new Date(t), MES=['ene','feb','mar','abr','may','jun','jul','ago','sept','oct','nov','dic'];
+  return d.getDate()+' '+MES[d.getMonth()]+' '+d.getFullYear();
+}
 /* Badge propio para GeneReviews: enlace al capítulo + tooltip con NBK y fecha de última revisión + enlace al PDF. */
 function geneReviewsBadgeHtml(s){
   const g=geneReviewsInfo(s); if(!g) return '';
-  const tip='GeneReviews'+(g.nbk?' · '+g.nbk:'')+(g.updated?'<br>Última revisión: '+escHtml(g.updated):'<br><span class="dx-meta">revisión: —</span>')+(g.pdf?'<br><a href="'+escA(g.pdf)+'" target="_blank" rel="noopener">Abrir PDF ↗</a> <span class="dx-meta">(guárdalo en tu Drive para tenerlo en el repositorio)</span>':'');
+  const tip='GeneReviews'+(g.nbk?' · '+g.nbk:'')+(g.updated?'<br>Última revisión: '+escHtml(fmtGrDate(g.updated)):'<br><span class="dx-meta">revisión: —</span>')+(g.pdf?'<br><a href="'+escA(g.pdf)+'" target="_blank" rel="noopener">Abrir PDF ↗</a> <span class="dx-meta">(guárdalo en tu Drive para tenerlo en el repositorio)</span>':'');
   return ` <span class="hastip gr-badge"><a href="${escA(g.url)}" target="_blank" rel="noopener">📖 GeneReviews</a><span class="tooltip">${tip}</span></span>`;
 }
 /* Aviso si un GeneReviews citado se ha REVISADO después de la última revisión del protocolo (documento vivo). */
@@ -1666,7 +1695,7 @@ function grStaleHtml(s, protoRevIso){
   const g=geneReviewsInfo(s); if(!g || !g.updated || !protoRevIso) return '';
   const gu=Date.parse(g.updated); const pr=Date.parse(String(protoRevIso).slice(0,10)) || Date.parse(String(protoRevIso));
   if(isNaN(gu) || isNaN(pr) || gu<=pr) return '';
-  return ` <span class="gr-stale" title="GeneReviews se revisó el ${escA(g.updated)}, después de tu última revisión del protocolo — conviene revisarlo.">⟳ GeneReviews actualizado</span>`;
+  return ` <span class="gr-stale" title="GeneReviews se revisó el ${escA(fmtGrDate(g.updated))}, después de tu última revisión del protocolo — conviene revisarlo.">⟳ GeneReviews actualizado</span>`;
 }
 /* Componente reutilizable para CUALQUIER referencia bibliográfica:
    - si su PDF está indexado en docs/index.json → icono 📄 con tooltip (nombre + descripción + abrir PDF);
@@ -3310,7 +3339,9 @@ function cargarDriveDocs(){
 async function renderDriveList(files){
   const list=document.getElementById('docList'); if(!list) return;
   if(!files.length){ list.innerHTML='<div class="placeholder">No se encontraron PDFs en Drive (o en esa carpeta).</div>'; return; }
-  const docs=(await getDocsIndex()).docs||[];
+  let docsIdx=await getDocsIndex();
+  try{ const cleaned=await reconcileRepo(docsIdx); if(cleaned) docsIdx=cleaned; }catch(e){}   // quita referencias sin PDF que ya cubre un PDF de Drive
+  const docs=docsIdx.docs||[];
   const refset=await fichaRefSet();
   const regOf=(f)=> docs.find(d=>d.driveId===f.id) || matchDoc({url:f.webViewLink, titulo:f.name}, docs);
   const flag=(on,label,title)=> `<span class="dx-meta hastip" style="color:${on?'var(--ok)':'var(--ink3)'}">${on?'✓':'–'} ${label}<span class="tooltip">${escHtml(title)}</span></span>`;
@@ -3320,11 +3351,13 @@ async function renderDriveList(files){
     const reg=regOf(f);
     const indexado=!!reg;
     const enBib=!!(reg && docUsedInFicha(reg, refset));
-    const descTip=(reg&&reg.descripcion)?(' <span class="hastip dx-meta" style="color:var(--accent)">ⓘ<span class="tooltip">'+escHtml(reg.titulo||f.name)+(reg.descripcion?'<br><span class=dx-meta>'+escHtml(reg.descripcion)+'</span>':'')+'</span></span>'):'';
-    // 1ª línea = la CITA capturada (título indexado por la IA) si existe; si no, el nombre del fichero.
+    // Tooltip = nombre-resumen (nombreIA) + resumen (descripción). Coherente: aparece siempre que haya uno u otro.
+    const tipHead=(reg&&(reg.nombreIA||reg.titulo))||f.name;
+    const descTip=(reg&&(reg.descripcion||reg.nombreIA))?(' <span class="hastip dx-meta" style="color:var(--accent)">ⓘ<span class="tooltip">'+escHtml(tipHead)+(reg.descripcion?'<br><span class=dx-meta>'+escHtml(reg.descripcion)+'</span>':'')+'</span></span>'):'';
+    // 1ª línea = la CITA bibliográfica capturada si existe; si no, el nombre del fichero.
     // 2ª línea (debajo) = el nombre del ARCHIVO en Drive (siempre, para identificar el fichero).
-    const cita=(reg && reg.titulo) ? reg.titulo : f.name;
-    const mostrarArchivo = reg && reg.titulo && normTxt(reg.titulo)!==normTxt(f.name);
+    const cita=(reg && (reg.cita||reg.titulo)) ? (reg.cita||reg.titulo) : f.name;
+    const mostrarArchivo = reg && normTxt(cita)!==normTxt(f.name);
     const badges=reg ? (refIdChipsHtml(reg)+readcubeLibBadgeHtml(reg)+geneReviewsBadgeHtml(reg)) : '';
     return `<div class="lib-card">
       <div class="nm">${escHtml(cita)}${descTip}</div>
@@ -3422,14 +3455,14 @@ function editarDocMeta(f, reg, onDone){
     out.className='test-out'; out.innerHTML='✨ Leyendo el PDF y regenerando…';
     let pdfText=null; try{ pdfText=await driveDownloadText(f.id, f.modifiedTime); }catch(e){}
     try{ const j=await analizarDocIA({titulo:f.name, url:f.webViewLink||reg.url}, pdfText);
-      if(j){ if(j.nombre) tit.value=j.nombre; if(j.descripcion) desc.value=j.descripcion; out.className='test-out ok'; out.innerHTML='✓ Regenerado'+(pdfText?' a partir del texto del PDF':' (sin texto del PDF; conecta Drive para más precisión)')+'.'; }
+      if(j){ if(j.cita||j.nombre) tit.value=j.cita||j.nombre; if(j.descripcion) desc.value=j.descripcion; out.className='test-out ok'; out.innerHTML='✓ Regenerado'+(pdfText?' a partir del texto del PDF':' (sin texto del PDF; conecta Drive para más precisión)')+'.'; }
       else out.textContent='La IA no devolvió datos.';
     }catch(e){ out.className='test-out bad'; out.textContent='Error: '+e.message; }
   });
   ov.querySelector('#emSave').addEventListener('click', async ()=>{
     if(!ghConfigured()){ out.className='test-out bad'; out.textContent='Configura GitHub en ⚙ Ajustes.'; return; }
     out.className='test-out'; out.textContent='Guardando…';
-    try{ await registrarDoc(Object.assign({}, reg, {titulo:tit.value.trim()||reg.titulo, descripcion:desc.value.trim()})); close(); showToast('Documento actualizado'); if(onDone) onDone(); }
+    try{ const nt=tit.value.trim()||reg.titulo; await registrarDoc(Object.assign({}, reg, {titulo:nt, cita:nt, descripcion:desc.value.trim()})); close(); showToast('Documento actualizado'); if(onDone) onDone(); }
     catch(e){ out.className='test-out bad'; out.textContent='Error: '+e.message; }
   });
 }
@@ -3443,8 +3476,14 @@ async function indexarDriveDoc(f, opts){
   const doi=String((j&&j.doi)||'').trim()||doiFromUrl(f.webViewLink)||((txtHead.match(/10\.\d{4,9}\/[^\s"'<>,;)\]}]+/)||[])[0]||'').replace(/[).,;]+$/,'');
   const pmid=String((j&&j.pmid)||'').trim()||((txtHead.match(/pmid[:\s]*?(\d{4,9})/i)||[])[1]||'');
   const pmcid=String((j&&j.pmcid)||'').trim()||((txtHead.match(/\bPMC\d{4,9}\b/i)||[])[0]||'').toUpperCase();
-  const nbk=String((j&&j.nbk)||'').trim()||((txtHead.match(/\bNBK\d{3,7}\b/i)||[])[0]||'').toUpperCase();
-  const doc={ titulo:(j&&j.nombre)||f.name, descripcion:(j&&j.descripcion)||'', tipo:(j&&j.tipo)||'', anio:(j&&j.anio)||(f.modifiedTime||'').slice(0,4),
+  // El NBK también sale del NOMBRE DEL FICHERO (los PDF de GeneReviews de NCBI Bookshelf se llaman Bookshelf_NBKxxxx.pdf).
+  const fnameNbk=((String(f.name||'').match(/Bookshelf_(NBK\d{3,7})/i))||[])[1]||'';
+  const nbk=(String((j&&j.nbk)||'').trim()||((txtHead.match(/\bNBK\d{3,7}\b/i)||[])[0]||'')||fnameNbk).toUpperCase();
+  const cita=String((j&&j.cita)||'').trim();           // cita bibliográfica → nombre visible (línea 1)
+  const nombreIA=String((j&&j.nombre)||'').trim();     // nombre-resumen corto → tooltip
+  const esGr=!!nbk || (j&&j.genereviews===true) || /genereviews/i.test(String((j&&j.tipo)||''));
+  const doc={ titulo: cita||nombreIA||f.name, cita, nombreIA, descripcion:(j&&j.descripcion)||'',
+    tipo:(j&&j.tipo)||(esGr?'GeneReviews':''), anio:(j&&j.anio)||(f.modifiedTime||'').slice(0,4),
     doi, pmid, pmcid, nbk, gr_updated:String((j&&j.gr_updated)||'').trim(),
     url:f.webViewLink||('drive:'+f.id), enlace:f.webViewLink||('https://drive.google.com/file/d/'+f.id), driveId:f.id, mt:f.modifiedTime||'', iaAnalizado:!!j };
   await registrarDoc(doc);
@@ -6552,7 +6591,7 @@ async function renderFichaView(f){
 /* La IA identifica el documento (por título/URL/DOI, con búsqueda web) → nombre + descripción + tipo.
    Es el "análisis una sola vez": el resultado se guarda en docs/index.json (GitHub). */
 async function analizarDocIA(fuente, pdfText){
-  const sys='Eres documentalista clínico-genético. Identifica el documento bibliográfico. '+(pdfText?'Te doy un EXTRACTO del texto real del PDF: úsalo como FUENTE PRINCIPAL (el nombre del fichero puede inducir a error, NO te fíes de él). ':'Usa el título/URL/DOI y búsqueda web; NO inventes. ')+'Si es un artículo científico, incluye además su "doi" (10.xxxx, sin el prefijo https://doi.org/), "pmid" (solo dígitos) y "pmcid" (PMCxxxxxxx) SIEMPRE que puedas identificarlos con seguridad (déjalos en "" si no); NO los inventes. Si es un capítulo de GeneReviews (NCBI Bookshelf), pon "genereviews":true, su "nbk" (formato NBKxxxxx) y "gr_updated" (la fecha exacta de «Last Update»/«Last Revision», tal cual aparece, p. ej. "September 29, 2022"); GeneReviews también tiene "pmid". Devuelve SOLO JSON {"nombre":"título real, breve y claro en español, sin comillas","descripcion":"1-2 frases: QUÉ es y para qué sirve","tipo":"guía clínica|revisión|artículo original|consenso|libro|base de datos|GeneReviews|otro","anio":"AAAA","doi":"","pmid":"","pmcid":"","genereviews":false,"nbk":"","gr_updated":""}.';
+  const sys='Eres documentalista clínico-genético. Identifica el documento bibliográfico. '+(pdfText?'Te doy un EXTRACTO del texto real del PDF: úsalo como FUENTE PRINCIPAL (el nombre del fichero puede inducir a error, NO te fíes de él). ':'Usa el título/URL/DOI y búsqueda web; NO inventes. ')+'Si es un artículo científico, incluye además su "doi" (10.xxxx, sin el prefijo https://doi.org/), "pmid" (solo dígitos) y "pmcid" (PMCxxxxxxx) SIEMPRE que puedas identificarlos con seguridad (déjalos en "" si no); NO los inventes. Si es un capítulo de GeneReviews (NCBI Bookshelf), pon "genereviews":true, su "nbk" (formato NBKxxxxx) y "gr_updated" (la fecha exacta de «Last Update»/«Last Revision», tal cual aparece, p. ej. "September 29, 2022"); GeneReviews también tiene "pmid". Devuelve SOLO JSON {"cita":"cita bibliográfica COMPLETA estilo Vancouver (Autores. Título. Revista Año;vol(núm):págs.; para libro/GeneReviews: Autores. Título. GeneReviews®. Año); déjala en "" si no puedes construirla con seguridad","nombre":"nombre CORTO y claro en español (NO es la cita), sin comillas","descripcion":"1-2 frases: QUÉ es y para qué sirve","tipo":"guía clínica|revisión|artículo original|consenso|libro|base de datos|GeneReviews|otro","anio":"AAAA","doi":"","pmid":"","pmcid":"","genereviews":false,"nbk":"","gr_updated":""}.';
   const user='Documento: '+JSON.stringify({titulo:fuente.titulo||'', url:fuente.url||'', doi:fuente.doi||''})+(pdfText?('\n\nEXTRACTO DEL PDF (texto real, prioritario):\n'+pdfText.slice(0,6000)):'');
   const resp=await callLLM({system:sys, user, webSearch:!pdfText, maxTokens:700, task:'eval'});  // si hay texto del PDF, no hace falta búsqueda web
   return extractJSON(resp);
