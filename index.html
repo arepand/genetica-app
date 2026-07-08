@@ -487,8 +487,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.62.0';
+const APP_VERSION='1.63.0';
 const CHANGELOG=[
+  {v:'1.63.0', d:'2026-07-08', c:['Enrutado de modelos y robustez de proveedores: (1) FAILOVER automático — si tu proveedor preferido (Claude por defecto) falla en una llamada, se reintenta al instante con el otro (OpenAI) si tienes su clave puesta. (2) Cada operación usa el modelo adecuado: autoría de protocolos con el más potente (Opus), búsquedas/verificaciones con un modelo medio, y la lectura/identificación de documentos (cuando ya hay texto) con un modelo barato (Haiku) para ahorrar. (3) Nuevo panel «🔀 Modelo por operación» dentro de «Estado» que audita, con tu configuración, qué proveedor y modelo usa cada tarea (y los embeddings de OpenAI para el RAG semántico). Recordatorio: los protocolos los redacta Claude; OpenAI solo hace los embeddings (búsqueda semántica) y el respaldo.']},
   {v:'1.62.0', d:'2026-07-08', c:['El buscador de tu biblioteca (la caja «Buscar en tus documentos») es ahora HÍBRIDO: busca por palabras (BM25) Y por significado (semántico, en los documentos con índice semántico construido), y combina ambos. Así puedes hacer una búsqueda semántica DIRECTA de tu biblioteca, no solo al crear protocolos. Cada resultado indica si vino por «palabras», por «significado» o por ambas.']},
   {v:'1.61.1', d:'2026-07-08', c:['Botón global «🧠 Indexar semántico (N)» en la cabecera de «Documentos»: construye de una vez el índice semántico de todos los documentos que aún no lo tengan (los que tienen texto completo), con progreso documento a documento. Requiere clave de OpenAI.']},
   {v:'1.61.0', d:'2026-07-08', c:['Búsqueda SEMÁNTICA (por significado) en tus documentos: cada documento del repositorio tiene ahora un botón «🧠 Indexar semántico». La app trocea el documento, calcula sus embeddings por lotes (con tu clave de OpenAI) y los guarda comprimidos (int8) UNA vez en tu GitHub privado (docs/emb/…), reutilizables siempre. Al crear protocolos, la recuperación es HÍBRIDA: combina la búsqueda por palabras (BM25) con la semántica, así encuentra pasajes relevantes aunque estén escritos con otras palabras (p. ej. «nefropatía quística» cuando buscas «riñón poliquístico»). Coste único de céntimos por documento; requiere una clave de OpenAI en Ajustes (los embeddings solo los ofrece OpenAI, no Claude). Si no construyes el índice semántico, todo sigue funcionando con BM25 como hasta ahora.']},
@@ -1210,6 +1211,24 @@ function pickModel(task){
   for(const p of order){ if(providerKey(p)) return { provider:p, model: modelForTier(p, tier), tier }; }
   return null;
 }
+/* Auditoría del enrutado: qué proveedor+modelo usa cada tipo de operación con la configuración actual. */
+function modelRouting(){
+  const c=loadCfg();
+  const order = c.preferProvider==='openai' ? ['openai','anthropic'] : ['anthropic','openai'];
+  const avail = order.filter(p=>providerKey(p));
+  const prov = avail[0], fb = avail[1];
+  const ops=[
+    {label:'Autoría de protocolos (lo más potente)', task:'author'},
+    {label:'Búsqueda web / verificación', task:'eval'},
+    {label:'Anamnesis / profundizar', task:'deepen'},
+    {label:'Lectura/identificación de documentos', task:'assign'},
+  ];
+  return {
+    provider: prov, fallback: fb,
+    ops: prov ? ops.map(o=>({label:o.label, model:prettyModel(prov, modelForTier(prov, TASK_TIER[o.task]||'mid'))})) : [],
+    embeddings: c.openaiKey ? 'OpenAI text-embedding-3-small' : null
+  };
+}
 /* Descubrimiento de modelos disponibles (para el selector auto-actualizable) */
 function cachedModels(p){ try{ return JSON.parse(localStorage.getItem('fh_models_'+p))||[]; }catch(e){ return []; } }
 async function fetchModels(p){
@@ -1899,13 +1918,13 @@ async function callLLM(opts){
   }catch(e){ if(entry){ entry.error=e.message; entry.ms=Date.now()-started; AI_LOG.push(entry); } throw e; }
   finally{ aiBusyEnd(); }
 }
-async function _callLLMImpl({system, user, webSearch, maxTokens, task, thinking}, _dbg){
+/* Una llamada a UN proveedor concreto, con el modelo del tier de la tarea. */
+async function _callProvider(provider, {system, user, webSearch, maxTokens, task, thinking}, _dbg){
   const c=loadCfg();
-  maxTokens = maxTokens || 1500;
-  const pick = pickModel(task||'deepen');
-  if(!pick) throw new Error('No hay proveedor LLM configurado: añade una API key (Claude u OpenAI) en ⚙ Ajustes.');
-  if(pick.provider==='openai'){
-    let model=pick.model, body;
+  const tier = TASK_TIER[task||'deepen'] || 'mid';
+  let model = modelForTier(provider, tier);
+  if(provider==='openai'){
+    let body;
     if(webSearch){ if(!/search/.test(model)) model=DEFAULT_MODELS.openai.search; body={model, messages:[{role:'system',content:system},{role:'user',content:user}], web_search_options:{}}; }
     else { body={model, messages:[{role:'system',content:system},{role:'user',content:user}], temperature:0.2, max_tokens:maxTokens}; }
     const r=await fetch('https://api.openai.com/v1/chat/completions', {
@@ -1915,7 +1934,7 @@ async function _callLLMImpl({system, user, webSearch, maxTokens, task, thinking}
     const d=await r.json();
     return d.choices[0].message.content;
   } else { // anthropic
-    const body={model:pick.model, max_tokens:maxTokens, system, messages:[{role:'user',content:user}]};
+    const body={model, max_tokens:maxTokens, system, messages:[{role:'user',content:user}]};
     if(thinking){ body.thinking={type:'adaptive'}; body.output_config={effort:'high'}; } // razonamiento adaptativo, esfuerzo alto: máxima fiabilidad
     if(webSearch) body.tools=[{type:'web_search_20250305', name:'web_search', max_uses:5}];
     const r=await fetch('https://api.anthropic.com/v1/messages', {
@@ -1928,6 +1947,18 @@ async function _callLLMImpl({system, user, webSearch, maxTokens, task, thinking}
     if(_dbg){ _dbg.reasoning=(d.content||[]).filter(b=>b.type==='thinking').map(b=>b.thinking||'').join('\n'); }
     return (d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
   }
+}
+async function _callLLMImpl(opts, _dbg){
+  opts.maxTokens = opts.maxTokens || 1500;
+  const order = loadCfg().preferProvider==='openai' ? ['openai','anthropic'] : ['anthropic','openai'];
+  const avail = order.filter(p=>providerKey(p));   // proveedor preferido primero; el otro como respaldo
+  if(!avail.length) throw new Error('No hay proveedor LLM configurado: añade una API key (Claude u OpenAI) en ⚙ Ajustes.');
+  let lastErr=null;
+  for(let i=0;i<avail.length;i++){ const p=avail[i];
+    try{ return await _callProvider(p, opts, _dbg); }
+    catch(e){ lastErr=e; if(i<avail.length-1){ if(_dbg) _dbg.fallback=(_dbg.fallback?_dbg.fallback+'; ':'')+p+' falló → reintento con '+avail[i+1]; try{ console.warn('LLM '+p+' falló ('+e.message+') → reintento con '+avail[i+1]); }catch(_){ } } }
+  }
+  throw lastErr;   // fallaron todos los proveedores disponibles
 }
 
 /* ---- Verificación HPO contra JAX (descarta códigos inventados por el LLM) ---- */
@@ -2037,6 +2068,14 @@ function renderStatus(){
         +`<div style="font-size:12px">🧠 Modelos IA <span class="dx-meta">· última comprobación: ${mc?new Date(mc).toISOString().slice(0,10):'nunca'}</span></div>`
         +`<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn ghost" id="chkModels" style="padding:3px 8px;font-size:11px">🔎 Comprobar ahora</button></div>`
         +(ml.length?`<details style="margin-top:6px"><summary class="dx-meta" style="cursor:pointer">Registro de modelos nuevos (${ml.length})</summary><div style="font-size:11.5px;margin-top:4px">${ml.slice(0,20).map(e=>`<div style="border-top:1px solid var(--line);padding:3px 0"><b>${String(e.d||'').slice(0,10)}</b> · ${escHtml(e.p)}: <span style="color:var(--ok)">+ ${escHtml((e.added||[]).join(', '))}</span></div>`).join('')}</div></details>`:`<div class="dx-meta" style="margin-top:4px">Sin modelos nuevos registrados todavía.</div>`)
+        +`</div>`; })()
+    +(function(){ const rt=modelRouting();
+        return `<div style="border-top:1px solid var(--line);margin-top:8px;padding-top:8px"><div style="font-size:12px;margin-bottom:4px">🔀 Modelo por operación <span class="dx-meta">· auditoría del enrutado</span></div>`
+        +(rt.provider
+          ? rt.ops.map(o=>`<div style="font-size:11.5px;display:flex;justify-content:space-between;gap:10px;padding:2px 0"><span>${escHtml(o.label)}</span><span class="dx-meta" style="text-align:right">${escHtml(o.model)}</span></div>`).join('')
+            +`<div style="font-size:11.5px;display:flex;justify-content:space-between;gap:10px;padding:2px 0"><span>Embeddings (RAG semántico)</span><span class="dx-meta" style="text-align:right">${rt.embeddings?escHtml(rt.embeddings):'— (requiere OpenAI)'}</span></div>`
+            +(rt.fallback?`<div class="dx-meta" style="margin-top:3px">Si falla ${rt.provider==='anthropic'?'Claude':'OpenAI'}, reintenta con ${rt.fallback==='anthropic'?'Claude':'OpenAI'} automáticamente.</div>`:'<div class="dx-meta" style="margin-top:3px">Añade la otra clave para tener respaldo automático.</div>')
+          : `<div class="dx-meta">Sin proveedor de IA configurado.</div>`)
         +`</div>`; })()
     +`</div>`;
   const btn=document.getElementById('statusBtn'), det=document.getElementById('statusDetail');
@@ -6839,7 +6878,8 @@ async function renderFichaView(f){
 async function analizarDocIA(fuente, pdfText){
   const sys='Eres documentalista clínico-genético. Identifica el documento bibliográfico. '+(pdfText?'Te doy un EXTRACTO del texto real del PDF: úsalo como FUENTE PRINCIPAL (el nombre del fichero puede inducir a error, NO te fíes de él). ':'Usa el título/URL/DOI y búsqueda web; NO inventes. ')+'Si es un artículo científico, incluye además su "doi" (10.xxxx, sin el prefijo https://doi.org/), "pmid" (solo dígitos) y "pmcid" (PMCxxxxxxx) SIEMPRE que puedas identificarlos con seguridad (déjalos en "" si no); NO los inventes. Si es un capítulo de GeneReviews (NCBI Bookshelf), pon "genereviews":true, su "nbk" (formato NBKxxxxx) y "gr_updated" (la fecha exacta de «Last Update»/«Last Revision», tal cual aparece, p. ej. "September 29, 2022"); para GeneReviews DEJA "pmid" VACÍO (no lo adivines: se obtiene de forma automática y verificada a partir del NBK). Devuelve SOLO JSON {"cita":"cita bibliográfica COMPLETA estilo Vancouver (Autores. Título. Revista Año;vol(núm):págs.; para libro/GeneReviews: Autores. Título. GeneReviews®. Año); déjala en "" si no puedes construirla con seguridad","nombre":"nombre CORTO y claro en español (NO es la cita), sin comillas","descripcion":"1-2 frases: QUÉ es y para qué sirve","tipo":"guía clínica|revisión|artículo original|consenso|libro|base de datos|GeneReviews|otro","anio":"AAAA","doi":"","pmid":"","pmcid":"","genereviews":false,"nbk":"","gr_updated":""}.';
   const user='Documento: '+JSON.stringify({titulo:fuente.titulo||'', url:fuente.url||'', doi:fuente.doi||''})+(pdfText?('\n\nEXTRACTO DEL PDF (texto real, prioritario):\n'+pdfText.slice(0,6000)):'');
-  const resp=await callLLM({system:sys, user, webSearch:!pdfText, maxTokens:700, task:'eval'});  // si hay texto del PDF, no hace falta búsqueda web
+  // Con texto del PDF, identificar el documento es una tarea sencilla → modelo BARATO (assign). Sin texto, hace falta búsqueda web (eval).
+  const resp=await callLLM({system:sys, user, webSearch:!pdfText, maxTokens:700, task: pdfText ? 'assign' : 'eval'});
   return extractJSON(resp);
 }
 function openRegistrarDoc(fuente, onDone){
