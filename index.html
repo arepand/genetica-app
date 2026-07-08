@@ -337,6 +337,8 @@
   .rc-ico{padding:0; background:none; border:none; text-decoration:none; line-height:1;}
   .rc-ico:hover{filter:brightness(1.15);}
   .drive-have{display:inline-block; text-decoration:none; line-height:1; vertical-align:middle;}
+  .drive-ico{display:inline-block; text-decoration:none; line-height:1; vertical-align:middle;}
+  .drive-ico:hover{filter:brightness(1.12);}
   .gr-badge{vertical-align:middle;}
   .gr-badge>a{display:inline-block; font-size:10.5px; font-weight:700; padding:1px 8px; border-radius:999px; background:#2a2140; color:#c7b3ff; border:1px solid #4a3d73; text-decoration:none; white-space:nowrap;}
   .gr-badge>a:hover{border-color:#7e63c9;}
@@ -485,8 +487,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.54.0';
+const APP_VERSION='1.54.1';
 const CHANGELOG=[
+  {v:'1.54.1', d:'2026-07-08', c:['En los protocolos (y prenatal/seguimiento), la referencia que está en tu repositorio se marca ahora con SOLO el icono de Google Drive (limpio, sin el texto «Abrir en Drive»); el nombre y la descripción salen al pasar el ratón y al pulsarlo se abre en Drive. El badge de ReadCube Papers ya aparece también en el repositorio (Documentos) para los documentos que estén en tu biblioteca importada.']},
   {v:'1.54.0', d:'2026-07-08', c:['Repositorio (Documentos): cada documento indexado muestra en la 1ª línea el NOMBRE CAPTURADO de la referencia (la cita bibliográfica que sacó la IA) y justo debajo el nombre del archivo en Drive (con «📄»), para identificar el fichero. Antes solo se veía uno de los dos. También se añade el badge de GeneReviews en la ficha del repositorio.']},
   {v:'1.53.1', d:'2026-07-05', c:['GeneReviews: el botón «🔍» de una referencia (y el buscador en bloque «Buscar DOI/PMID») ahora, si la referencia es un capítulo de GeneReviews, busca también su NBK y la fecha exacta de «Last Update» y la rellena — así el badge «📖 GeneReviews» muestra la fecha de revisión (antes salía «revisión: —» en las referencias antiguas que no la tenían guardada). También busca la fecha de las GeneReviews que ya tienen PMID pero les falta la revisión.']},
   {v:'1.53.0', d:'2026-07-05', c:['Repositorio (fase 3, cierre de la reorientación): en «Documentos» aparece ahora una sección «📑 Referencias sin PDF» con las citas de tus protocolos que aún no tienen un documento en Drive — con sus badges (PMID/DOI/PMCID, ReadCube, GeneReviews) y un botón «📎 Asignar PDF de Drive» para vincularles el fichero (y que pasen a indexarse) o quitarlas.','«Asignar PDF» ya no aparece en NINGUNA vista de solo lectura (protocolo, prenatal, seguimiento, indicación de estudio): la gestión de documentos se hace desde «Documentos» y desde el botón «📁 Repositorio» del editor.']},
@@ -1680,14 +1683,12 @@ function bibRefHtml(fuente, opts){
     readcube: fuente.readcube||''   // enlace ReadCube pegado a mano en la referencia (tiene prioridad)
   };
   const grBadge=geneReviewsBadgeHtml(Object.assign({}, d||{}, fuente));   // badge propio si es GeneReviews (fecha de revisión + página + PDF)
-  // Documento del repositorio CON fichero en Drive → icono de Drive con tooltip y enlace a abrirlo.
+  // Documento del repositorio CON fichero en Drive → SOLO el icono de Drive (limpio), clic para abrirlo; tooltip nativo.
   if(d && (d.driveId || d.enlace)){
     const pdf=d.enlace||d.url||'';
-    const tip=escHtml(d.titulo||fuente.titulo||'Documento')
-      +(d.descripcion?('<br><span class="dx-meta">'+escHtml(d.descripcion)+'</span>'):'')
-      +(pdf?('<br><a href="'+escHtml(pdf).replace(/"/g,'&quot;')+'" target="_blank" rel="noopener">Abrir en Drive ↗</a>'):'');
+    const t=(d.titulo||fuente.titulo||'Documento')+' — en tu repositorio (Google Drive)'+(pdf?' · clic para abrir':'')+(d.descripcion?' · '+d.descripcion:'');
     const openHref = pdf ? ` href="${escA(pdf)}" target="_blank" rel="noopener"` : '';
-    return readcubeLibBadgeHtml(ids)+grBadge+` <a class="hastip drive-have"${openHref} title="En tu repositorio (Google Drive)">${DRIVE_ICON}<span class="tooltip">${tip}</span></a>`
+    return readcubeLibBadgeHtml(ids)+grBadge+` <a class="drive-ico"${openHref} title="${escA(t)}">${DRIVE_ICON}</a>`
       +(d.id && !opts.noAssign?' <a class="tip-ai bib-unassign" data-docid="'+escHtml(String(d.id))+'" title="Eliminar este documento asignado del índice">✕</a>':'')
       +readcubeMarkerHtml(ids);
   }
