@@ -487,8 +487,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.59.0';
+const APP_VERSION='1.60.0';
 const CHANGELOG=[
+  {v:'1.60.0', d:'2026-07-08', c:['Indicador de indexado completo: cada documento del repositorio muestra ahora cuánto texto se extrajo («📖 texto completo: 340k letras · 412 pág»). Si un documento se indexó en una versión anterior (posible recorte) o es un PDF escaneado sin texto, sale un aviso y un botón «↻ Re-indexar» que vuelve a leer el PDF entero. Así ves de un vistazo qué está indexado de verdad y qué no.']},
   {v:'1.59.0', d:'2026-07-08', c:['Identificadores SEGUROS también para artículos normales (no solo GeneReviews): al indexar o buscar, el DOI/PMID/PMCID se verifican contra NCBI y CrossRef. El DOI es el ancla (fiable si está en el PDF) → de él se derivan el PMID/PMCID reales; un PMID que NCBI no reconoce se descarta (era inventado); un DOI que no existe en CrossRef se descarta. Nunca se muestra un identificador sin verificar.','Libros grandes: se indexa ahora el PDF ENTERO (antes solo las primeras ~40 páginas / 30.000 caracteres). El texto completo se guarda una vez (permanente) y la búsqueda por relevancia (BM25) cubre todo el documento. Al indexar un PDF largo verás el progreso por páginas. Para completar un libro que ya tenías indexado (y había quedado truncado), quítalo del índice y vuelve a indexarlo.']},
   {v:'1.58.0', d:'2026-07-08', c:['CRÍTICO — PMID de GeneReviews SIEMPRE auténtico: los PMID que la IA asignaba a los capítulos de GeneReviews estaban INVENTADos. Ahora el PMID de un GeneReviews NO lo pone la IA: se resuelve de forma determinista a partir de su NBK contra NCBI (PubMed indexa cada capítulo con su accesión Bookshelf → un único PMID). Si no se puede verificar, no se pone PMID (nunca uno inventado). Además, al abrir «Documentos» se corrigen automáticamente los PMID de GeneReviews ya guardados que no coincidían con su NBK.','El editor bibliográfico (protocolos y prenatal) tiene ahora también un campo NBK (GeneReviews) junto a PMID/DOI/PMCID. Y en «Documentos», el botón «✏ Editar» de cada documento muestra y permite corregir sus identificadores (DOI/PMID/PMCID/NBK) con un botón «🔍 Buscar» (que verifica el PMID del NBK contra NCBI).','Los tooltips que se abrían al pulsar (la ⓘ, las etiquetas) ya se cierran al hacer clic fuera — antes se quedaban fijos.','Repositorio: el icono de Drive y el badge de Papers quedan bien alineados. Al «Asignar PDF de Drive» a una referencia sin PDF, si ese PDF ya estaba indexado como otro documento, se FUSIONAN (no se crea un duplicado).']},
   {v:'1.57.1', d:'2026-07-08', c:['Repositorio (Documentos): el icono de Google Drive y el badge de ReadCube Papers aparecen ahora JUNTOS en la fila de acciones (abajo), primero Drive y luego Papers. El botón «✏ Editar / IA» pasa a llamarse simplemente «✏ Editar» (dentro sigue el «✨ Regenerar (IA)»). «Quitar del índice» ahora explica en su tooltip que el documento deja de estar indexado (la IA ya no lo tiene en cuenta ni se puede citar) pero el PDF NO se borra de tu Drive.']},
@@ -3441,14 +3442,22 @@ async function renderDriveList(files){
     // Los identificadores (PMID/DOI/PMCID) y GeneReviews van arriba; el icono de Drive y el badge de Papers van JUNTOS abajo (Drive primero).
     const badges=reg ? (refIdChipsHtml(reg)+geneReviewsBadgeHtml(reg)) : '';
     const papersBadge = reg ? readcubeLibBadgeHtml(reg) : '';
+    // Indicador de indexado COMPLETO: cuánto texto se extrajo. Avisa si está incompleto (versión antigua) o vacío (escaneado).
+    let idxInfo='', needReidx=false;
+    if(reg){
+      const tl=reg.textLen;
+      if(tl===undefined){ idxInfo='<span class="dx-meta hastip" style="color:#e0a53f">⚠ texto sin medir (indexado en versión anterior)<span class="tooltip">Se indexó antes de poder medir el texto; puede estar recortado a las primeras páginas. Pulsa «↻ Re-indexar» para leer el PDF entero.</span></span>'; needReidx=true; }
+      else if(tl<500){ idxInfo='<span class="dx-meta hastip" style="color:#e0704f">⚠ casi sin texto — ¿PDF escaneado?<span class="tooltip">Se extrajeron '+tl+' caracteres. Si es un PDF escaneado (imágenes sin capa de texto) no sirve para el RAG. Necesitaría OCR.</span></span>'; needReidx=true; }
+      else { idxInfo='<span class="dx-meta hastip" style="color:var(--ok)">📖 texto completo: '+(tl>=1000?Math.round(tl/1000)+'k':tl)+' letras'+(reg.pages?(' · '+reg.pages+' pág'):'')+'<span class="tooltip">Caracteres de texto extraídos e indexados para el RAG (búsqueda por relevancia sobre TODO el documento).</span></span>'; }
+    }
     return `<div class="lib-card">
       <div class="nm">${escHtml(cita)}${descTip}</div>
       ${mostrarArchivo?`<div class="meta" title="Nombre del archivo en Google Drive">📄 ${escHtml(f.name)}</div>`:''}
       ${badges?`<div style="margin:2px 0 4px">${badges}</div>`:''}
-      <div class="meta">${(f.modifiedTime||'').slice(0,10)} · ${flag(indexado,'indexado','¿Analizado por IA y en el contexto (RAG) para crear protocolos?')} · ${flag(enBib,'bibliografía','¿Citado por alguna referencia/protocolo?')}</div>
+      <div class="meta">${(f.modifiedTime||'').slice(0,10)} · ${flag(indexado,'indexado','¿Analizado por IA y en el contexto (RAG) para crear protocolos?')} · ${flag(enBib,'bibliografía','¿Citado por alguna referencia/protocolo?')}${idxInfo?' · '+idxInfo:''}</div>
       <div class="acts">
         ${f.webViewLink?`<a class="drive-ico" href="${f.webViewLink}" target="_blank" rel="noopener" title="Abrir en Google Drive">${DRIVE_ICON}</a>`:''}${papersBadge}
-        ${indexado ? `<button class="btn" data-editmeta="${i}" title="Editar el nombre y la descripción a mano, o regenerarlos con IA leyendo el PDF">✏ Editar</button><button class="btn ghost" data-unreg="${reg.id}" title="Quitar del índice (deja de estar indexado: la IA ya no lo tiene en cuenta ni se puede citar; el PDF NO se borra de tu Drive)">Quitar del índice</button>` : `<button class="btn primary" data-index="${i}" title="La IA lo analiza una vez y queda en el contexto para crear protocolos">✨ Indexar (IA)</button>`}
+        ${indexado ? `${needReidx?`<button class="btn" data-reindex="${i}" title="Vuelve a leer el PDF ENTERO y re-analizarlo (completa libros o documentos indexados en una versión anterior)">↻ Re-indexar</button>`:''}<button class="btn" data-editmeta="${i}" title="Editar el nombre y la descripción a mano, o regenerarlos con IA leyendo el PDF">✏ Editar</button><button class="btn ghost" data-unreg="${reg.id}" title="Quitar del índice (deja de estar indexado: la IA ya no lo tiene en cuenta ni se puede citar; el PDF NO se borra de tu Drive)">Quitar del índice</button>` : `<button class="btn primary" data-index="${i}" title="La IA lo analiza una vez y queda en el contexto para crear protocolos">✨ Indexar (IA)</button>`}
       </div>
     </div>`;
   }).join('')+'</div>';
@@ -3459,6 +3468,7 @@ async function renderDriveList(files){
     catch(e){ showToast('Error al indexar: '+e.message); }
   };
   list.querySelectorAll('[data-index]').forEach(b=>b.addEventListener('click', ()=>idx(+b.dataset.index,false)));
+  list.querySelectorAll('[data-reindex]').forEach(b=>b.addEventListener('click', ()=>idx(+b.dataset.reindex,true)));   // re-lee el PDF entero (completa libros / versiones antiguas)
   list.querySelectorAll('[data-editmeta]').forEach(b=>b.addEventListener('click', ()=>editarDocMeta(files[+b.dataset.editmeta], regOf(files[+b.dataset.editmeta]), ()=>renderDriveList(files))));
   list.querySelectorAll('[data-unreg]').forEach(b=>b.addEventListener('click', async ()=>{
     try{ await desregistrarDoc(b.dataset.unreg); showToast('Quitado del índice'); renderDriveList(files); }
@@ -3588,7 +3598,7 @@ function editarDocMeta(f, reg, onDone){
 }
 async function indexarDriveDoc(f, opts){
   opts=opts||{};
-  let pdfText=null; try{ pdfText=await driveDownloadText(f.id, f.modifiedTime, {force:true, onProgress:(i,n)=>{ if(n>50) showToast('Leyendo «'+(f.name||'PDF')+'»… página '+i+'/'+n); }}); }catch(e){}   // force → re-extrae el texto COMPLETO (recupera libros ya indexados truncados)
+  let pdfText=null, pTot=0; try{ pdfText=await driveDownloadText(f.id, f.modifiedTime, {force:true, onProgress:(i,n)=>{ pTot=n; if(n>50) showToast('Leyendo «'+(f.name||'PDF')+'»… página '+i+'/'+n); }}); }catch(e){}   // force → re-extrae el texto COMPLETO (recupera libros ya indexados truncados)
   if(pdfText) await ghSaveDocText(f.id, pdfText);   // guarda el texto COMPLETO → el documento queda en el corpus RAG (indexado UNA vez, permanente)
   const j = anyProvider() ? await analizarDocIA({titulo:f.name, url:f.webViewLink}, pdfText).catch(()=>null) : null;
   // Identificadores: los que dé la IA, y como respaldo los que aparezcan literalmente en el texto del PDF.
@@ -3608,6 +3618,7 @@ async function indexarDriveDoc(f, opts){
   const doc={ titulo: cita||nombreIA||f.name, cita, nombreIA, descripcion:(j&&j.descripcion)||'',
     tipo:(j&&j.tipo)||(esGr?'GeneReviews':''), anio:(j&&j.anio)||(f.modifiedTime||'').slice(0,4),
     doi, pmid, pmcid, nbk, gr_updated:String((j&&j.gr_updated)||'').trim(),
+    textLen:(pdfText||'').length, pages:pTot||0,   // indicador de indexado completo (cuánto texto se extrajo)
     url:f.webViewLink||('drive:'+f.id), enlace:f.webViewLink||('https://drive.google.com/file/d/'+f.id), driveId:f.id, mt:f.modifiedTime||'', iaAnalizado:!!j };
   await registrarDoc(doc);
   return doc;
