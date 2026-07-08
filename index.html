@@ -487,8 +487,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.60.0';
+const APP_VERSION='1.60.1';
 const CHANGELOG=[
+  {v:'1.60.1', d:'2026-07-08', c:['RAG más rápido con bibliotecas grandes: la búsqueda por relevancia (BM25) ahora cachea la tokenización de cada documento (antes re-troceaba y re-tokenizaba TODOS los documentos en cada consulta). Además, si un documento es descomunal (más de 5.000.000 de caracteres, ~2000 páginas) se avisa de que se indexó solo esa parte (antes lo daba por completo).']},
   {v:'1.60.0', d:'2026-07-08', c:['Indicador de indexado completo: cada documento del repositorio muestra ahora cuánto texto se extrajo («📖 texto completo: 340k letras · 412 pág»). Si un documento se indexó en una versión anterior (posible recorte) o es un PDF escaneado sin texto, sale un aviso y un botón «↻ Re-indexar» que vuelve a leer el PDF entero. Así ves de un vistazo qué está indexado de verdad y qué no.']},
   {v:'1.59.0', d:'2026-07-08', c:['Identificadores SEGUROS también para artículos normales (no solo GeneReviews): al indexar o buscar, el DOI/PMID/PMCID se verifican contra NCBI y CrossRef. El DOI es el ancla (fiable si está en el PDF) → de él se derivan el PMID/PMCID reales; un PMID que NCBI no reconoce se descarta (era inventado); un DOI que no existe en CrossRef se descarta. Nunca se muestra un identificador sin verificar.','Libros grandes: se indexa ahora el PDF ENTERO (antes solo las primeras ~40 páginas / 30.000 caracteres). El texto completo se guarda una vez (permanente) y la búsqueda por relevancia (BM25) cubre todo el documento. Al indexar un PDF largo verás el progreso por páginas. Para completar un libro que ya tenías indexado (y había quedado truncado), quítalo del índice y vuelve a indexarlo.']},
   {v:'1.58.0', d:'2026-07-08', c:['CRÍTICO — PMID de GeneReviews SIEMPRE auténtico: los PMID que la IA asignaba a los capítulos de GeneReviews estaban INVENTADos. Ahora el PMID de un GeneReviews NO lo pone la IA: se resuelve de forma determinista a partir de su NBK contra NCBI (PubMed indexa cada capítulo con su accesión Bookshelf → un único PMID). Si no se puede verificar, no se pone PMID (nunca uno inventado). Además, al abrir «Documentos» se corrigen automáticamente los PMID de GeneReviews ya guardados que no coincidían con su NBK.','El editor bibliográfico (protocolos y prenatal) tiene ahora también un campo NBK (GeneReviews) junto a PMID/DOI/PMCID. Y en «Documentos», el botón «✏ Editar» de cada documento muestra y permite corregir sus identificadores (DOI/PMID/PMCID/NBK) con un botón «🔍 Buscar» (que verifica el PMID del NBK contra NCBI).','Los tooltips que se abrían al pulsar (la ⓘ, las etiquetas) ya se cierran al hacer clic fuera — antes se quedaban fijos.','Repositorio: el icono de Drive y el badge de Papers quedan bien alineados. Al «Asignar PDF de Drive» a una referencia sin PDF, si ese PDF ya estaba indexado como otro documento, se FUSIONAN (no se crea un duplicado).']},
@@ -3350,17 +3351,29 @@ async function docChunkTexts(id, mt){
   if(!text) return null;
   return chunkText(text, 1100, 150, 6000);   // BM25 sobre el documento ENTERO (libros grandes incluidos), no solo las primeras páginas
 }
+/* Caché de tokenización por sesión: trocear+tokenizar un documento es lo caro; se hace UNA vez por (id,mt)
+   y se reutiliza en cada búsqueda. Se limpia al re-indexar (indexarDriveDoc). Límite blando de 40 documentos. */
+const _ragTokCache=new Map();
+async function docChunkTok(id, mt){
+  const key=id+':'+(mt||'');
+  if(_ragTokCache.has(key)) return _ragTokCache.get(key);
+  const chs=await docChunkTexts(id, mt); if(!chs||!chs.length) return null;
+  const rec=chs.map(t=>{ const toks=ragTokens(t); const tf={}; toks.forEach(w=>tf[w]=(tf[w]||0)+1); return {t, tf, len:toks.length, set:Object.keys(tf)}; });
+  if(_ragTokCache.size>40){ const first=_ragTokCache.keys().next().value; _ragTokCache.delete(first); }
+  _ragTokCache.set(key, rec);
+  return rec;
+}
 async function ragRetrieveLocal(query, k){
   const list=await ragDocList(); if(!list.length) return {hits:[], sinTexto:[]};
   const all=[]; const sinTexto=[];
-  for(const {id,name,mt} of list){ const chs=await docChunkTexts(id, mt); if(!chs||!chs.length){ sinTexto.push(name); continue; }
-    chs.forEach(t=>all.push({doc:name, t, toks:ragTokens(t)})); }
+  for(const {id,name,mt} of list){ const rec=await docChunkTok(id, mt); if(!rec){ sinTexto.push(name); continue; }
+    rec.forEach(c=>all.push({doc:name, t:c.t, tf:c.tf, len:c.len, set:c.set})); }   // tf/len/set ya calculados (caché)
   if(!all.length) return {hits:[], sinTexto};
-  const N=all.length, df={}; all.forEach(c=>{ new Set(c.toks).forEach(w=>df[w]=(df[w]||0)+1); });
+  const N=all.length, df={}; all.forEach(c=>{ c.set.forEach(w=>df[w]=(df[w]||0)+1); });
   const qset=[...new Set(ragTokens(query))]; const k1=1.5, b=0.75;
-  const avgdl=all.reduce((a,c)=>a+c.toks.length,0)/(N||1) || 1;
-  all.forEach(c=>{ const tf={}; c.toks.forEach(w=>tf[w]=(tf[w]||0)+1); let s=0;
-    qset.forEach(w=>{ const f=tf[w]; if(!f) return; const idf=Math.log(1+(N-(df[w]||0)+0.5)/((df[w]||0)+0.5)); s+=idf*(f*(k1+1))/(f+k1*(1-b+b*c.toks.length/avgdl)); });
+  const avgdl=all.reduce((a,c)=>a+c.len,0)/(N||1) || 1;
+  all.forEach(c=>{ let s=0;
+    qset.forEach(w=>{ const f=c.tf[w]; if(!f) return; const idf=Math.log(1+(N-(df[w]||0)+0.5)/((df[w]||0)+0.5)); s+=idf*(f*(k1+1))/(f+k1*(1-b+b*c.len/avgdl)); });
     c.s=s; });
   const hits=all.filter(c=>c.s>0).sort((a,b)=>b.s-a.s).slice(0, k||6);
   return {hits, sinTexto};
@@ -3446,7 +3459,8 @@ async function renderDriveList(files){
     let idxInfo='', needReidx=false;
     if(reg){
       const tl=reg.textLen;
-      if(tl===undefined){ idxInfo='<span class="dx-meta hastip" style="color:#e0a53f">⚠ texto sin medir (indexado en versión anterior)<span class="tooltip">Se indexó antes de poder medir el texto; puede estar recortado a las primeras páginas. Pulsa «↻ Re-indexar» para leer el PDF entero.</span></span>'; needReidx=true; }
+      if(reg.truncado){ idxInfo='<span class="dx-meta hastip" style="color:#e0a53f">⚠ documento enorme: indexados los primeros ~5M caracteres'+(reg.pages?(' (de '+reg.pages+' pág)'):'')+'<span class="tooltip">Se alcanzó el límite de 5.000.000 de caracteres (~2000 páginas). El resto del documento no está en el RAG. Si necesitas más, pídemelo y subo el límite.</span></span>'; }
+      else if(tl===undefined){ idxInfo='<span class="dx-meta hastip" style="color:#e0a53f">⚠ texto sin medir (indexado en versión anterior)<span class="tooltip">Se indexó antes de poder medir el texto; puede estar recortado a las primeras páginas. Pulsa «↻ Re-indexar» para leer el PDF entero.</span></span>'; needReidx=true; }
       else if(tl<500){ idxInfo='<span class="dx-meta hastip" style="color:#e0704f">⚠ casi sin texto — ¿PDF escaneado?<span class="tooltip">Se extrajeron '+tl+' caracteres. Si es un PDF escaneado (imágenes sin capa de texto) no sirve para el RAG. Necesitaría OCR.</span></span>'; needReidx=true; }
       else { idxInfo='<span class="dx-meta hastip" style="color:var(--ok)">📖 texto completo: '+(tl>=1000?Math.round(tl/1000)+'k':tl)+' letras'+(reg.pages?(' · '+reg.pages+' pág'):'')+'<span class="tooltip">Caracteres de texto extraídos e indexados para el RAG (búsqueda por relevancia sobre TODO el documento).</span></span>'; }
     }
@@ -3618,9 +3632,10 @@ async function indexarDriveDoc(f, opts){
   const doc={ titulo: cita||nombreIA||f.name, cita, nombreIA, descripcion:(j&&j.descripcion)||'',
     tipo:(j&&j.tipo)||(esGr?'GeneReviews':''), anio:(j&&j.anio)||(f.modifiedTime||'').slice(0,4),
     doi, pmid, pmcid, nbk, gr_updated:String((j&&j.gr_updated)||'').trim(),
-    textLen:(pdfText||'').length, pages:pTot||0,   // indicador de indexado completo (cuánto texto se extrajo)
+    textLen:(pdfText||'').length, pages:pTot||0, truncado:((pdfText||'').length>=5000000),   // indicador de indexado completo (cuánto texto se extrajo; truncado si topó el límite de 5M)
     url:f.webViewLink||('drive:'+f.id), enlace:f.webViewLink||('https://drive.google.com/file/d/'+f.id), driveId:f.id, mt:f.modifiedTime||'', iaAnalizado:!!j };
   await registrarDoc(doc);
+  try{ _ragTokCache.clear(); }catch(e){}   // el texto cambió → invalida la caché de tokenización del RAG
   return doc;
 }
 
