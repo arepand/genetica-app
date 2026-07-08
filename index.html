@@ -487,8 +487,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.55.0';
+const APP_VERSION='1.56.0';
 const CHANGELOG=[
+  {v:'1.56.0', d:'2026-07-08', c:['Editores unificados: el editor de síndromes prenatales usa ahora EXACTAMENTE el mismo editor de referencias que los protocolos — varias fuentes por síndrome, cada una con DOI/PMID/PMCID/ReadCube, botón 📁 para vincularla a un documento de tu repositorio, botón 🔍 para buscar sus identificadores con IA, y badges (PubMed/PMC/DOI/Papers/GeneReviews). Antes solo permitía una referencia suelta (título + URL). El editor de referencias es ahora un único componente compartido por ambos (sin código duplicado).','Las referencias de un síndrome prenatal ya no son una sola: se guardan como lista (fuentes) y se muestran todas en la ficha del síndrome.']},
   {v:'1.55.0', d:'2026-07-08', c:['Repositorio más coherente: el nombre visible de cada documento es ahora SIEMPRE su cita bibliográfica (antes unas veces era la cita y otras un nombre-resumen de la IA). El nombre-resumen y el resumen pasan al tooltip (ⓘ), que ahora aparece de forma consistente. Al añadir una referencia sin PDF se guarda solo la cita; el nombre-resumen y el resumen se generan cuando el documento tenga un PDF indexado.','GeneReviews: si un PDF de tu Drive se llama «Bookshelf_NBKxxxx.pdf» se reconoce automáticamente como GeneReviews y se le asigna su NBK. Además, si una referencia de un protocolo y un PDF de Drive son el mismo capítulo de GeneReviews (mismo NBK, aunque el PMID esté mal capturado), se fusionan y desaparece el duplicado de «Referencias sin PDF».','La fecha de «última revisión» de GeneReviews se muestra ahora en español (p. ej. «29 sept 2022»).']},
   {v:'1.54.1', d:'2026-07-08', c:['En los protocolos (y prenatal/seguimiento), la referencia que está en tu repositorio se marca ahora con SOLO el icono de Google Drive (limpio, sin el texto «Abrir en Drive»); el nombre y la descripción salen al pasar el ratón y al pulsarlo se abre en Drive. El badge de ReadCube Papers ya aparece también en el repositorio (Documentos) para los documentos que estén en tu biblioteca importada.']},
   {v:'1.54.0', d:'2026-07-08', c:['Repositorio (Documentos): cada documento indexado muestra en la 1ª línea el NOMBRE CAPTURADO de la referencia (la cita bibliográfica que sacó la IA) y justo debajo el nombre del archivo en Drive (con «📄»), para identificar el fichero. Antes solo se veía uno de los dos. También se añade el badge de GeneReviews en la ficha del repositorio.']},
@@ -3676,6 +3677,85 @@ function replaceHpoInReview(oldId, newId, name){
   const eo=ov.querySelector('#fichaEditOut'); if(eo){ eo.className=''; eo.innerHTML='<div style="color:var(--ok)">✓ HPO '+escHtml(oldId)+(oldId!==newId?' → '+escHtml(newId):'')+' · '+escHtml(name||'')+'. Revisa y guarda.</div>'; }
 }
 
+/* Busca DOI/PMID/PMCID (y NBK/gr_updated si es GeneReviews) de UNA referencia con IA. Solo rellena con coincidencia
+   segura; nunca inventa. Reutilizado por el editor de fuentes de protocolos y el de síndromes prenatales. */
+async function findFuenteIds(f){
+  const isGr=!!geneReviewsInfo(f);
+  const system='Eres bibliotecario científico especializado en identificadores de publicaciones. Te doy el título (y URL si la hay) de UNA referencia bibliográfica. Busca en PubMed/CrossRef/DOI.org su identificador REAL: "doi" (sin el prefijo https://doi.org/), "pmid" (solo dígitos) y/o "pmcid" (formato PMCxxxxxxx). '+(isGr?'Es un capítulo de GeneReviews (NCBI Bookshelf): busca su "nbk" (formato NBKxxxxx) y "gr_updated" (la fecha EXACTA de «Last Update»/«Last Revision» tal cual aparece en la página, p. ej. "September 29, 2022"). ':'')+'Devuelve un identificador SOLO si estás SEGURO de que corresponde EXACTAMENTE a esa referencia (mismo título/autores/año) — déjalo vacío ("") si no encuentras una coincidencia fiable. NUNCA inventes nada. Devuelve SOLO JSON {"doi":"","pmid":"","pmcid":""'+(isGr?',"nbk":"","gr_updated":""':'')+'}.';
+  const user='Referencia: "'+(f.titulo||'')+'"'+(f.url?' — '+f.url:'');
+  const resp=await callLLM({system, user, webSearch:true, maxTokens:500, task:'eval'});
+  return extractJSON(resp)||{};
+}
+/* Editor de referencias bibliográficas REUTILIZABLE (protocolos y síndromes prenatales): varias fuentes con
+   título/URL/año/DOI/PMID/PMCID/ReadCube, badges, botón 📁 (vincular al repositorio) y 🔍 (buscar identificadores).
+   getArr()→array actual; setArr(arr,rerender) persiste. Devuelve {render}. */
+function buildFuentesEditor(container, getArr, setArr){
+  if(!container) return {render:()=>{}};
+  const feIn='padding:4px 7px;border:1px solid var(--line);border-radius:6px;background:var(--panel2);color:var(--ink);font-size:12px';
+  const feBtn='padding:2px 8px;font-size:11px';
+  const A=s=>escHtml(s||'').replace(/"/g,'&quot;');
+  const FU_MAP={tit:'titulo', url:'url', anio:'anio', doi:'doi', pmid:'pmid', pmcid:'pmcid', readcube:'readcube'};
+  function render(){
+    const fu=getArr()||[];
+    container.innerHTML=(fu.length?fu.map((s,fi)=>`
+      <div style="border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0">
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:5px">
+          <input class="fe-i" data-fu="tit" data-fi="${fi}" value="${A(s.titulo)}" placeholder="Título" style="flex:1;font-weight:600;${feIn}">
+          <button type="button" class="btn ghost" data-fu="repo" data-fi="${fi}" title="Vincular esta referencia a un documento de tu repositorio">📁</button>
+          <button type="button" class="btn ghost" data-fu="find" data-fi="${fi}" title="Buscar DOI/PMID/PMCID de esta referencia con IA">🔍</button>
+          <button type="button" class="btn ghost" data-fu="del" data-fi="${fi}" title="Eliminar referencia" style="${feBtn}">🗑</button>
+        </div>
+        <input class="fe-i" data-fu="url" data-fi="${fi}" value="${A(s.url)}" placeholder="URL (https://…)" style="width:100%;box-sizing:border-box;margin-bottom:5px;${feIn}">
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <input class="fe-i" data-fu="anio" data-fi="${fi}" value="${A(s.anio)}" placeholder="Año" style="width:64px;${feIn}">
+          <input class="fe-i" data-fu="doi" data-fi="${fi}" value="${A(s.doi)}" placeholder="DOI (10.xxxx)" style="flex:1;min-width:130px;${feIn}">
+          <input class="fe-i" data-fu="pmid" data-fi="${fi}" value="${A(s.pmid)}" placeholder="PMID" style="width:100px;${feIn}">
+          <input class="fe-i" data-fu="pmcid" data-fi="${fi}" value="${A(s.pmcid)}" placeholder="PMCID" style="width:110px;${feIn}">
+        </div>
+        <input class="fe-i" data-fu="readcube" data-fi="${fi}" value="${A(s.readcube)}" placeholder="Enlace ReadCube Papers (pégalo del artículo: app.readcube.com/library/…/item/…)" style="width:100%;box-sizing:border-box;margin-top:5px;${feIn}">
+        <div style="margin-top:4px">${bibRefHtml(s,{noAssign:true})}</div>
+        <div class="dx-meta" data-fu="findout" data-fi="${fi}" style="margin-top:3px;min-height:14px"></div>
+      </div>`).join(''):'<div class="dx-meta" style="margin-bottom:6px">Sin referencias todavía.</div>')
+      +`<button type="button" class="btn ghost" data-fu="add" style="${feBtn};margin-top:4px">+ referencia</button> <button type="button" class="btn ghost" data-fu="addrepo" style="${feBtn};margin-top:4px">📁 + del repositorio</button>`;
+  }
+  async function findOne(fi){
+    const arr=getArr(); const f=arr&&arr[fi]; if(!f) return;
+    const outEl=container.querySelector('[data-fu="findout"][data-fi="'+fi+'"]');
+    if(!f.titulo){ if(outEl) outEl.textContent='Pon un título antes de buscar.'; return; }
+    if(!anyProvider()){ if(outEl) outEl.textContent='Configura una API key (Claude u OpenAI) en ⚙ Ajustes.'; return; }
+    if(outEl) outEl.textContent='Buscando…';
+    try{
+      const r=await findFuenteIds(f);
+      const arr2=getArr(); if(!arr2||!arr2[fi]) return;   // relee: respeta ediciones concurrentes
+      let hit=false;
+      if(r.doi){ arr2[fi].doi=String(r.doi).trim(); hit=true; }
+      if(r.pmid){ arr2[fi].pmid=String(r.pmid).trim(); hit=true; }
+      if(r.pmcid){ arr2[fi].pmcid=String(r.pmcid).trim(); hit=true; }
+      if(r.nbk){ arr2[fi].nbk=String(r.nbk).trim().toUpperCase(); hit=true; }
+      if(r.gr_updated){ arr2[fi].gr_updated=String(r.gr_updated).trim(); hit=true; }
+      setArr(arr2, true); render();
+      const outEl2=container.querySelector('[data-fu="findout"][data-fi="'+fi+'"]');
+      if(outEl2) outEl2.textContent = hit ? ('✓ Encontrado'+(r.gr_updated?' · GeneReviews revisado '+r.gr_updated:'')+'.') : 'No se encontró ningún dato fiable.';
+    }catch(e){ const o=container.querySelector('[data-fu="findout"][data-fi="'+fi+'"]'); if(o) o.textContent='Error al buscar: '+e.message; }
+  }
+  container.addEventListener('input', e=>{
+    const el=e.target.closest('[data-fu]'); if(!el) return; const fu=el.dataset.fu; if(!FU_MAP[fu]) return;
+    const arr=getArr(); if(!Array.isArray(arr)||!arr[+el.dataset.fi]) return;
+    arr[+el.dataset.fi][FU_MAP[fu]]=el.value;
+    setArr(arr, false);   // sin re-render: conserva el foco mientras se teclea
+  });
+  container.addEventListener('click', e=>{
+    const b=e.target.closest('[data-fu]'); if(!b) return; const fu=b.dataset.fu; if(FU_MAP[fu]) return;
+    if(fu==='find'){ findOne(+b.dataset.fi); return; }
+    let arr=getArr(); if(!Array.isArray(arr)) arr=[];
+    if(fu==='add'){ arr.push({titulo:'', url:'', anio:''}); setArr(arr,true); render(); }
+    else if(fu==='del'){ arr.splice(+b.dataset.fi,1); setArr(arr,true); render(); }
+    else if(fu==='repo'){ const fi=+b.dataset.fi; openRepoPicker(doc=>{ const a=getArr(); if(!a||!a[fi]) return; a[fi]=fuenteFromDoc(doc); setArr(a,true); render(); }); }
+    else if(fu==='addrepo'){ openRepoPicker(doc=>{ let a=getArr(); if(!Array.isArray(a)) a=[]; a.push(fuenteFromDoc(doc)); setArr(a,true); render(); }); }
+  });
+  render();
+  return {render};
+}
 function openFichaReview(f, opts){
   opts=opts||{};
   const ov=document.createElement('div'); ov.className='overlay'; ov.id='fichaReviewOverlay';
@@ -3912,84 +3992,13 @@ function openFichaReview(f, opts){
     });
   }
 
-  // ---- Editor visual de referencias bibliográficas (fuentes): título/url/año/doi/pmid/pmcid, sin tocar JSON ----
+  // ---- Editor visual de referencias bibliográficas (fuentes) — componente compartido con el editor prenatal ----
   const fubox=ov.querySelector('#fuentesEditor'), fuDet=ov.querySelector('#fuDetails');
-  const fuWrite=(j, rerender)=>{ ta.value=JSON.stringify(j,null,2); renderPrev(); if(rerender) renderFuentes(); };
-  function renderFuentes(){
-    if(!fubox) return;
-    const j=feModel();
-    if(!j){ fubox.innerHTML='<div class="dx-meta">El JSON no es válido ahora mismo — corrígelo para editar las referencias.</div>'; return; }
-    const fu=j.fuentes||[];
-    fubox.innerHTML=(fu.length?fu.map((s,fi)=>`
-      <div style="border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0">
-        <div style="display:flex;gap:6px;align-items:center;margin-bottom:5px">
-          <input class="fe-i" data-fu="tit" data-fi="${fi}" value="${A(s.titulo)}" placeholder="Título" style="flex:1;font-weight:600;${feIn}">
-          <button class="btn ghost" data-fu="repo" data-fi="${fi}" title="Vincular esta referencia a un documento de tu repositorio">📁</button>
-          <button class="btn ghost" data-fu="find" data-fi="${fi}" title="Buscar DOI/PMID/PMCID de esta referencia con IA">🔍</button>
-          <button class="btn ghost" data-fu="del" data-fi="${fi}" title="Eliminar referencia" style="${feBtn}">🗑</button>
-        </div>
-        <input class="fe-i" data-fu="url" data-fi="${fi}" value="${A(s.url)}" placeholder="URL (https://…)" style="width:100%;box-sizing:border-box;margin-bottom:5px;${feIn}">
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <input class="fe-i" data-fu="anio" data-fi="${fi}" value="${A(s.anio)}" placeholder="Año" style="width:64px;${feIn}">
-          <input class="fe-i" data-fu="doi" data-fi="${fi}" value="${A(s.doi)}" placeholder="DOI (10.xxxx)" style="flex:1;min-width:130px;${feIn}">
-          <input class="fe-i" data-fu="pmid" data-fi="${fi}" value="${A(s.pmid)}" placeholder="PMID" style="width:100px;${feIn}">
-          <input class="fe-i" data-fu="pmcid" data-fi="${fi}" value="${A(s.pmcid)}" placeholder="PMCID" style="width:110px;${feIn}">
-        </div>
-        <input class="fe-i" data-fu="readcube" data-fi="${fi}" value="${A(s.readcube)}" placeholder="Enlace ReadCube Papers (pégalo del artículo: app.readcube.com/library/…/item/…)" style="width:100%;box-sizing:border-box;margin-top:5px;${feIn}">
-        <div class="dx-meta" data-fu="findout" data-fi="${fi}" style="margin-top:3px;min-height:14px"></div>
-      </div>`).join(''):'<div class="dx-meta" style="margin-bottom:6px">Sin referencias todavía.</div>')
-      +`<button class="btn ghost" data-fu="add" style="${feBtn};margin-top:4px">+ referencia</button> <button class="btn ghost" data-fu="addrepo" style="${feBtn};margin-top:4px">📁 + del repositorio</button>`;
-  }
-  renderFuentes();
+  const fuEditor=buildFuentesEditor(fubox,
+    ()=>{ const j=feModel(); return (j&&Array.isArray(j.fuentes))?j.fuentes:[]; },
+    (arr)=>{ const j=feModel(); if(!j){ showToast('Corrige el JSON antes de editar las referencias'); return; } j.fuentes=arr; ta.value=JSON.stringify(j,null,2); renderPrev(); });
+  const renderFuentes=()=>{ if(fuEditor) fuEditor.render(); };
   if(fuDet) fuDet.addEventListener('toggle', ()=>{ if(fuDet.open) renderFuentes(); });
-  // Busca DOI/PMID/PMCID de UNA sola referencia (botón 🔍 de su fila). Misma exigencia de seguridad que el
-  // buscador en bloque: solo rellena si la IA está SEGURA de la coincidencia exacta; nunca inventa.
-  async function findOneFuente(fi){
-    const j=feModel(); if(!j || !Array.isArray(j.fuentes) || !j.fuentes[fi]) return;
-    const f=j.fuentes[fi];
-    const outEl=fubox.querySelector('[data-fu="findout"][data-fi="'+fi+'"]');
-    if(!f.titulo){ if(outEl) outEl.textContent='Pon un título antes de buscar.'; return; }
-    if(!anyProvider()){ if(outEl) outEl.textContent='Configura una API key (Claude u OpenAI) en ⚙ Ajustes.'; return; }
-    if(outEl) outEl.textContent='Buscando…';
-    try{
-      const isGr=!!geneReviewsInfo(f);   // ¿es un capítulo de GeneReviews? → pedir también NBK + fecha de revisión
-      const system='Eres bibliotecario científico especializado en identificadores de publicaciones. Te doy el título (y URL si la hay) de UNA referencia bibliográfica. Busca en PubMed/CrossRef/DOI.org su identificador REAL: "doi" (sin el prefijo https://doi.org/), "pmid" (solo dígitos) y/o "pmcid" (formato PMCxxxxxxx). '+(isGr?'Es un capítulo de GeneReviews (NCBI Bookshelf): busca su "nbk" (formato NBKxxxxx) y "gr_updated" (la fecha EXACTA de «Last Update»/«Last Revision» tal cual aparece en la página, p. ej. "September 29, 2022"). ':'')+'Devuelve un identificador SOLO si estás SEGURO de que corresponde EXACTAMENTE a esa referencia (mismo título/autores/año) — déjalo vacío ("") si no encuentras una coincidencia fiable. NUNCA inventes nada. Devuelve SOLO JSON {"doi":"","pmid":"","pmcid":""'+(isGr?',"nbk":"","gr_updated":""':'')+'}.';
-      const user='Referencia: "'+f.titulo+'"'+(f.url?' — '+f.url:'');
-      const resp=await callLLM({system, user, webSearch:true, maxTokens:500, task:'eval'});
-      const r=extractJSON(resp)||{};
-      const jj=feModel(); if(!jj || !jj.fuentes || !jj.fuentes[fi]) return;
-      let hit=false;
-      if(r.doi){ jj.fuentes[fi].doi=String(r.doi).trim(); hit=true; }
-      if(r.pmid){ jj.fuentes[fi].pmid=String(r.pmid).trim(); hit=true; }
-      if(r.pmcid){ jj.fuentes[fi].pmcid=String(r.pmcid).trim(); hit=true; }
-      if(r.nbk){ jj.fuentes[fi].nbk=String(r.nbk).trim().toUpperCase(); hit=true; }
-      if(r.gr_updated){ jj.fuentes[fi].gr_updated=String(r.gr_updated).trim(); hit=true; }
-      fuWrite(jj, true);   // re-renderiza: refleja lo encontrado en los campos
-      const outEl2=fubox.querySelector('[data-fu="findout"][data-fi="'+fi+'"]');
-      if(outEl2) outEl2.textContent = hit ? '✓ Encontrado'+(r.gr_updated?' · GeneReviews revisado '+escHtml(r.gr_updated):'')+'.' : 'No se encontró ningún dato fiable.';
-    }catch(e){ if(outEl) outEl.textContent='Error al buscar: '+e.message; }
-  }
-  if(fubox){
-    const FU_MAP={tit:'titulo', url:'url', anio:'anio', doi:'doi', pmid:'pmid', pmcid:'pmcid', readcube:'readcube'};
-    fubox.addEventListener('input', e=>{
-      const el=e.target.closest('[data-fu]'); if(!el) return; const fu=el.dataset.fu;
-      if(!FU_MAP[fu]) return;
-      const j=feModel(); if(!j || !Array.isArray(j.fuentes)) return;
-      j.fuentes[+el.dataset.fi][FU_MAP[fu]]=el.value;
-      fuWrite(j, false); // no re-render: conserva el foco mientras se teclea
-    });
-    fubox.addEventListener('click', e=>{
-      const b=e.target.closest('[data-fu]'); if(!b) return; const fu=b.dataset.fu;
-      if(FU_MAP[fu]) return;
-      if(fu==='find'){ findOneFuente(+b.dataset.fi); return; }
-      const j=feModel(); if(!j){ showToast('Corrige el JSON antes de editar las referencias'); return; }
-      if(!Array.isArray(j.fuentes)) j.fuentes=[];
-      if(fu==='add'){ j.fuentes.push({titulo:'', url:'', anio:''}); fuWrite(j,true); }
-      else if(fu==='del'){ j.fuentes.splice(+b.dataset.fi,1); fuWrite(j,true); }
-      else if(fu==='repo'){ const fi=+b.dataset.fi; openRepoPicker(doc=>{ const jj=feModel(); if(!jj||!jj.fuentes||!jj.fuentes[fi]) return; jj.fuentes[fi]=fuenteFromDoc(doc); fuWrite(jj,true); }); }
-      else if(fu==='addrepo'){ openRepoPicker(doc=>{ const jj=feModel(); if(!jj) return; if(!Array.isArray(jj.fuentes)) jj.fuentes=[]; jj.fuentes.push(fuenteFromDoc(doc)); fuWrite(jj,true); }); }
-    });
-  }
 
   // ---- Resaltado enlazado: seleccionar texto en el JSON resalta la parte correspondiente en la vista previa y el editor visual, y viceversa ----
   const linkScopes=()=>[prev, fbox, enbox, fubox].filter(Boolean);
@@ -5500,6 +5509,8 @@ function openPrenatalSyndEditor(name){
     s=JSON.parse(JSON.stringify(base)); s.ia=false; s._base=true;
     PRENATAL_CUSTOM.syndromes=PRENATAL_CUSTOM.syndromes||[]; PRENATAL_CUSTOM.syndromes.push(s);
   }
+  // Referencias: se unifican con los protocolos (varias fuentes). Migra la «ref» única antigua a fuentes[].
+  s.fuentes = Array.isArray(s.fuentes) ? s.fuentes : ((s.ref && (s.ref.titulo||s.ref.url)) ? [Object.assign({}, s.ref)] : []);
   const ov=document.createElement('div'); ov.className='overlay'; ov.id='prenSynOverlay';
   function render(){
     const findings=(s.findings||[]).map((id,i)=>`<div style="display:flex;align-items:center;gap:6px;padding:2px 0"><span class="hp-chip" style="cursor:default">${escHtml(id)}<span class="hp-nm" data-hpo-nm="${escHtml(id)}"> · …</span></span> <span class="dx-meta">${escHtml(prenatalFindingLabel(id))}</span> <a data-rmf="${i}" title="Quitar hallazgo" style="cursor:pointer;color:var(--danger);margin-left:auto;font-weight:700">✕</a></div>`).join('');
@@ -5511,10 +5522,8 @@ function openPrenatalSyndEditor(name){
         <div class="field" style="width:110px"><label>Mín. hallazgos</label><input id="psMin" type="number" min="1" value="${s.min||2}"></div>
         <div class="field" style="width:120px"><label>ORPHA</label><input id="psOrpha" value="${escA(String(s.orpha||''))}"></div>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <div class="field" style="flex:1;min-width:180px"><label>Referencia · título</label><input id="psRefT" value="${escA((s.ref&&s.ref.titulo)||'')}"></div>
-        <div class="field" style="flex:1;min-width:180px"><label>Referencia · URL</label><input id="psRefU" value="${escA((s.ref&&s.ref.url)||'')}"></div>
-      </div>
+      <h3 style="margin-top:12px;margin-bottom:2px">Referencias <span class="dx-meta" style="font-weight:400">— mismo editor que los protocolos (repositorio 📁, buscar DOI/PMID 🔍, badges)</span></h3>
+      <div id="psFuentes"></div>
       <h3>Hallazgos ecográficos (${(s.findings||[]).length})</h3>
       <div id="psFindings">${findings||'<div class="dx-meta">Sin hallazgos.</div>'}</div>
       <button class="btn ghost" id="psAddF" style="margin-top:6px;padding:3px 9px;font-size:12px">+ hallazgo (buscar HPO)</button>
@@ -5528,13 +5537,14 @@ function openPrenatalSyndEditor(name){
     ov.querySelector('#psCancel').addEventListener('click', ()=>ov.remove());
     ov.querySelectorAll('[data-rmf]').forEach(a=>a.addEventListener('click', ()=>{ s.findings.splice(+a.dataset.rmf,1); render(); }));
     ov.querySelector('#psAddF').addEventListener('click', (e)=>buildHpoSearchPop(e.target, (id,nm)=>{ s.findings=s.findings||[]; if(!s.findings.includes(id)){ s.findings.push(id); ensurePrenatalFinding(id, nm); } render(); }, 'Buscar hallazgo HPO para añadir…'));
+    const psFu=ov.querySelector('#psFuentes'); if(psFu) buildFuentesEditor(psFu, ()=>s.fuentes, (arr)=>{ s.fuentes=arr; });
     ov.querySelector('#psSave').addEventListener('click', async ()=>{
       s.name=ov.querySelector('#psName').value.trim()||s.name;
       s.test=ov.querySelector('#psTest').value.trim();
       s.min=parseInt(ov.querySelector('#psMin').value)||1;
       const orpha=ov.querySelector('#psOrpha').value.trim(); s.orpha=orpha||null;
-      const rt=ov.querySelector('#psRefT').value.trim(), ru=ov.querySelector('#psRefU').value.trim();
-      if(rt||ru) s.ref={titulo:rt, url:ru};
+      s.fuentes=(s.fuentes||[]).filter(f=>f&&(f.titulo||f.url));
+      s.ref=s.fuentes[0]||null;   // compatibilidad con las vistas que aún leen s.ref (primera fuente)
       if(ov.querySelector('#psNoIA').checked){ s.ia=false; s.verified=true; }
       s.validado=!!ov.querySelector('#psValidado').checked;
       bumpPrenatalRev(s, ov.querySelector('#psNota').value);
@@ -6454,7 +6464,10 @@ function prenatalCardHtml(s){
 function verSindromePrenatal(name){
   const s=allPrenatalSyndromes().find(x=>x.name===name); if(!s) return;
   const ov=document.createElement('div'); ov.className='overlay'; ov.id='prenViewOverlay';
-  const link=(s.ref&&s.ref.url)?`<a href="${escHtml(String(s.ref.url)).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">${escHtml(s.ref.titulo||'Bibliografía')}</a>${bibRefHtml(s.ref,{noAssign:true})}`:`<a href="${grLink(s.name)}" target="_blank" rel="noopener">GeneReviews</a>`;
+  const refs=(s.fuentes&&s.fuentes.length)?s.fuentes:(s.ref?[s.ref]:[]);
+  const link=refs.length
+    ? refs.map(r=>`<a href="${escHtml(String(r.url||'#')).replace(/"/g,'&quot;')}" target="_blank" rel="noopener">${escHtml(r.titulo||'Bibliografía')}</a>${bibRefHtml(r,{noAssign:true})}`).join(' · ')
+    : `<a href="${grLink(s.name)}" target="_blank" rel="noopener">GeneReviews</a>`;
   ov.innerHTML=`<div class="modal" style="max-width:560px"><h2>🤰 ${escHtml(s.name)} <span class="pop-badge" style="background:rgba(120,180,255,.15);color:#9cc4ff">prenatal</span></h2>
     <div class="msub">Estudio dirigido: <b>${escHtml(s.test||'—')}</b> · mínimo ${s.min||2} hallazgo(s) para sugerirlo${s.orpha?` · <a href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener">ORPHA:${escHtml(String(s.orpha))}</a>`:''}</div>
     <div style="font-size:13px;line-height:1.7;max-height:50vh;overflow:auto">${(s.findings||[]).map(id=>'· '+escHtml(prenatalFindingLabel(id))+' <span class="hp">'+id+'</span>').join('<br>')||'—'}</div>
