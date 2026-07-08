@@ -487,8 +487,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.57.0';
+const APP_VERSION='1.57.1';
 const CHANGELOG=[
+  {v:'1.57.1', d:'2026-07-08', c:['Repositorio (Documentos): el icono de Google Drive y el badge de ReadCube Papers aparecen ahora JUNTOS en la fila de acciones (abajo), primero Drive y luego Papers. El botón «✏ Editar / IA» pasa a llamarse simplemente «✏ Editar» (dentro sigue el «✨ Regenerar (IA)»). «Quitar del índice» ahora explica en su tooltip que el documento deja de estar indexado (la IA ya no lo tiene en cuenta ni se puede citar) pero el PDF NO se borra de tu Drive.']},
   {v:'1.57.0', d:'2026-07-08', c:['Protocolos: una referencia de GeneReviews ahora SÍ muestra el icono de Google Drive cuando su PDF está en tu repositorio, aunque el PMID capturado no coincida — se reconoce por el NBK del capítulo (antes solo se cruzaba por URL/título y se quedaba sin icono).','Repositorio (Documentos): el botón «Abrir» se sustituye por el logo de Google Drive (icono limpio). Además se unifican los dos botones de IA que hacían casi lo mismo: ahora hay un único «✏ Editar / IA» (abre la ficha del documento, donde puedes corregir el nombre y la descripción a mano o pulsar «✨ Regenerar (IA)» para que la IA los rehaga leyendo el PDF y ver el resultado antes de guardar). Se elimina el «↻ IA» suelto, que regeneraba en silencio y a veces se quedaba sin descripción.']},
   {v:'1.56.0', d:'2026-07-08', c:['Editores unificados: el editor de síndromes prenatales usa ahora EXACTAMENTE el mismo editor de referencias que los protocolos — varias fuentes por síndrome, cada una con DOI/PMID/PMCID/ReadCube, botón 📁 para vincularla a un documento de tu repositorio, botón 🔍 para buscar sus identificadores con IA, y badges (PubMed/PMC/DOI/Papers/GeneReviews). Antes solo permitía una referencia suelta (título + URL). El editor de referencias es ahora un único componente compartido por ambos (sin código duplicado).','Las referencias de un síndrome prenatal ya no son una sola: se guardan como lista (fuentes) y se muestran todas en la ficha del síndrome.']},
   {v:'1.55.0', d:'2026-07-08', c:['Repositorio más coherente: el nombre visible de cada documento es ahora SIEMPRE su cita bibliográfica (antes unas veces era la cita y otras un nombre-resumen de la IA). El nombre-resumen y el resumen pasan al tooltip (ⓘ), que ahora aparece de forma consistente. Al añadir una referencia sin PDF se guarda solo la cita; el nombre-resumen y el resumen se generan cuando el documento tenga un PDF indexado.','GeneReviews: si un PDF de tu Drive se llama «Bookshelf_NBKxxxx.pdf» se reconoce automáticamente como GeneReviews y se le asigna su NBK. Además, si una referencia de un protocolo y un PDF de Drive son el mismo capítulo de GeneReviews (mismo NBK, aunque el PMID esté mal capturado), se fusionan y desaparece el duplicado de «Referencias sin PDF».','La fecha de «última revisión» de GeneReviews se muestra ahora en español (p. ej. «29 sept 2022»).']},
@@ -3361,15 +3362,17 @@ async function renderDriveList(files){
     // 2ª línea (debajo) = el nombre del ARCHIVO en Drive (siempre, para identificar el fichero).
     const cita=(reg && (reg.cita||reg.titulo)) ? (reg.cita||reg.titulo) : f.name;
     const mostrarArchivo = reg && normTxt(cita)!==normTxt(f.name);
-    const badges=reg ? (refIdChipsHtml(reg)+readcubeLibBadgeHtml(reg)+geneReviewsBadgeHtml(reg)) : '';
+    // Los identificadores (PMID/DOI/PMCID) y GeneReviews van arriba; el icono de Drive y el badge de Papers van JUNTOS abajo (Drive primero).
+    const badges=reg ? (refIdChipsHtml(reg)+geneReviewsBadgeHtml(reg)) : '';
+    const papersBadge = reg ? readcubeLibBadgeHtml(reg) : '';
     return `<div class="lib-card">
       <div class="nm">${escHtml(cita)}${descTip}</div>
       ${mostrarArchivo?`<div class="meta" title="Nombre del archivo en Google Drive">📄 ${escHtml(f.name)}</div>`:''}
       ${badges?`<div style="margin:2px 0 4px">${badges}</div>`:''}
       <div class="meta">${(f.modifiedTime||'').slice(0,10)} · ${flag(indexado,'indexado','¿Analizado por IA y en el contexto (RAG) para crear protocolos?')} · ${flag(enBib,'bibliografía','¿Citado por alguna referencia/protocolo?')}</div>
       <div class="acts">
-        ${f.webViewLink?`<a class="drive-ico" href="${f.webViewLink}" target="_blank" rel="noopener" title="Abrir en Google Drive" style="padding:5px 6px">${DRIVE_ICON}</a>`:''}
-        ${indexado ? `<button class="btn" data-editmeta="${i}" title="Editar el nombre y la descripción a mano, o regenerarlos con IA leyendo el PDF">✏ Editar / IA</button><button class="btn ghost" data-unreg="${reg.id}" title="Quitar del índice">Quitar del índice</button>` : `<button class="btn primary" data-index="${i}" title="La IA lo analiza una vez y queda en el contexto para crear protocolos">✨ Indexar (IA)</button>`}
+        ${f.webViewLink?`<a class="drive-ico" href="${f.webViewLink}" target="_blank" rel="noopener" title="Abrir en Google Drive" style="padding:5px 6px">${DRIVE_ICON}</a>`:''}${papersBadge}
+        ${indexado ? `<button class="btn" data-editmeta="${i}" title="Editar el nombre y la descripción a mano, o regenerarlos con IA leyendo el PDF">✏ Editar</button><button class="btn ghost" data-unreg="${reg.id}" title="Quitar del índice (deja de estar indexado: la IA ya no lo tiene en cuenta ni se puede citar; el PDF NO se borra de tu Drive)">Quitar del índice</button>` : `<button class="btn primary" data-index="${i}" title="La IA lo analiza una vez y queda en el contexto para crear protocolos">✨ Indexar (IA)</button>`}
       </div>
     </div>`;
   }).join('')+'</div>';
