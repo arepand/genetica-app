@@ -491,8 +491,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.0.0';
+const APP_VERSION='2.1.0';
 const CHANGELOG=[
+  {v:'2.1.0', d:'2026-07-08', c:['Indicaciones de estudio prenatal EDITABLES: en la pestaña Prenatal, junto a «Indicación de estudio prenatal sugerida», hay ahora un «✎ editar» que abre un editor donde puedes cambiar el texto de cada recomendación (CMA, exoma, etc.) y sus referencias (con el mismo editor del repositorio: 📁 vincular, 🔍 buscar, badges). Las condiciones (nº de anomalías mayores, nucal, marcadores) siguen fijas. Se guarda en tu GitHub y puedes «Restaurar por defecto» cuando quieras. Antes esto solo se podía cambiar en el código.']},
   {v:'2.0.0', d:'2026-07-08', c:['🎉 Ariadna 2.0 — Nuevo apartado «💬 Consultar»: un chat que responde ÚNICAMENTE con la información de tu documentación indexada (tus PDF y libros), citando de qué documento sale cada respuesta. Si algo no está en tu documentación, te lo dice — no usa conocimiento externo. Usa la búsqueda híbrida (palabras + significado). Ejemplo: «¿es indicación de DGP en el SERGAS una pareja portadora de PKD1? ¿según qué documento?». Consume IA (una llamada por pregunta; la redacta Claude).','Referencias sin PDF: al «Asignar/fusionar» un PDF a una referencia, esta desaparece de «Referencias sin PDF» de forma fiable (reconoce la fusión por alias además de por identificadores). Las referencias de la indicación prenatal ahora funcionan igual que el resto: si están en tu repositorio se ligan, y si no, aparecen en «Referencias sin PDF» para asignarles un documento.','Protocolos: retirado el botón «Pestaña nueva» (el deep-link ?proto= sigue funcionando si lo necesitas).','Prenatal: la vista ocupa ahora todo el ancho de la página (sin hueco a la derecha) y los tooltips del panel derecho ya no se cortan.']},
   {v:'1.64.2', d:'2026-07-08', c:['El failover entre proveedores funciona en AMBOS sentidos (si falla Claude → OpenAI, y si falla OpenAI → Claude) y ahora se VE: el aviso «usando IA» de arriba muestra «⚠ X falló · reintentando con Y» cuando ocurre. Excepción: las embeddings (RAG semántico) solo las hace OpenAI, no tienen respaldo posible — si fallan, la búsqueda de tu biblioteca lo avisa en vez de degradar en silencio.']},
   {v:'1.64.1', d:'2026-07-08', c:['Botón global «↻ Re-indexar incompletos (N)» en la cabecera de «Documentos»: vuelve a leer el PDF entero de todos los documentos que se indexaron en una versión anterior (los marcados «texto sin medir», que podían estar recortados a las primeras páginas), de una vez y con progreso.']},
@@ -5799,6 +5800,7 @@ async function loadPrenatalCustom(){
     } }catch(e){}
   }
   await loadPrenatalGa();
+  await loadPrenatalIndCustom();
 }
 /* Capa de SEMANAS DE VISIBILIDAD ecográfica por HALLAZGO (HPO): {hpoId:{min,max}} (sem de gestación).
    Es propiedad del SIGNO, no del síndrome → un solo mapa compartido, persistido en GitHub (prenatal-ga.json). */
@@ -6224,8 +6226,23 @@ const PRENATAL_REFS={
   jogc456:{t:'JOGC Guideline No. 456 · Cribado prenatal de anomalías cromosómicas (2024)', u:'https://www.jogc.com/article/S1701-2163(24)00517-6/abstract', a:'2024'},
   overview:{t:'Santoli et al., Revisión de guías de cribado y diagnóstico prenatal (2025)', u:'https://obgyn.onlinelibrary.wiley.com/doi/full/10.1002/pmf2.70016', a:'2025'}
 };
-function refsHtml(keys){
-  return `<div class="study-src">Fuentes: `+keys.map(k=>{ const r=PRENATAL_REFS[k]; return `<a href="${r.u}" target="_blank" rel="noopener">${escHtml(r.t)} (${r.a})</a>`+bibRefHtml({titulo:r.t, url:r.u, anio:r.a},{noAssign:true}); }).join(' · ')+`</div>`;
+/* Reglas de INDICACIÓN prenatal — editables desde la UI. La CONDICIÓN es fija (clínica estándar); el TEXTO y las
+   REFERENCIAS se pueden editar/actualizar. Usa {n} como marcador del número de hallazgos. */
+const PRENATAL_IND_DEFAULT=[
+  {id:'nucal', cond:'TN aumentada / higroma / hidrops', txt:'<b>TN aumentada / higroma / hidrops</b> → estudio invasivo con <b>cariotipo + QF-PCR</b> y <b>microarray (CMA)</b>. Si normal y persiste, valorar <b>panel de RASopatías</b> (Noonan); en hidrops, considerar <b>exoma</b>.', refKeys:['hydrops','overview','acmgExome']},
+  {id:'multiple', cond:'≥2 anomalías estructurales mayores (multisistémico)', txt:'<b>{n} anomalías estructurales</b> (multisistémico) → <b>microarray (CMA)</b>; si normal, considerar <b>exoma fetal (WES)</b>.', refKeys:['acmgExome','page','mellis']},
+  {id:'single', cond:'1 anomalía estructural mayor', txt:'<b>Anomalía estructural mayor</b> → <b>microarray cromosómico (CMA)</b> de 1.ª línea (± cariotipo/QF-PCR); si normal, valorar exoma.', refKeys:['overview','jogc456','acmgExome']},
+  {id:'markers', cond:'Solo marcadores blandos (sin mayor ni nucal)', txt:'<b>{n} marcador(es) blando(s) aislado(s)</b> → ajustar riesgo de aneuploidía / cribado; estudio invasivo no indicado de rutina si es realmente aislado.', refKeys:['jogc456','overview']}
+];
+let PRENATAL_IND_CUSTOM={};   // { id: {txt, refs:[fuente]} } — overrides persistidos en GitHub (prenatal-indicaciones.json)
+function refKeysToFuentes(keys){ return (keys||[]).map(k=>PRENATAL_REFS[k]).filter(Boolean).map(r=>({titulo:r.t, url:r.u, anio:r.a})); }
+function effectivePrenatalRules(){
+  return PRENATAL_IND_DEFAULT.map(d=>{ const ov=PRENATAL_IND_CUSTOM[d.id]||{};
+    return {id:d.id, cond:d.cond, txt:(ov.txt!=null?ov.txt:d.txt), refs:(ov.refs&&ov.refs.length?ov.refs:refKeysToFuentes(d.refKeys))}; });
+}
+function refsHtml(refs){   // refs = array de fuentes {titulo,url,anio,doi,...} → enlace + estado de repositorio (bibRefHtml)
+  if(!refs||!refs.length) return '';
+  return `<div class="study-src">Fuentes: `+refs.map(r=>`<a href="${escA(r.url||'#')}" target="_blank" rel="noopener">${escHtml(r.titulo||'Fuente')}${r.anio?' ('+escHtml(String(r.anio))+')':''}</a>`+bibRefHtml(r,{noAssign:true})).join(' · ')+`</div>`;
 }
 function prenatalIndicacion(){
   // Excluye los ancestros auto-marcados por jerarquía: NO son una anomalía adicional (es el mismo hallazgo generalizado).
@@ -6234,12 +6251,53 @@ function prenatalIndicacion(){
   const mayores=sel.filter(id=>PRENATAL_TIPO[id]==='mayor').length;
   const marcadores=sel.filter(id=>PRENATAL_TIPO[id]==='marcador').length;
   if(!sel.length) return null;
+  const rules={}; effectivePrenatalRules().forEach(r=>rules[r.id]=r);
+  const mk=(rule, n)=>({html:String((rule&&rule.txt)||'').replace(/\{n\}/g, n), refs:(rule&&rule.refs)||[]});
   const lines=[];
-  if(nucal) lines.push({html:'<b>TN aumentada / higroma / hidrops</b> → estudio invasivo con <b>cariotipo + QF-PCR</b> y <b>microarray (CMA)</b>. Si normal y persiste, valorar <b>panel de RASopatías</b> (Noonan); en hidrops, considerar <b>exoma</b>.', refs:['hydrops','overview','acmgExome']});
-  if(mayores>=2) lines.push({html:`<b>${mayores} anomalías estructurales</b> (multisistémico) → <b>microarray (CMA)</b>; si normal, considerar <b>exoma fetal (WES)</b>.`, refs:['acmgExome','page','mellis']});
-  else if(mayores===1) lines.push({html:'<b>Anomalía estructural mayor</b> → <b>microarray cromosómico (CMA)</b> de 1.ª línea (± cariotipo/QF-PCR); si normal, valorar exoma.', refs:['overview','jogc456','acmgExome']});
-  if(!nucal && !mayores && marcadores) lines.push({html:`<b>${marcadores} marcador(es) blando(s) aislado(s)</b> → ajustar riesgo de aneuploidía / cribado; estudio invasivo no indicado de rutina si es realmente aislado.`, refs:['jogc456','overview']});
+  if(nucal) lines.push(mk(rules.nucal, nucal));
+  if(mayores>=2) lines.push(mk(rules.multiple, mayores));
+  else if(mayores===1) lines.push(mk(rules.single, mayores));
+  if(!nucal && !mayores && marcadores) lines.push(mk(rules.markers, marcadores));
   return {lines, nucal, mayores, marcadores};
+}
+function applyPrenatalIndCustom(c){ PRENATAL_IND_CUSTOM=(c&&c.rules&&typeof c.rules==='object')?c.rules:{}; }
+async function loadPrenatalIndCustom(){
+  try{ const c=JSON.parse(localStorage.getItem('fh_prenatal_ind')); if(c) applyPrenatalIndCustom(c); }catch(e){}
+  if(ghConfigured()){ try{ const r=await ghGetFile('prenatal-indicaciones.json'); if(r.json){ applyPrenatalIndCustom(r.json); try{ localStorage.setItem('fh_prenatal_ind', JSON.stringify({rules:PRENATAL_IND_CUSTOM})); }catch(e){} } }catch(e){} }
+}
+async function persistPrenatalIndCustom(msg){
+  try{ localStorage.setItem('fh_prenatal_ind', JSON.stringify({rules:PRENATAL_IND_CUSTOM})); }catch(e){}
+  if(ghConfigured()){ try{ let sha=null; try{ const ci=await ghGetFile('prenatal-indicaciones.json'); sha=ci.sha; }catch(e){} await ghPutFile('prenatal-indicaciones.json', {rules:PRENATAL_IND_CUSTOM}, msg||'prenatal: editar indicaciones', sha); }catch(e){} }
+}
+/* Editor de las INDICACIONES prenatales: texto + referencias por regla (mismo editor de referencias que el resto). */
+function openPrenatalIndEditor(){
+  const state=effectivePrenatalRules().map(r=>({id:r.id, cond:r.cond, txt:r.txt, refs:JSON.parse(JSON.stringify(r.refs))}));
+  const ov=document.createElement('div'); ov.className='overlay'; ov.id='prenIndOverlay';
+  ov.innerHTML=`<div class="modal" style="max-width:780px"><h2>Editar indicaciones de estudio prenatal</h2>
+    <div class="msub">Para cada situación, edita el <b>texto</b> de la recomendación y sus <b>referencias</b> (con el mismo editor del repositorio: 📁 vincular, 🔍 buscar, badges). Usa <code>{n}</code> donde deba ir el número de hallazgos. Las condiciones son fijas.</div>
+    <div id="piRules"></div>
+    <div class="modal-actions"><button class="btn ghost" id="piCancel">Cancelar</button><button class="btn ghost" id="piReset">Restaurar por defecto</button><button class="btn primary" id="piSave">Guardar</button></div></div>`;
+  document.body.appendChild(ov);
+  const box=ov.querySelector('#piRules');
+  box.innerHTML=state.map((s,i)=>`<div style="border:1px solid var(--line);border-radius:9px;padding:10px;margin:8px 0">
+      <div class="dx-src">${escHtml(s.cond)}</div>
+      <textarea data-pi="${i}" style="width:100%;min-height:60px;box-sizing:border-box;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink);font-size:12.5px;line-height:1.5">${escHtml(s.txt)}</textarea>
+      <div class="dx-meta" style="margin:6px 0 2px">Referencias</div><div id="piRefs${i}"></div>
+    </div>`).join('');
+  state.forEach((s,i)=>{ const c=ov.querySelector('#piRefs'+i); if(c) buildFuentesEditor(c, ()=>s.refs, (arr)=>{ s.refs=arr; }); });
+  box.querySelectorAll('[data-pi]').forEach(t=>t.addEventListener('input', ()=>{ state[+t.dataset.pi].txt=t.value; }));
+  const close=()=>ov.remove();
+  ov.querySelector('#piCancel').addEventListener('click', close);
+  ov.addEventListener('click', e=>{ if(e.target===ov) close(); });
+  ov.querySelector('#piReset').addEventListener('click', async ()=>{ if(!confirm('¿Restaurar las indicaciones por defecto? Se perderán tus ediciones.')) return; PRENATAL_IND_CUSTOM={}; await persistPrenatalIndCustom('prenatal: restaurar indicaciones por defecto'); close(); renderPrenatalInd(); showToast('Indicaciones restauradas'); });
+  ov.querySelector('#piSave').addEventListener('click', async ()=>{
+    const custom={};
+    state.forEach(s=>{ const def=PRENATAL_IND_DEFAULT.find(d=>d.id===s.id); const defRefs=refKeysToFuentes(def.refKeys);
+      const key=arr=>JSON.stringify((arr||[]).map(r=>[normTxt(r.titulo||''), normUrl(r.url||'')]));
+      if(s.txt!==def.txt || key(s.refs)!==key(defRefs)) custom[s.id]={txt:s.txt, refs:(s.refs||[]).filter(r=>r&&(r.titulo||r.url))};
+    });
+    PRENATAL_IND_CUSTOM=custom; await persistPrenatalIndCustom('prenatal: editar indicaciones'); close(); renderPrenatalInd(); showToast('Indicaciones guardadas');
+  });
 }
 let _prenatalRefsEnsured=false;
 function renderPrenatalInd(){
@@ -6248,13 +6306,14 @@ function renderPrenatalInd(){
   const r=prenatalIndicacion();
   if(!r){ box.innerHTML='<div class="empty">Marca hallazgos fetales para sugerir la indicación.</div>'; return; }
   // Unifica con el repositorio: las referencias de la indicación prenatal se añaden como cualquier cita → si no tienen PDF, salen en «Referencias sin PDF»; si lo tienen, se ligan (una vez por sesión).
-  try{ if(!_prenatalRefsEnsured && ghConfigured()){ _prenatalRefsEnsured=true; ensureFuentesInRepo(Object.values(PRENATAL_REFS).map(x=>({titulo:x.t, url:x.u, anio:x.a}))); } }catch(e){}
-  box.innerHTML=`<div class="cart-group-title">Indicación de estudio prenatal sugerida</div>`
+  try{ if(!_prenatalRefsEnsured && ghConfigured()){ _prenatalRefsEnsured=true; const fs=[]; effectivePrenatalRules().forEach(rr=>(rr.refs||[]).forEach(x=>fs.push(x))); ensureFuentesInRepo(fs); } }catch(e){}
+  box.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><div class="cart-group-title">Indicación de estudio prenatal sugerida</div><button class="tip-ai" id="btnPrenatalIndEdit" title="Editar el texto y las referencias de las indicaciones">✎ editar</button></div>`
     +`<div class="dx-meta" style="margin-bottom:6px">${r.mayores} anomalía(s) mayor(es) · ${r.marcadores} marcador(es) · ${r.nucal} nucal/hidrops</div>`
     +r.lines.map(l=>`<div class="study" style="margin:6px 0">${l.html}${refsHtml(l.refs)}</div>`).join('')
     +`<button class="btn" id="btnPrenatalIA" style="margin-top:8px">Evaluar según guías vigentes (web · IA · usa tokens)</button><div id="prenatalIAout"></div>`
     +`<div class="am-note">Orientativo (ISUOG/ACMG/SMFM/SEGO + GeneReviews): no sustituye el juicio clínico ni el consejo prenatal. Los síndromes se sugieren por solapamiento de hallazgos; no son diagnóstico.</div>`;
   const b=box.querySelector('#btnPrenatalIA'); if(b) b.addEventListener('click', evalPrenatalGuias);
+  const be=box.querySelector('#btnPrenatalIndEdit'); if(be) be.addEventListener('click', openPrenatalIndEditor);
 }
 /* Panel derecho (diferencial): síndromes prenatales cuyos CRITERIOS se cumplen con los hallazgos marcados. */
 function renderPrenatalDx(){
