@@ -491,8 +491,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.1.0';
+const APP_VERSION='2.1.1';
 const CHANGELOG=[
+  {v:'2.1.1', d:'2026-07-08', c:['Al fusionar una referencia con su PDF, ahora también se marca la flag «✓ bibliografía» correctamente (antes desaparecía de «sin PDF» pero no se marcaba como citada): la flag reconoce la cita por DOI/PMID/NBK/URL/título/alias, aunque el título del documento difiera del de la cita del protocolo.','Chatbot «Consultar» más conversacional: puedes repreguntar y seguir el hilo — las preguntas de seguimiento tienen en cuenta el contexto de la conversación para recuperar los documentos correctos. Ahora se envía con Enter (Shift+Enter = salto de línea).']},
   {v:'2.1.0', d:'2026-07-08', c:['Indicaciones de estudio prenatal EDITABLES: en la pestaña Prenatal, junto a «Indicación de estudio prenatal sugerida», hay ahora un «✎ editar» que abre un editor donde puedes cambiar el texto de cada recomendación (CMA, exoma, etc.) y sus referencias (con el mismo editor del repositorio: 📁 vincular, 🔍 buscar, badges). Las condiciones (nº de anomalías mayores, nucal, marcadores) siguen fijas. Se guarda en tu GitHub y puedes «Restaurar por defecto» cuando quieras. Antes esto solo se podía cambiar en el código.']},
   {v:'2.0.0', d:'2026-07-08', c:['🎉 Ariadna 2.0 — Nuevo apartado «💬 Consultar»: un chat que responde ÚNICAMENTE con la información de tu documentación indexada (tus PDF y libros), citando de qué documento sale cada respuesta. Si algo no está en tu documentación, te lo dice — no usa conocimiento externo. Usa la búsqueda híbrida (palabras + significado). Ejemplo: «¿es indicación de DGP en el SERGAS una pareja portadora de PKD1? ¿según qué documento?». Consume IA (una llamada por pregunta; la redacta Claude).','Referencias sin PDF: al «Asignar/fusionar» un PDF a una referencia, esta desaparece de «Referencias sin PDF» de forma fiable (reconoce la fusión por alias además de por identificadores). Las referencias de la indicación prenatal ahora funcionan igual que el resto: si están en tu repositorio se ligan, y si no, aparecen en «Referencias sin PDF» para asignarles un documento.','Protocolos: retirado el botón «Pestaña nueva» (el deep-link ?proto= sigue funcionando si lo necesitas).','Prenatal: la vista ocupa ahora todo el ancho de la página (sin hueco a la derecha) y los tooltips del panel derecho ya no se cortan.']},
   {v:'1.64.2', d:'2026-07-08', c:['El failover entre proveedores funciona en AMBOS sentidos (si falla Claude → OpenAI, y si falla OpenAI → Claude) y ahora se VE: el aviso «usando IA» de arriba muestra «⚠ X falló · reintentando con Y» cuando ocurre. Excepción: las embeddings (RAG semántico) solo las hace OpenAI, no tienen respaldo posible — si fallan, la búsqueda de tu biblioteca lo avisa en vez de degradar en silencio.']},
@@ -1484,25 +1485,29 @@ async function enlazarFuenteADoc(fuente, docId){
 let _fichaRefSet=null;
 async function fichaRefSet(){
   if(_fichaRefSet) return _fichaRefSet;
-  const urls=new Set(), titles=new Set();
+  const urls=new Set(), titles=new Set(), fuentes=[];
+  const add=s=>{ if(!s) return; const u=normUrl(s.url); if(u) urls.add(u); const t=normTxt(s.titulo||''); if(t) titles.add(t); fuentes.push(s); };
   try{
     const idx=await getIndex();
     for(const fi of (idx.fichas||[])){
       const f=await getFicha(fi.id);
-      ((f&&f.fuentes)||[]).forEach(s=>{ const u=normUrl(s.url); if(u) urls.add(u); const t=normTxt(s.titulo||''); if(t) titles.add(t); });
+      ((f&&f.fuentes)||[]).forEach(add);
+      ((f&&f.estudio_genetico&&f.estudio_genetico.fuentes)||[]).forEach(add);
     }
   }catch(e){}
   // También las referencias de los síndromes PRENATALES (cuentan como bibliografía citada).
-  try{ allPrenatalSyndromes().forEach(sd=>{ if(sd.ref){ const u=normUrl(sd.ref.url); if(u) urls.add(u); const t=normTxt(sd.ref.titulo||''); if(t) titles.add(t); } }); }catch(e){}
-  _fichaRefSet={urls, titles};
+  try{ allPrenatalSyndromes().forEach(sd=>{ (sd.fuentes||[]).forEach(add); if(sd.ref) add(sd.ref); }); }catch(e){}
+  _fichaRefSet={urls, titles, fuentes};
   return _fichaRefSet;
 }
 function docUsedInFicha(d, refset){
   if(!d||!refset) return false;
   const u1=normUrl(d.url), u2=normUrl(d.enlace), t=normTxt(d.titulo||'');
   if((u1&&refset.urls.has(u1)) || (u2&&refset.urls.has(u2)) || (t&&refset.titles.has(t))) return true;
-  // alias creados al LIGAR una referencia a este documento ('normUrl' o 't:normTxt')
+  // alias creados al LIGAR/FUSIONAR una referencia a este documento ('normUrl' o 't:normTxt')
   for(const a of (d.aliases||[])){ if(typeof a!=='string') continue; if(a.slice(0,2)==='t:'){ if(refset.titles.has(a.slice(2))) return true; } else if(refset.urls.has(a)) return true; }
+  // Emparejamiento completo (doi/pmid/nbk/url/título/alias) con cualquier cita → tras fusionar, la flag «bibliografía» se marca aunque el título difiera.
+  if(refset.fuentes && refset.fuentes.some(f=>docMatchesFuente(d, f))) return true;
   return false;
 }
 async function registrarDoc(doc){
@@ -3527,10 +3532,12 @@ async function retrieveRepo(query, k){
 async function askRepo(q){
   q=(q||'').trim(); if(!q) return;
   if(!anyProvider()){ _chatMsgs.push({role:'assistant', text:'Configura una API key (Claude u OpenAI) en ⚙ Ajustes para poder consultar.'}); renderChatMsgs(); return; }
+  const prevUser=_chatMsgs.filter(m=>m.role==='user').slice(-1)[0];   // para repreguntas: da contexto a la recuperación
   _chatMsgs.push({role:'user', text:q});
   const pend={role:'assistant', text:'', pending:true}; _chatMsgs.push(pend); renderChatMsgs();
   try{
-    const hits=await retrieveRepo(q, 12);
+    const retrievalQuery = prevUser ? (prevUser.text+' \n '+q) : q;   // combina la pregunta anterior + la actual → recupera bien los seguimientos
+    const hits=await retrieveRepo(retrievalQuery, 12);
     if(!hits.length){ pend.pending=false; pend.text='No encuentro nada en tu documentación indexada. Ve a «Documentos», conéctate a Drive e indexa tus PDF (y, si quieres búsqueda por significado, construye el índice semántico).'; renderChatMsgs(); return; }
     const ctx=hits.map((h,i)=>'['+(i+1)+'] '+(h.doc||'documento')+':\n'+String(h.t||'').slice(0,1500)).join('\n\n');
     const hist=_chatMsgs.filter(m=>!m.pending && m.text).slice(-7,-1).map(m=>(m.role==='user'?'Usuario: ':'Asistente: ')+m.text).join('\n');
@@ -3565,14 +3572,14 @@ function renderConsultar(){
     <div class="sec-note" style="max-width:900px;margin:0 auto">Respondo <b>solo</b> con la información de tus PDF y libros indexados (búsqueda híbrida: palabras + significado), citando de qué documento sale. Si algo no está en tu documentación, te lo digo — <b>no uso conocimiento externo</b>. Consume IA (una llamada por pregunta).</div>
     <div id="chatMsgs" style="max-width:900px;margin:12px auto;min-height:180px"></div>
     <div style="max-width:900px;margin:0 auto;display:flex;gap:8px;position:sticky;bottom:0;padding:10px 0;background:var(--bg)">
-      <textarea id="chatInput" rows="2" placeholder="Escribe tu pregunta… (Cmd/Ctrl+Enter para enviar)" style="flex:1;box-sizing:border-box;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);color:var(--ink);font-size:13.5px;resize:vertical"></textarea>
+      <textarea id="chatInput" rows="2" placeholder="Escribe tu pregunta y pulsa Enter (Shift+Enter = salto de línea). Puedes repreguntar y seguir la conversación." style="flex:1;box-sizing:border-box;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);color:var(--ink);font-size:13.5px;resize:vertical"></textarea>
       <button class="btn primary" id="chatSend">Preguntar</button>
     </div>`;
   renderChatMsgs();
   const inp=box.querySelector('#chatInput'), send=box.querySelector('#chatSend');
   const go=()=>{ const q=inp.value; inp.value=''; askRepo(q); };
   if(send) send.addEventListener('click', go);
-  if(inp) inp.addEventListener('keydown', e=>{ if(e.key==='Enter' && (e.metaKey||e.ctrlKey)){ e.preventDefault(); go(); } });
+  if(inp) inp.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); go(); } });   // Enter envía · Shift+Enter salta de línea
   const clr=box.querySelector('#chatClear'); if(clr) clr.addEventListener('click', ()=>{ _chatMsgs=[]; renderChatMsgs(); });
 }
 
