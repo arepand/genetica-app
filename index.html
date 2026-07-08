@@ -485,8 +485,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.53.1';
+const APP_VERSION='1.54.0';
 const CHANGELOG=[
+  {v:'1.54.0', d:'2026-07-08', c:['Repositorio (Documentos): cada documento indexado muestra en la 1ª línea el NOMBRE CAPTURADO de la referencia (la cita bibliográfica que sacó la IA) y justo debajo el nombre del archivo en Drive (con «📄»), para identificar el fichero. Antes solo se veía uno de los dos. También se añade el badge de GeneReviews en la ficha del repositorio.']},
   {v:'1.53.1', d:'2026-07-05', c:['GeneReviews: el botón «🔍» de una referencia (y el buscador en bloque «Buscar DOI/PMID») ahora, si la referencia es un capítulo de GeneReviews, busca también su NBK y la fecha exacta de «Last Update» y la rellena — así el badge «📖 GeneReviews» muestra la fecha de revisión (antes salía «revisión: —» en las referencias antiguas que no la tenían guardada). También busca la fecha de las GeneReviews que ya tienen PMID pero les falta la revisión.']},
   {v:'1.53.0', d:'2026-07-05', c:['Repositorio (fase 3, cierre de la reorientación): en «Documentos» aparece ahora una sección «📑 Referencias sin PDF» con las citas de tus protocolos que aún no tienen un documento en Drive — con sus badges (PMID/DOI/PMCID, ReadCube, GeneReviews) y un botón «📎 Asignar PDF de Drive» para vincularles el fichero (y que pasen a indexarse) o quitarlas.','«Asignar PDF» ya no aparece en NINGUNA vista de solo lectura (protocolo, prenatal, seguimiento, indicación de estudio): la gestión de documentos se hace desde «Documentos» y desde el botón «📁 Repositorio» del editor.']},
   {v:'1.52.0', d:'2026-07-05', c:['Repositorio (fase 2b): al guardar un protocolo, todas sus referencias que aún no estén en el repositorio se añaden solas como entrada bibliográfica (con sus DOI/PMID/PMCID), para que el repositorio sea de verdad la lista única. Las que no tienen fichero PDF aparecen como «referencia externa» (solo badges, sin icono de Drive ni «asignar PDF»); cuando quieras, les asignas el PDF guardándolo en tu Drive.']},
@@ -3319,12 +3320,14 @@ async function renderDriveList(files){
     const indexado=!!reg;
     const enBib=!!(reg && docUsedInFicha(reg, refset));
     const descTip=(reg&&reg.descripcion)?(' <span class="hastip dx-meta" style="color:var(--accent)">ⓘ<span class="tooltip">'+escHtml(reg.titulo||f.name)+(reg.descripcion?'<br><span class=dx-meta>'+escHtml(reg.descripcion)+'</span>':'')+'</span></span>'):'';
-    // Nombre visible = la CITA (título indexado) si el documento está identificado; si no, el nombre del fichero.
-    const hasId=!!(reg && (reg.doi||reg.pmid||reg.pmcid));
-    const nombre=(reg && reg.titulo && hasId) ? reg.titulo : f.name;
-    const badges=reg ? (refIdChipsHtml(reg)+readcubeLibBadgeHtml(reg)) : '';
+    // 1ª línea = la CITA capturada (título indexado por la IA) si existe; si no, el nombre del fichero.
+    // 2ª línea (debajo) = el nombre del ARCHIVO en Drive (siempre, para identificar el fichero).
+    const cita=(reg && reg.titulo) ? reg.titulo : f.name;
+    const mostrarArchivo = reg && reg.titulo && normTxt(reg.titulo)!==normTxt(f.name);
+    const badges=reg ? (refIdChipsHtml(reg)+readcubeLibBadgeHtml(reg)+geneReviewsBadgeHtml(reg)) : '';
     return `<div class="lib-card">
-      <div class="nm">${escHtml(nombre)}${descTip}</div>
+      <div class="nm">${escHtml(cita)}${descTip}</div>
+      ${mostrarArchivo?`<div class="meta" title="Nombre del archivo en Google Drive">📄 ${escHtml(f.name)}</div>`:''}
       ${badges?`<div style="margin:2px 0 4px">${badges}</div>`:''}
       <div class="meta">${(f.modifiedTime||'').slice(0,10)} · ${flag(indexado,'indexado','¿Analizado por IA y en el contexto (RAG) para crear protocolos?')} · ${flag(enBib,'bibliografía','¿Citado por alguna referencia/protocolo?')}</div>
       <div class="acts">
