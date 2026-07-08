@@ -487,8 +487,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.64.0';
+const APP_VERSION='1.64.1';
 const CHANGELOG=[
+  {v:'1.64.1', d:'2026-07-08', c:['Botón global «↻ Re-indexar incompletos (N)» en la cabecera de «Documentos»: vuelve a leer el PDF entero de todos los documentos que se indexaron en una versión anterior (los marcados «texto sin medir», que podían estar recortados a las primeras páginas), de una vez y con progreso.']},
   {v:'1.64.0', d:'2026-07-08', c:['Nuevo modo «Automático» de proveedor de IA (⚙ Ajustes, junto a «Claude primero / OpenAI primero»): con las dos claves puestas, el programa decide por tarea con criterio claro — la autoría de protocolos y las búsquedas/verificaciones las hace Claude (calidad clínica), y la lectura/identificación de documentos el modelo más barato de OpenAI (gpt-4o-mini). Los embeddings del RAG semántico son siempre OpenAI, y en cualquier modo hay failover automático. El panel «🔀 Modelo por operación» de «Estado» muestra ahora el modo activo.','Aclarado el aviso de arriba durante las operaciones: donde ponía «(web)» ahora dice «🌐 buscando en la web» — significa que esa operación está consultando internet en directo (guías, PubMed), no solo tus documentos.']},
   {v:'1.63.0', d:'2026-07-08', c:['Enrutado de modelos y robustez de proveedores: (1) FAILOVER automático — si tu proveedor preferido (Claude por defecto) falla en una llamada, se reintenta al instante con el otro (OpenAI) si tienes su clave puesta. (2) Cada operación usa el modelo adecuado: autoría de protocolos con el más potente (Opus), búsquedas/verificaciones con un modelo medio, y la lectura/identificación de documentos (cuando ya hay texto) con un modelo barato (Haiku) para ahorrar. (3) Nuevo panel «🔀 Modelo por operación» dentro de «Estado» que audita, con tu configuración, qué proveedor y modelo usa cada tarea (y los embeddings de OpenAI para el RAG semántico). Recordatorio: los protocolos los redacta Claude; OpenAI solo hace los embeddings (búsqueda semántica) y el respaldo.']},
   {v:'1.62.0', d:'2026-07-08', c:['El buscador de tu biblioteca (la caja «Buscar en tus documentos») es ahora HÍBRIDO: busca por palabras (BM25) Y por significado (semántico, en los documentos con índice semántico construido), y combina ambos. Así puedes hacer una búsqueda semántica DIRECTA de tu biblioteca, no solo al crear protocolos. Cada resultado indica si vino por «palabras», por «significado» o por ambas.']},
@@ -3543,8 +3544,9 @@ async function renderDriveList(files){
   const flag=(on,label,title)=> `<span class="dx-meta hastip" style="color:${on?'var(--ok)':'var(--ink3)'}">${on?'✓':'–'} ${label}<span class="tooltip">${escHtml(title)}</span></span>`;
   const nIdx=files.filter(f=>!!regOf(f)).length;
   const semPend=files.filter(f=>{ const r=regOf(f); return r && r.textLen>=500 && !(r.embN && r.embMt===r.mt); }).length;   // indexados con texto y sin índice semántico al día
+  const reidxPend=files.filter(f=>{ const r=regOf(f); return r && r.textLen===undefined; }).length;   // indexados en versión anterior (texto sin medir → posiblemente truncado)
   const hasOpenAIkey=!!loadCfg().openaiKey;
-  list.innerHTML=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} PDF(s) · ${nIdx} indexado(s) (en el contexto de la IA) · <span class="dx-meta">flags: indexado (IA) · unido a bibliografía</span>${(hasOpenAIkey&&semPend)?` · <button class="btn" id="docSemAll" style="padding:2px 9px;font-size:11px" title="Construye el índice semántico (embeddings) de todos los documentos que aún no lo tengan. Coste único de céntimos por documento (OpenAI); se guarda en tu GitHub.">🧠 Indexar semántico (${semPend})</button>`:''}</div>
+  list.innerHTML=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} PDF(s) · ${nIdx} indexado(s) (en el contexto de la IA) · <span class="dx-meta">flags: indexado (IA) · unido a bibliografía</span>${reidxPend?` · <button class="btn" id="docReidxAll" style="padding:2px 9px;font-size:11px" title="Vuelve a leer el PDF ENTERO de todos los documentos indexados en una versión anterior (para completar los que quedaron recortados a las primeras páginas).">↻ Re-indexar incompletos (${reidxPend})</button>`:''}${(hasOpenAIkey&&semPend)?` · <button class="btn" id="docSemAll" style="padding:2px 9px;font-size:11px" title="Construye el índice semántico (embeddings) de todos los documentos que aún no lo tengan. Coste único de céntimos por documento (OpenAI); se guarda en tu GitHub.">🧠 Indexar semántico (${semPend})</button>`:''}</div>
     <div class="lib-grid">`+files.map((f,i)=>{
     const reg=regOf(f);
     const indexado=!!reg;
@@ -3600,6 +3602,15 @@ async function renderDriveList(files){
       showToast('Índice semántico listo ('+rec.n+' fragmentos)'); renderDriveList(files);
     }catch(e){ showToast('Error: '+e.message); } };
   list.querySelectorAll('[data-sem]').forEach(b=>b.addEventListener('click', ()=>buildSem(+b.dataset.sem)));
+  const reidxAllBtn=list.querySelector('#docReidxAll');
+  if(reidxAllBtn) reidxAllBtn.addEventListener('click', async ()=>{
+    const pend=files.map((f,i)=>({f,i})).filter(({f})=>{ const r=regOf(f); return r && r.textLen===undefined; });
+    if(!pend.length){ showToast('No hay documentos incompletos'); return; }
+    reidxAllBtn.disabled=true; let done=0, err=0;
+    for(const {f,i} of pend){ showToast('↻ Re-indexando '+(done+1)+'/'+pend.length+'… '+(f.name||'').slice(0,40));
+      try{ await indexarDriveDoc(f); done++; }catch(e){ err++; } }
+    _fichaRefSet=null; showToast('Re-indexado: '+done+' completo(s)'+(err?(' · '+err+' con error'):'')); renderDriveList(files);
+  });
   const semAllBtn=list.querySelector('#docSemAll');
   if(semAllBtn) semAllBtn.addEventListener('click', async ()=>{
     if(!loadCfg().openaiKey){ showToast('Configura tu clave de OpenAI en ⚙ Ajustes para el índice semántico'); return; }
