@@ -371,7 +371,7 @@
   .lib-card:hover{border-color:var(--accent2);}
   .lib-card .nm{font-weight:700; font-size:14px; line-height:1.3;}
   .lib-card .meta{font-size:11px; color:var(--ink3);}
-  .lib-card .acts{display:flex; gap:6px; margin-top:4px; flex-wrap:wrap;}
+  .lib-card .acts{display:flex; gap:6px; margin-top:4px; flex-wrap:wrap; align-items:center;}
   .lib-card .btn{padding:6px 10px; font-size:12px;}
 
   /* Vista/impresión de ficha */
@@ -487,8 +487,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.57.1';
+const APP_VERSION='1.58.0';
 const CHANGELOG=[
+  {v:'1.58.0', d:'2026-07-08', c:['CRÍTICO — PMID de GeneReviews SIEMPRE auténtico: los PMID que la IA asignaba a los capítulos de GeneReviews estaban INVENTADos. Ahora el PMID de un GeneReviews NO lo pone la IA: se resuelve de forma determinista a partir de su NBK contra NCBI (PubMed indexa cada capítulo con su accesión Bookshelf → un único PMID). Si no se puede verificar, no se pone PMID (nunca uno inventado). Además, al abrir «Documentos» se corrigen automáticamente los PMID de GeneReviews ya guardados que no coincidían con su NBK.','El editor bibliográfico (protocolos y prenatal) tiene ahora también un campo NBK (GeneReviews) junto a PMID/DOI/PMCID. Y en «Documentos», el botón «✏ Editar» de cada documento muestra y permite corregir sus identificadores (DOI/PMID/PMCID/NBK) con un botón «🔍 Buscar» (que verifica el PMID del NBK contra NCBI).','Los tooltips que se abrían al pulsar (la ⓘ, las etiquetas) ya se cierran al hacer clic fuera — antes se quedaban fijos.','Repositorio: el icono de Drive y el badge de Papers quedan bien alineados. Al «Asignar PDF de Drive» a una referencia sin PDF, si ese PDF ya estaba indexado como otro documento, se FUSIONAN (no se crea un duplicado).']},
   {v:'1.57.1', d:'2026-07-08', c:['Repositorio (Documentos): el icono de Google Drive y el badge de ReadCube Papers aparecen ahora JUNTOS en la fila de acciones (abajo), primero Drive y luego Papers. El botón «✏ Editar / IA» pasa a llamarse simplemente «✏ Editar» (dentro sigue el «✨ Regenerar (IA)»). «Quitar del índice» ahora explica en su tooltip que el documento deja de estar indexado (la IA ya no lo tiene en cuenta ni se puede citar) pero el PDF NO se borra de tu Drive.']},
   {v:'1.57.0', d:'2026-07-08', c:['Protocolos: una referencia de GeneReviews ahora SÍ muestra el icono de Google Drive cuando su PDF está en tu repositorio, aunque el PMID capturado no coincida — se reconoce por el NBK del capítulo (antes solo se cruzaba por URL/título y se quedaba sin icono).','Repositorio (Documentos): el botón «Abrir» se sustituye por el logo de Google Drive (icono limpio). Además se unifican los dos botones de IA que hacían casi lo mismo: ahora hay un único «✏ Editar / IA» (abre la ficha del documento, donde puedes corregir el nombre y la descripción a mano o pulsar «✨ Regenerar (IA)» para que la IA los rehaga leyendo el PDF y ver el resultado antes de guardar). Se elimina el «↻ IA» suelto, que regeneraba en silencio y a veces se quedaba sin descripción.']},
   {v:'1.56.0', d:'2026-07-08', c:['Editores unificados: el editor de síndromes prenatales usa ahora EXACTAMENTE el mismo editor de referencias que los protocolos — varias fuentes por síndrome, cada una con DOI/PMID/PMCID/ReadCube, botón 📁 para vincularla a un documento de tu repositorio, botón 🔍 para buscar sus identificadores con IA, y badges (PubMed/PMC/DOI/Papers/GeneReviews). Antes solo permitía una referencia suelta (título + URL). El editor de referencias es ahora un único componente compartido por ambos (sin código duplicado).','Las referencias de un síndrome prenatal ya no son una sola: se guardan como lista (fuentes) y se muestran todas en la ficha del síndrome.']},
@@ -1620,7 +1621,7 @@ function inReadcubeLib(s){ return readcubeUrlFor(s)!==null; }
 /* Icono ReadCube Papers (cubo multicolor) — SVG inline, sin red. */
 const RC_ICON='<svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align:-2px" aria-hidden="true"><g><rect x="8.5" y="1" width="8" height="8" rx="1.6" transform="rotate(20 12.5 5)" fill="#ef4d5a"/><rect x="14" y="8" width="8" height="8" rx="1.6" transform="rotate(-14 18 12)" fill="#f5a623"/><rect x="8" y="14" width="8" height="8" rx="1.6" transform="rotate(16 12 18)" fill="#3fb56a"/><rect x="1.5" y="8.5" width="8" height="8" rx="1.6" transform="rotate(-20 5.5 12.5)" fill="#3d8ef2"/><rect x="6.5" y="6.5" width="8.4" height="8.4" rx="1.6" transform="rotate(6 10.7 10.7)" fill="#9b5bd6"/></g></svg>';
 /* Icono Google Drive (triángulo tricolor oficial) — SVG inline, sin red. */
-const DRIVE_ICON='<svg viewBox="0 0 87.3 78" width="13" height="13" style="vertical-align:-2px" aria-hidden="true"><path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8H0c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/><path d="m43.65 25L29.9 1.2c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44C.4 49.9 0 51.45 0 53h27.5z" fill="#00ac47"/><path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5H59.8l5.85 11.5z" fill="#ea4335"/><path d="m43.65 25 13.75-23.8C56.05.4 54.5 0 52.9 0H34.4c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/><path d="m59.8 53H27.5L13.75 76.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/><path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3L43.65 25l16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/></svg>';
+const DRIVE_ICON='<svg viewBox="0 0 87.3 78" width="14" height="14" style="vertical-align:-2px" aria-hidden="true"><path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8H0c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/><path d="m43.65 25L29.9 1.2c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44C.4 49.9 0 51.45 0 53h27.5z" fill="#00ac47"/><path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5H59.8l5.85 11.5z" fill="#ea4335"/><path d="m43.65 25 13.75-23.8C56.05.4 54.5 0 52.9 0H34.4c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/><path d="m59.8 53H27.5L13.75 76.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/><path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3L43.65 25l16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/></svg>';
 /* Insignia «Papers»: icono ReadCube enlazado al artículo si hay URL; si solo hay membresía, icono sin enlace. */
 function readcubeLibBadgeHtml(s){
   const u=readcubeUrlFor(s); if(u===null) return '';
@@ -1687,6 +1688,38 @@ function fmtGrDate(raw){
   const t=Date.parse(s); if(isNaN(t)) return s;         // no parseable → tal cual
   const d=new Date(t), MES=['ene','feb','mar','abr','may','jun','jul','ago','sept','oct','nov','dic'];
   return d.getDate()+' '+MES[d.getMonth()]+' '+d.getFullYear();
+}
+/* PMID AUTÉNTICO de un capítulo de GeneReviews a partir de su NBK, resuelto contra NCBI E-utilities (determinista):
+   PubMed indexa cada capítulo con su accesión Bookshelf → esearch db=pubmed term=NBKxxxx devuelve EXACTAMENTE 1 PMID.
+   NUNCA se adivina: si NCBI no responde o el resultado no es único, se devuelve null (y el que llame NO pondrá PMID).
+   Se cachea en localStorage (fh_nbkpmid) el resultado de las respuestas exitosas; los fallos de red no se cachean. */
+let _nbkPmidCache=null;
+function loadNbkPmidCache(){ if(_nbkPmidCache) return _nbkPmidCache; try{ _nbkPmidCache=JSON.parse(localStorage.getItem('fh_nbkpmid'))||{}; }catch(e){ _nbkPmidCache={}; } return _nbkPmidCache; }
+async function nbkPmid(nbk){
+  nbk=String(nbk||'').toUpperCase().trim(); if(!/^NBK\d+$/.test(nbk)) return null;
+  const c=loadNbkPmidCache(); if(nbk in c) return c[nbk]||null;
+  try{
+    const r=await fetch('https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term='+nbk+'&retmode=json',{cache:'no-store'});
+    if(!r.ok) return null;
+    const j=await r.json(); const res=j&&j.esearchresult; if(!res) return null;
+    const pmid=(String(res.count)==='1' && (res.idlist||[]).length===1) ? String(res.idlist[0]) : '';
+    c[nbk]=pmid; try{ localStorage.setItem('fh_nbkpmid', JSON.stringify(c)); }catch(e){}
+    return pmid||null;
+  }catch(e){ return null; }   // no cachear los fallos de red → se reintenta más tarde
+}
+/* Corrige los PMID de GeneReviews ya guardados en el índice: cada uno DEBE coincidir con su NBK (verificado en NCBI).
+   Solo escribe si algo cambia. Devuelve el índice corregido, o null. */
+async function repairGeneReviewsPmids(idx){
+  idx=idx||cachedDocs()||{docs:[]}; const docs=idx.docs||[];
+  let changed=false;
+  for(const d of docs){
+    const g=geneReviewsInfo(d); if(!g||!g.nbk) continue;
+    const truth=await nbkPmid(g.nbk); if(truth===null) continue;   // no verificable ahora → no tocar
+    if(!d.nbk){ d.nbk=g.nbk; changed=true; }
+    if(String(d.pmid||'')!==truth){ d.pmid=truth; changed=true; }   // corrige el inventado por el auténtico
+  }
+  if(changed){ let sha=null; try{ const ci=await ghGetFile('docs/index.json'); sha=ci.sha; }catch(e){} try{ await ghPutFile('docs/index.json', idx, 'docs: PMID de GeneReviews verificados en NCBI', sha); }catch(e){} cacheDocs(idx); }
+  return changed?idx:null;
 }
 /* Badge propio para GeneReviews: enlace al capítulo + tooltip con NBK y fecha de última revisión + enlace al PDF. */
 function geneReviewsBadgeHtml(s){
@@ -3345,6 +3378,7 @@ async function renderDriveList(files){
   if(!files.length){ list.innerHTML='<div class="placeholder">No se encontraron PDFs en Drive (o en esa carpeta).</div>'; return; }
   let docsIdx=await getDocsIndex();
   try{ const cleaned=await reconcileRepo(docsIdx); if(cleaned) docsIdx=cleaned; }catch(e){}   // quita referencias sin PDF que ya cubre un PDF de Drive
+  try{ const fixed=await repairGeneReviewsPmids(docsIdx); if(fixed) docsIdx=fixed; }catch(e){}   // PMID de GeneReviews SIEMPRE verificados contra su NBK (NCBI)
   const docs=docsIdx.docs||[];
   const refset=await fichaRefSet();
   const regOf=(f)=> docs.find(d=>d.driveId===f.id) || matchDoc({url:f.webViewLink, titulo:f.name}, docs);
@@ -3371,7 +3405,7 @@ async function renderDriveList(files){
       ${badges?`<div style="margin:2px 0 4px">${badges}</div>`:''}
       <div class="meta">${(f.modifiedTime||'').slice(0,10)} · ${flag(indexado,'indexado','¿Analizado por IA y en el contexto (RAG) para crear protocolos?')} · ${flag(enBib,'bibliografía','¿Citado por alguna referencia/protocolo?')}</div>
       <div class="acts">
-        ${f.webViewLink?`<a class="drive-ico" href="${f.webViewLink}" target="_blank" rel="noopener" title="Abrir en Google Drive" style="padding:5px 6px">${DRIVE_ICON}</a>`:''}${papersBadge}
+        ${f.webViewLink?`<a class="drive-ico" href="${f.webViewLink}" target="_blank" rel="noopener" title="Abrir en Google Drive">${DRIVE_ICON}</a>`:''}${papersBadge}
         ${indexado ? `<button class="btn" data-editmeta="${i}" title="Editar el nombre y la descripción a mano, o regenerarlos con IA leyendo el PDF">✏ Editar</button><button class="btn ghost" data-unreg="${reg.id}" title="Quitar del índice (deja de estar indexado: la IA ya no lo tiene en cuenta ni se puede citar; el PDF NO se borra de tu Drive)">Quitar del índice</button>` : `<button class="btn primary" data-index="${i}" title="La IA lo analiza una vez y queda en el contexto para crear protocolos">✨ Indexar (IA)</button>`}
       </div>
     </div>`;
@@ -3430,6 +3464,18 @@ function assignDriveToDoc(docId){
     showToast('Vinculando y leyendo el PDF…');
     try{
       const idx=cachedDocs()||{docs:[]}; const d=(idx.docs||[]).find(x=>String(x.id)===String(docId)); if(!d){ showToast('Referencia no encontrada'); return; }
+      const existing=(idx.docs||[]).find(x=>x.id!==d.id && x.driveId===f.id);
+      if(existing){
+        // Ese PDF YA está indexado como otro documento → FUSIONAR esta referencia en él (no crear un duplicado).
+        existing.aliases=existing.aliases||[];
+        const u=normUrl(d.url), t=normTxt(d.titulo||'');
+        if(u && !existing.aliases.includes(u)) existing.aliases.push(u);
+        if(t && !existing.aliases.includes('t:'+t)) existing.aliases.push('t:'+t);
+        ['doi','pmid','pmcid','nbk','readcube'].forEach(k=>{ if(!existing[k] && d[k]) existing[k]=d[k]; });
+        await desregistrarDoc(d.id); await registrarDoc(existing); _fichaRefSet=null;
+        showToast('Fusionada con el documento ya indexado (era la misma referencia)'); renderExternalRefs(); if(_driveFilesCache.length) renderDriveList(_driveFilesCache);
+        return;
+      }
       d.driveId=f.id; d.enlace=f.webViewLink||('https://drive.google.com/file/d/'+f.id); d.url=d.url||d.enlace; d.mt=f.modifiedTime||''; d.externo=false;
       let txt=null; try{ txt=await driveDownloadText(f.id, f.modifiedTime); }catch(e){}
       if(txt) ghSaveDocText(f.id, txt);
@@ -3448,11 +3494,32 @@ function editarDocMeta(f, reg, onDone){
     <div class="msub">${escHtml(f.name)} — corrige el nombre y la descripción a mano, o pulsa <b>✨ Regenerar (IA)</b> para que la IA los rehaga <b>leyendo el texto real del PDF</b>.</div>
     <div class="field"><label>Nombre</label><input id="emTit" type="text" value="${escHtml(reg.titulo||f.name).replace(/"/g,'&quot;')}"></div>
     <div class="field"><label>Descripción — qué es</label><textarea id="emDesc" style="width:100%;min-height:80px;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">${escHtml(reg.descripcion||'')}</textarea></div>
+    <div class="field"><label>Identificadores <span class="dx-meta">(PMID/DOI/PMCID; NBK para GeneReviews). El PMID de un GeneReviews se verifica contra su NBK.</span></label>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <input id="emDoi" type="text" value="${escHtml(reg.doi||'').replace(/"/g,'&quot;')}" placeholder="DOI (10.xxxx)" style="flex:1;min-width:130px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink);font-size:13px">
+        <input id="emPmid" type="text" value="${escHtml(reg.pmid||'').replace(/"/g,'&quot;')}" placeholder="PMID" style="width:100px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink);font-size:13px">
+        <input id="emPmcid" type="text" value="${escHtml(reg.pmcid||'').replace(/"/g,'&quot;')}" placeholder="PMCID" style="width:110px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink);font-size:13px">
+        <input id="emNbk" type="text" value="${escHtml(reg.nbk||'').replace(/"/g,'&quot;')}" placeholder="NBK (GeneReviews)" style="width:150px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink);font-size:13px">
+        <button class="btn" id="emFind" title="Buscar DOI/PMID/PMCID con IA (y verificar el PMID del NBK contra NCBI)">🔍 Buscar</button>
+      </div></div>
     <div class="test-out" id="emOut"></div>
     <div class="modal-actions"><button class="btn ghost" id="emCancel">Cancelar</button><button class="btn" id="emAi">✨ Regenerar (IA)</button><button class="btn primary" id="emSave">Guardar</button></div></div>`;
   document.body.appendChild(ov);
   const close=()=>ov.remove();
   const tit=ov.querySelector('#emTit'), desc=ov.querySelector('#emDesc'), out=ov.querySelector('#emOut');
+  const emDoi=ov.querySelector('#emDoi'), emPmid=ov.querySelector('#emPmid'), emPmcid=ov.querySelector('#emPmcid'), emNbk=ov.querySelector('#emNbk');
+  ov.querySelector('#emFind').addEventListener('click', async ()=>{
+    if(!anyProvider()){ out.className='test-out bad'; out.textContent='Configura una API key en ⚙ Ajustes.'; return; }
+    out.className='test-out'; out.textContent='Buscando identificadores…';
+    try{
+      const r=await findFuenteIds({titulo:tit.value.trim()||reg.titulo||f.name, url:reg.url||f.webViewLink, nbk:emNbk.value.trim()});
+      if(r.doi) emDoi.value=String(r.doi).trim();
+      if(r.nbk){ emNbk.value=String(r.nbk).trim().toUpperCase(); emPmid.value=String(r.pmid||'').trim(); }   // GeneReviews: pmid verificado contra NCBI (o vacío)
+      else if(r.pmid) emPmid.value=String(r.pmid).trim();
+      if(r.pmcid) emPmcid.value=String(r.pmcid).trim();
+      out.className='test-out ok'; out.textContent='✓ Buscado. Revisa y pulsa Guardar.';
+    }catch(e){ out.className='test-out bad'; out.textContent='Error: '+e.message; }
+  });
   ov.querySelector('#emCancel').addEventListener('click', close);
   ov.addEventListener('click', e=>{ if(e.target===ov) close(); });
   ov.querySelector('#emAi').addEventListener('click', async ()=>{
@@ -3467,8 +3534,14 @@ function editarDocMeta(f, reg, onDone){
   ov.querySelector('#emSave').addEventListener('click', async ()=>{
     if(!ghConfigured()){ out.className='test-out bad'; out.textContent='Configura GitHub en ⚙ Ajustes.'; return; }
     out.className='test-out'; out.textContent='Guardando…';
-    try{ const nt=tit.value.trim()||reg.titulo; await registrarDoc(Object.assign({}, reg, {titulo:nt, cita:nt, descripcion:desc.value.trim()})); close(); showToast('Documento actualizado'); if(onDone) onDone(); }
-    catch(e){ out.className='test-out bad'; out.textContent='Error: '+e.message; }
+    try{
+      const nt=tit.value.trim()||reg.titulo;
+      const nbk=emNbk.value.trim().toUpperCase();
+      let pmid=emPmid.value.trim();
+      if(nbk){ const vp=await nbkPmid(nbk); if(vp!==null) pmid=vp; }   // GeneReviews: el PMID DEBE coincidir con el NBK (verificado en NCBI)
+      await registrarDoc(Object.assign({}, reg, {titulo:nt, cita:nt, descripcion:desc.value.trim(), doi:emDoi.value.trim(), pmid, pmcid:emPmcid.value.trim().toUpperCase(), nbk}));
+      close(); showToast('Documento actualizado'); if(onDone) onDone();
+    }catch(e){ out.className='test-out bad'; out.textContent='Error: '+e.message; }
   });
 }
 async function indexarDriveDoc(f, opts){
@@ -3479,7 +3552,7 @@ async function indexarDriveDoc(f, opts){
   // Identificadores: los que dé la IA, y como respaldo los que aparezcan literalmente en el texto del PDF.
   const txtHead=(pdfText||'').slice(0,4000);
   const doi=String((j&&j.doi)||'').trim()||doiFromUrl(f.webViewLink)||((txtHead.match(/10\.\d{4,9}\/[^\s"'<>,;)\]}]+/)||[])[0]||'').replace(/[).,;]+$/,'');
-  const pmid=String((j&&j.pmid)||'').trim()||((txtHead.match(/pmid[:\s]*?(\d{4,9})/i)||[])[1]||'');
+  let pmid=String((j&&j.pmid)||'').trim()||((txtHead.match(/pmid[:\s]*?(\d{4,9})/i)||[])[1]||'');
   const pmcid=String((j&&j.pmcid)||'').trim()||((txtHead.match(/\bPMC\d{4,9}\b/i)||[])[0]||'').toUpperCase();
   // El NBK también sale del NOMBRE DEL FICHERO (los PDF de GeneReviews de NCBI Bookshelf se llaman Bookshelf_NBKxxxx.pdf).
   const fnameNbk=((String(f.name||'').match(/Bookshelf_(NBK\d{3,7})/i))||[])[1]||'';
@@ -3487,6 +3560,8 @@ async function indexarDriveDoc(f, opts){
   const cita=String((j&&j.cita)||'').trim();           // cita bibliográfica → nombre visible (línea 1)
   const nombreIA=String((j&&j.nombre)||'').trim();     // nombre-resumen corto → tooltip
   const esGr=!!nbk || (j&&j.genereviews===true) || /genereviews/i.test(String((j&&j.tipo)||''));
+  // GeneReviews: el PMID NUNCA se toma de la IA (los inventa); se resuelve el auténtico a partir del NBK contra NCBI, o se deja vacío.
+  if(nbk){ const vp=await nbkPmid(nbk); pmid = (vp!==null) ? vp : ''; }
   const doc={ titulo: cita||nombreIA||f.name, cita, nombreIA, descripcion:(j&&j.descripcion)||'',
     tipo:(j&&j.tipo)||(esGr?'GeneReviews':''), anio:(j&&j.anio)||(f.modifiedTime||'').slice(0,4),
     doi, pmid, pmcid, nbk, gr_updated:String((j&&j.gr_updated)||'').trim(),
@@ -3685,10 +3760,14 @@ function replaceHpoInReview(oldId, newId, name){
    segura; nunca inventa. Reutilizado por el editor de fuentes de protocolos y el de síndromes prenatales. */
 async function findFuenteIds(f){
   const isGr=!!geneReviewsInfo(f);
-  const system='Eres bibliotecario científico especializado en identificadores de publicaciones. Te doy el título (y URL si la hay) de UNA referencia bibliográfica. Busca en PubMed/CrossRef/DOI.org su identificador REAL: "doi" (sin el prefijo https://doi.org/), "pmid" (solo dígitos) y/o "pmcid" (formato PMCxxxxxxx). '+(isGr?'Es un capítulo de GeneReviews (NCBI Bookshelf): busca su "nbk" (formato NBKxxxxx) y "gr_updated" (la fecha EXACTA de «Last Update»/«Last Revision» tal cual aparece en la página, p. ej. "September 29, 2022"). ':'')+'Devuelve un identificador SOLO si estás SEGURO de que corresponde EXACTAMENTE a esa referencia (mismo título/autores/año) — déjalo vacío ("") si no encuentras una coincidencia fiable. NUNCA inventes nada. Devuelve SOLO JSON {"doi":"","pmid":"","pmcid":""'+(isGr?',"nbk":"","gr_updated":""':'')+'}.';
+  const system='Eres bibliotecario científico especializado en identificadores de publicaciones. Te doy el título (y URL si la hay) de UNA referencia bibliográfica. Busca en PubMed/CrossRef/DOI.org su identificador REAL: "doi" (sin el prefijo https://doi.org/), "pmid" (solo dígitos) y/o "pmcid" (formato PMCxxxxxxx). '+(isGr?'Es un capítulo de GeneReviews (NCBI Bookshelf): busca su "nbk" (formato NBKxxxxx) y "gr_updated" (la fecha EXACTA de «Last Update»/«Last Revision» tal cual aparece en la página, p. ej. "September 29, 2022"); DEJA "pmid" VACÍO para GeneReviews (no lo adivines: se deriva del NBK automáticamente).':'')+'Devuelve un identificador SOLO si estás SEGURO de que corresponde EXACTAMENTE a esa referencia (mismo título/autores/año) — déjalo vacío ("") si no encuentras una coincidencia fiable. NUNCA inventes nada. Devuelve SOLO JSON {"doi":"","pmid":"","pmcid":""'+(isGr?',"nbk":"","gr_updated":""':'')+'}.';
   const user='Referencia: "'+(f.titulo||'')+'"'+(f.url?' — '+f.url:'');
   const resp=await callLLM({system, user, webSearch:true, maxTokens:500, task:'eval'});
-  return extractJSON(resp)||{};
+  const r=extractJSON(resp)||{};
+  // GeneReviews: el PMID lo resolvemos SIEMPRE contra NCBI a partir del NBK (la IA los inventa); auténtico o vacío.
+  const nbk=String(r.nbk||(geneReviewsInfo(f)||{}).nbk||'').toUpperCase();
+  if(nbk){ r.nbk=nbk; const vp=await nbkPmid(nbk); r.pmid = (vp!==null) ? vp : ''; }
+  return r;
 }
 /* Editor de referencias bibliográficas REUTILIZABLE (protocolos y síndromes prenatales): varias fuentes con
    título/URL/año/DOI/PMID/PMCID/ReadCube, badges, botón 📁 (vincular al repositorio) y 🔍 (buscar identificadores).
@@ -3698,7 +3777,7 @@ function buildFuentesEditor(container, getArr, setArr){
   const feIn='padding:4px 7px;border:1px solid var(--line);border-radius:6px;background:var(--panel2);color:var(--ink);font-size:12px';
   const feBtn='padding:2px 8px;font-size:11px';
   const A=s=>escHtml(s||'').replace(/"/g,'&quot;');
-  const FU_MAP={tit:'titulo', url:'url', anio:'anio', doi:'doi', pmid:'pmid', pmcid:'pmcid', readcube:'readcube'};
+  const FU_MAP={tit:'titulo', url:'url', anio:'anio', doi:'doi', pmid:'pmid', pmcid:'pmcid', nbk:'nbk', readcube:'readcube'};
   function render(){
     const fu=getArr()||[];
     container.innerHTML=(fu.length?fu.map((s,fi)=>`
@@ -3715,6 +3794,7 @@ function buildFuentesEditor(container, getArr, setArr){
           <input class="fe-i" data-fu="doi" data-fi="${fi}" value="${A(s.doi)}" placeholder="DOI (10.xxxx)" style="flex:1;min-width:130px;${feIn}">
           <input class="fe-i" data-fu="pmid" data-fi="${fi}" value="${A(s.pmid)}" placeholder="PMID" style="width:100px;${feIn}">
           <input class="fe-i" data-fu="pmcid" data-fi="${fi}" value="${A(s.pmcid)}" placeholder="PMCID" style="width:110px;${feIn}">
+          <input class="fe-i" data-fu="nbk" data-fi="${fi}" value="${A(s.nbk)}" placeholder="NBK (GeneReviews)" title="Accesión de NCBI Bookshelf (NBKxxxxx). El PMID de un GeneReviews se deriva del NBK." style="width:130px;${feIn}">
         </div>
         <input class="fe-i" data-fu="readcube" data-fi="${fi}" value="${A(s.readcube)}" placeholder="Enlace ReadCube Papers (pégalo del artículo: app.readcube.com/library/…/item/…)" style="width:100%;box-sizing:border-box;margin-top:5px;${feIn}">
         <div style="margin-top:4px">${bibRefHtml(s,{noAssign:true})}</div>
@@ -3733,9 +3813,9 @@ function buildFuentesEditor(container, getArr, setArr){
       const arr2=getArr(); if(!arr2||!arr2[fi]) return;   // relee: respeta ediciones concurrentes
       let hit=false;
       if(r.doi){ arr2[fi].doi=String(r.doi).trim(); hit=true; }
-      if(r.pmid){ arr2[fi].pmid=String(r.pmid).trim(); hit=true; }
+      if(r.nbk){ arr2[fi].nbk=String(r.nbk).trim().toUpperCase(); arr2[fi].pmid=String(r.pmid||'').trim(); hit=true; }   // GeneReviews: PMID verificado contra NCBI (o vacío) — nunca el inventado por la IA
+      else if(r.pmid){ arr2[fi].pmid=String(r.pmid).trim(); hit=true; }
       if(r.pmcid){ arr2[fi].pmcid=String(r.pmcid).trim(); hit=true; }
-      if(r.nbk){ arr2[fi].nbk=String(r.nbk).trim().toUpperCase(); hit=true; }
       if(r.gr_updated){ arr2[fi].gr_updated=String(r.gr_updated).trim(); hit=true; }
       setArr(arr2, true); render();
       const outEl2=container.querySelector('[data-fu="findout"][data-fi="'+fi+'"]');
@@ -4119,6 +4199,8 @@ function openFichaReview(f, opts){
       const resp=await callLLM({system, user, webSearch:true, maxTokens:2000, task:'eval'});
       const j2=extractJSON(resp);
       const results=(j2&&j2.resultados)||[];
+      // GeneReviews: el PMID SIEMPRE se verifica contra NCBI a partir del NBK (la IA los inventa). Auténtico o vacío.
+      for(const r of results){ if(r && r.nbk){ const vp=await nbkPmid(String(r.nbk).toUpperCase()); r.pmid = (vp!==null) ? vp : ''; r._gr=true; } }
       // Relee ta.value FRESCO ahora que la búsqueda terminó — puede haber cambiado mientras esperábamos.
       const jj=feModel();
       if(!jj){ fout.className='test-out bad'; fout.textContent='El JSON dejó de ser válido mientras se buscaba — no se aplicaron los resultados. Corrígelo y reintenta.'; return; }
@@ -4130,7 +4212,8 @@ function openFichaReview(f, opts){
         const f = list && list[t.idx]; if(!f) return;
         let hit=false;
         if(r.doi){ f.doi=String(r.doi).trim(); hit=true; }
-        if(r.pmid){ f.pmid=String(r.pmid).trim(); hit=true; }
+        if(r._gr){ f.pmid=String(r.pmid||'').trim(); if(r.pmid) hit=true; }   // GeneReviews: PMID verificado contra NCBI (o vacío) — nunca el inventado
+        else if(r.pmid){ f.pmid=String(r.pmid).trim(); hit=true; }
         if(r.pmcid){ f.pmcid=String(r.pmcid).trim(); hit=true; }
         if(r.nbk){ f.nbk=String(r.nbk).trim().toUpperCase(); hit=true; }
         if(r.gr_updated){ f.gr_updated=String(r.gr_updated).trim(); hit=true; }
@@ -6608,7 +6691,7 @@ async function renderFichaView(f){
 /* La IA identifica el documento (por título/URL/DOI, con búsqueda web) → nombre + descripción + tipo.
    Es el "análisis una sola vez": el resultado se guarda en docs/index.json (GitHub). */
 async function analizarDocIA(fuente, pdfText){
-  const sys='Eres documentalista clínico-genético. Identifica el documento bibliográfico. '+(pdfText?'Te doy un EXTRACTO del texto real del PDF: úsalo como FUENTE PRINCIPAL (el nombre del fichero puede inducir a error, NO te fíes de él). ':'Usa el título/URL/DOI y búsqueda web; NO inventes. ')+'Si es un artículo científico, incluye además su "doi" (10.xxxx, sin el prefijo https://doi.org/), "pmid" (solo dígitos) y "pmcid" (PMCxxxxxxx) SIEMPRE que puedas identificarlos con seguridad (déjalos en "" si no); NO los inventes. Si es un capítulo de GeneReviews (NCBI Bookshelf), pon "genereviews":true, su "nbk" (formato NBKxxxxx) y "gr_updated" (la fecha exacta de «Last Update»/«Last Revision», tal cual aparece, p. ej. "September 29, 2022"); GeneReviews también tiene "pmid". Devuelve SOLO JSON {"cita":"cita bibliográfica COMPLETA estilo Vancouver (Autores. Título. Revista Año;vol(núm):págs.; para libro/GeneReviews: Autores. Título. GeneReviews®. Año); déjala en "" si no puedes construirla con seguridad","nombre":"nombre CORTO y claro en español (NO es la cita), sin comillas","descripcion":"1-2 frases: QUÉ es y para qué sirve","tipo":"guía clínica|revisión|artículo original|consenso|libro|base de datos|GeneReviews|otro","anio":"AAAA","doi":"","pmid":"","pmcid":"","genereviews":false,"nbk":"","gr_updated":""}.';
+  const sys='Eres documentalista clínico-genético. Identifica el documento bibliográfico. '+(pdfText?'Te doy un EXTRACTO del texto real del PDF: úsalo como FUENTE PRINCIPAL (el nombre del fichero puede inducir a error, NO te fíes de él). ':'Usa el título/URL/DOI y búsqueda web; NO inventes. ')+'Si es un artículo científico, incluye además su "doi" (10.xxxx, sin el prefijo https://doi.org/), "pmid" (solo dígitos) y "pmcid" (PMCxxxxxxx) SIEMPRE que puedas identificarlos con seguridad (déjalos en "" si no); NO los inventes. Si es un capítulo de GeneReviews (NCBI Bookshelf), pon "genereviews":true, su "nbk" (formato NBKxxxxx) y "gr_updated" (la fecha exacta de «Last Update»/«Last Revision», tal cual aparece, p. ej. "September 29, 2022"); para GeneReviews DEJA "pmid" VACÍO (no lo adivines: se obtiene de forma automática y verificada a partir del NBK). Devuelve SOLO JSON {"cita":"cita bibliográfica COMPLETA estilo Vancouver (Autores. Título. Revista Año;vol(núm):págs.; para libro/GeneReviews: Autores. Título. GeneReviews®. Año); déjala en "" si no puedes construirla con seguridad","nombre":"nombre CORTO y claro en español (NO es la cita), sin comillas","descripcion":"1-2 frases: QUÉ es y para qué sirve","tipo":"guía clínica|revisión|artículo original|consenso|libro|base de datos|GeneReviews|otro","anio":"AAAA","doi":"","pmid":"","pmcid":"","genereviews":false,"nbk":"","gr_updated":""}.';
   const user='Documento: '+JSON.stringify({titulo:fuente.titulo||'', url:fuente.url||'', doi:fuente.doi||''})+(pdfText?('\n\nEXTRACTO DEL PDF (texto real, prioritario):\n'+pdfText.slice(0,6000)):'');
   const resp=await callLLM({system:sys, user, webSearch:!pdfText, maxTokens:700, task:'eval'});  // si hay texto del PDF, no hace falta búsqueda web
   return extractJSON(resp);
@@ -6707,6 +6790,8 @@ function wireGlobalBib(){
 }
 function init(){
   wireGlobalBib();
+  // Los tooltips que se abren con clic (.hastip.open / .info-dot.open) se cierran al pulsar fuera (antes se quedaban fijos).
+  document.addEventListener('click', e=>{ document.querySelectorAll('.hastip.open, .info-dot.open').forEach(el=>{ if(!el.contains(e.target)) el.classList.remove('open'); }); });
   document.getElementById('openSettings').addEventListener('click', openSettings);
   (function(){ const b=document.getElementById('btnOtros'), m=document.getElementById('otrosMenu'); if(b&&m){
     b.addEventListener('click', e=>{ e.stopPropagation(); m.style.display=m.style.display==='none'?'block':'none'; });
