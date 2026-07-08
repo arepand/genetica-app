@@ -487,8 +487,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.61.1';
+const APP_VERSION='1.62.0';
 const CHANGELOG=[
+  {v:'1.62.0', d:'2026-07-08', c:['El buscador de tu biblioteca (la caja «Buscar en tus documentos») es ahora HÍBRIDO: busca por palabras (BM25) Y por significado (semántico, en los documentos con índice semántico construido), y combina ambos. Así puedes hacer una búsqueda semántica DIRECTA de tu biblioteca, no solo al crear protocolos. Cada resultado indica si vino por «palabras», por «significado» o por ambas.']},
   {v:'1.61.1', d:'2026-07-08', c:['Botón global «🧠 Indexar semántico (N)» en la cabecera de «Documentos»: construye de una vez el índice semántico de todos los documentos que aún no lo tengan (los que tienen texto completo), con progreso documento a documento. Requiere clave de OpenAI.']},
   {v:'1.61.0', d:'2026-07-08', c:['Búsqueda SEMÁNTICA (por significado) en tus documentos: cada documento del repositorio tiene ahora un botón «🧠 Indexar semántico». La app trocea el documento, calcula sus embeddings por lotes (con tu clave de OpenAI) y los guarda comprimidos (int8) UNA vez en tu GitHub privado (docs/emb/…), reutilizables siempre. Al crear protocolos, la recuperación es HÍBRIDA: combina la búsqueda por palabras (BM25) con la semántica, así encuentra pasajes relevantes aunque estén escritos con otras palabras (p. ej. «nefropatía quística» cuando buscas «riñón poliquístico»). Coste único de céntimos por documento; requiere una clave de OpenAI en Ajustes (los embeddings solo los ofrece OpenAI, no Claude). Si no construyes el índice semántico, todo sigue funcionando con BM25 como hasta ahora.']},
   {v:'1.60.1', d:'2026-07-08', c:['RAG más rápido con bibliotecas grandes: la búsqueda por relevancia (BM25) ahora cachea la tokenización de cada documento (antes re-troceaba y re-tokenizaba TODOS los documentos en cada consulta). Además, si un documento es descomunal (más de 5.000.000 de caracteres, ~2000 páginas) se avisa de que se indexó solo esa parte (antes lo daba por completo).']},
@@ -3361,15 +3362,22 @@ async function buscarDocsRAG(query){
   const list=await ragDocList(); const nDocs=list.length;
   if(!nDocs){ out.innerHTML='<div class="study-flag">⚠ No tienes documentos indexados todavía. Ve a «Documentos», conéctate a Drive e <b>indexa</b> tus PDF: quedan incorporados automáticamente.</div>'; return; }
   out.innerHTML='<div class="loading">Buscando en tus documentos…</div>';
-  let res; try{ res=await ragRetrieveLocal(query, 6); }
+  // Búsqueda HÍBRIDA: por palabras (BM25, siempre) + por significado (semántica, si hay índice semántico).
+  let res; try{ res=await ragRetrieveLocal(query, 8); }
   catch(e){ out.innerHTML='<div class="err">Error: '+escHtml(e.message)+'</div>'; return; }
-  const {hits, sinTexto}=res;
+  const {hits:lex, sinTexto}=res;
+  let sem=null; try{ sem=await semRetrieve(query, 8); }catch(e){}
+  const keyOf=h=>(h.doc||'')+'|'+String(h.t||'').slice(0,80);
+  const semKeys=new Set((sem||[]).map(keyOf)), lexKeys=new Set((lex||[]).map(keyOf));
+  const hits=mergeRag([sem, lex], 8);
+  hits.forEach(h=>{ const k=keyOf(h); h._src = (semKeys.has(k)&&lexKeys.has(k))?'palabras + significado':(semKeys.has(k)?'significado':'palabras'); });
   if(!hits.length){
     if(sinTexto.length===nDocs){ out.innerHTML='<div class="study-flag">No pude leer el texto de tus documentos. Pulsa <b>Conectar</b> en «Documentos» (el acceso a Drive caduca a la hora) y vuelve a buscar — necesito extraer el texto del PDF una vez.</div>'; return; }
     out.innerHTML='<div class="empty">Sin coincidencias para «'+escHtml(query)+'».'+(sinTexto.length?(' ('+sinTexto.length+' doc sin texto: conecta Drive)'):'')+'</div>'; return;
   }
-  out.innerHTML='<div class="cart-group-title">Fragmentos más relevantes <span class="dx-meta">(en '+(nDocs-sinTexto.length)+'/'+nDocs+' documento(s)'+(sinTexto.length?' · '+sinTexto.length+' sin texto':'')+')</span></div>'
-    + hits.map(h=>`<div class="study" style="margin:6px 0"><div class="dx-meta"><b>${escHtml(h.doc||'doc')}</b> · relevancia ${h.s.toFixed(1)}</div><div style="font-size:12.5px;line-height:1.5">${escHtml(h.t.slice(0,420))}…</div></div>`).join('');
+  const modo = sem ? 'híbrida (palabras + significado)' : 'por palabras (BM25)';
+  out.innerHTML='<div class="cart-group-title">Fragmentos más relevantes <span class="dx-meta">· búsqueda '+modo+' · (en '+(nDocs-sinTexto.length)+'/'+nDocs+' documento(s)'+(sinTexto.length?' · '+sinTexto.length+' sin texto':'')+')</span></div>'
+    + hits.map(h=>`<div class="study" style="margin:6px 0"><div class="dx-meta"><b>${escHtml(h.doc||'doc')}</b>${h._src?' · <span style="color:#9b8cff">'+escHtml(h._src)+'</span>':''}</div><div style="font-size:12.5px;line-height:1.5">${escHtml(h.t.slice(0,420))}…</div></div>`).join('');
 }
 /* ---- RAG LOCAL (BM25, sin API externa: funciona solo con Claude) ----
    Trocea el texto de cada documento marcado RAG y rankea por relevancia léxica. */
@@ -3443,7 +3451,7 @@ function renderDocumentos(){
     </div>
     <div class="sec-note">Al <b>indexar</b> un documento, la IA lo analiza (nombre + resumen) y queda incorporado automáticamente: la IA lo tendrá en cuenta al crear protocolos (RAG) y podrás citarlo. Ya no hay que marcar nada. <b>unido a bibliografía</b> = citado por algún protocolo.</div>
     <div style="display:flex;gap:8px;margin:6px 0 12px">
-      <input id="docSearch" type="text" placeholder="🔎 Buscar en el texto de tus documentos indexados (relevancia, sin coste)…" autocomplete="off" style="flex:1;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
+      <input id="docSearch" type="text" placeholder="🔎 Buscar en tus documentos — por palabras y, si tienes índice semántico, también por significado…" autocomplete="off" style="flex:1;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
       <button class="btn" id="docSearchBtn">Buscar</button>
     </div>
     <div id="docSearchOut"></div>
