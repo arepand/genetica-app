@@ -487,8 +487,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.58.0';
+const APP_VERSION='1.59.0';
 const CHANGELOG=[
+  {v:'1.59.0', d:'2026-07-08', c:['Identificadores SEGUROS también para artículos normales (no solo GeneReviews): al indexar o buscar, el DOI/PMID/PMCID se verifican contra NCBI y CrossRef. El DOI es el ancla (fiable si está en el PDF) → de él se derivan el PMID/PMCID reales; un PMID que NCBI no reconoce se descarta (era inventado); un DOI que no existe en CrossRef se descarta. Nunca se muestra un identificador sin verificar.','Libros grandes: se indexa ahora el PDF ENTERO (antes solo las primeras ~40 páginas / 30.000 caracteres). El texto completo se guarda una vez (permanente) y la búsqueda por relevancia (BM25) cubre todo el documento. Al indexar un PDF largo verás el progreso por páginas. Para completar un libro que ya tenías indexado (y había quedado truncado), quítalo del índice y vuelve a indexarlo.']},
   {v:'1.58.0', d:'2026-07-08', c:['CRÍTICO — PMID de GeneReviews SIEMPRE auténtico: los PMID que la IA asignaba a los capítulos de GeneReviews estaban INVENTADos. Ahora el PMID de un GeneReviews NO lo pone la IA: se resuelve de forma determinista a partir de su NBK contra NCBI (PubMed indexa cada capítulo con su accesión Bookshelf → un único PMID). Si no se puede verificar, no se pone PMID (nunca uno inventado). Además, al abrir «Documentos» se corrigen automáticamente los PMID de GeneReviews ya guardados que no coincidían con su NBK.','El editor bibliográfico (protocolos y prenatal) tiene ahora también un campo NBK (GeneReviews) junto a PMID/DOI/PMCID. Y en «Documentos», el botón «✏ Editar» de cada documento muestra y permite corregir sus identificadores (DOI/PMID/PMCID/NBK) con un botón «🔍 Buscar» (que verifica el PMID del NBK contra NCBI).','Los tooltips que se abrían al pulsar (la ⓘ, las etiquetas) ya se cierran al hacer clic fuera — antes se quedaban fijos.','Repositorio: el icono de Drive y el badge de Papers quedan bien alineados. Al «Asignar PDF de Drive» a una referencia sin PDF, si ese PDF ya estaba indexado como otro documento, se FUSIONAN (no se crea un duplicado).']},
   {v:'1.57.1', d:'2026-07-08', c:['Repositorio (Documentos): el icono de Google Drive y el badge de ReadCube Papers aparecen ahora JUNTOS en la fila de acciones (abajo), primero Drive y luego Papers. El botón «✏ Editar / IA» pasa a llamarse simplemente «✏ Editar» (dentro sigue el «✨ Regenerar (IA)»). «Quitar del índice» ahora explica en su tooltip que el documento deja de estar indexado (la IA ya no lo tiene en cuenta ni se puede citar) pero el PDF NO se borra de tu Drive.']},
   {v:'1.57.0', d:'2026-07-08', c:['Protocolos: una referencia de GeneReviews ahora SÍ muestra el icono de Google Drive cuando su PDF está en tu repositorio, aunque el PMID capturado no coincida — se reconoce por el NBK del capítulo (antes solo se cruzaba por URL/título y se quedaba sin icono).','Repositorio (Documentos): el botón «Abrir» se sustituye por el logo de Google Drive (icono limpio). Además se unifican los dos botones de IA que hacían casi lo mismo: ahora hay un único «✏ Editar / IA» (abre la ficha del documento, donde puedes corregir el nombre y la descripción a mano o pulsar «✨ Regenerar (IA)» para que la IA los rehaga leyendo el PDF y ver el resultado antes de guardar). Se elimina el «↻ IA» suelto, que regeneraba en silencio y a veces se quedaba sin descripción.']},
@@ -1720,6 +1721,41 @@ async function repairGeneReviewsPmids(idx){
   }
   if(changed){ let sha=null; try{ const ci=await ghGetFile('docs/index.json'); sha=ci.sha; }catch(e){} try{ await ghPutFile('docs/index.json', idx, 'docs: PMID de GeneReviews verificados en NCBI', sha); }catch(e){} cacheDocs(idx); }
   return changed?idx:null;
+}
+/* Identificadores de un artículo NORMAL, verificados contra fuentes autoritativas (NUNCA inventados):
+   - esummary(pmid) confirma que el PMID EXISTE y da su DOI/PMCID reales; si el PMID no existe, se descarta.
+   - esearch term=DOI[AID] da el PMID auténtico de un DOI.
+   - CrossRef confirma que un DOI EXISTE (200) o no (404) → descarta DOIs inventados.
+   Estrategia: el DOI (sobre todo si vino del texto del PDF) es el ancla; de él se deriva el PMID/PMCID reales. */
+const _EUTILS='https://eutils.ncbi.nlm.nih.gov/entrez/eutils/';
+async function ncbiSummary(pmid){
+  pmid=String(pmid||'').trim(); if(!/^\d+$/.test(pmid)) return null;
+  try{ const r=await fetch(_EUTILS+'esummary.fcgi?db=pubmed&id='+pmid+'&retmode=json',{cache:'no-store'}); if(!r.ok) return null;
+    const j=await r.json(); const rec=j&&j.result&&j.result[pmid]; if(!rec||rec.error) return null;   // «error» → el PMID no existe (inventado)
+    const aids=rec.articleids||[]; const get=t=>{ const a=aids.find(x=>x.idtype===t); return a?String(a.value):''; };
+    return {doi:get('doi'), pmcid:((get('pmcid').match(/PMC\d+/i)||[''])[0]||'').toUpperCase(), title:rec.title||''};
+  }catch(e){ return null; }
+}
+async function pmidFromDoi(doi){
+  doi=String(doi||'').trim(); if(!doi) return null;
+  try{ const r=await fetch(_EUTILS+'esearch.fcgi?db=pubmed&term='+encodeURIComponent(doi)+'%5BAID%5D&retmode=json',{cache:'no-store'}); if(!r.ok) return null;
+    const j=await r.json(); const res=j&&j.esearchresult; return (res&&String(res.count)==='1'&&(res.idlist||[]).length===1)?String(res.idlist[0]):null;
+  }catch(e){ return null; }
+}
+async function doiExists(doi){
+  doi=String(doi||'').trim(); if(!doi) return null;
+  try{ const r=await fetch('https://api.crossref.org/works/'+encodeURIComponent(doi),{cache:'no-store'}); return r.ok; }catch(e){ return null; }   // null = no se pudo comprobar (red) → no descartar
+}
+/* Devuelve los identificadores VERIFICADOS de un artículo (descarta los inventados, completa el trío desde NCBI). */
+async function verifyArticleIds(ids){
+  let doi=String((ids&&ids.doi)||'').trim(), pmid=String((ids&&ids.pmid)||'').trim(), pmcid=String((ids&&ids.pmcid)||'').trim().toUpperCase();
+  if(!doi && !pmid) return {doi, pmid, pmcid};
+  try{
+    if(doi){ const p=await pmidFromDoi(doi); if(p) pmid=p; }                       // DOI (ancla) → PMID autoritativo
+    if(pmid){ const s=await ncbiSummary(pmid); if(s){ if(s.doi) doi=s.doi; if(s.pmcid) pmcid=s.pmcid; } else { pmid=''; } }   // PMID inexistente → se descarta
+    if(doi && !pmid){ const ex=await doiExists(doi); if(ex===false) doi=''; }       // DOI sin respaldo en PubMed → comprueba que existe (CrossRef); si no, se descarta
+  }catch(e){}
+  return {doi, pmid, pmcid};
 }
 /* Badge propio para GeneReviews: enlace al capítulo + tooltip con NBK y fecha de última revisión + enlace al PDF. */
 function geneReviewsBadgeHtml(s){
@@ -3149,16 +3185,20 @@ function bumpFichaRev(f, nota){
 }
 
 /* Lee el texto de un PDF en el navegador (pdf.js). Devuelve '' si no carga. */
-async function extractPdfTextFromBuffer(buf){
+async function extractPdfTextFromBuffer(buf, opts){
+  opts=opts||{};
+  const maxPages=opts.maxPages||40, maxChars=opts.maxChars||30000, onProgress=opts.onProgress;   // por defecto acotado; el repositorio pide texto COMPLETO
   const lib = window.pdfjsLib;
   if(!lib){ showToast('pdf.js no se cargó (¿sin red?)'); return ''; }
   try{
     lib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     const pdf = await lib.getDocument({data:buf}).promise;
     let text='';
-    const n=Math.min(pdf.numPages, 40);
-    for(let i=1;i<=n;i++){ const page=await pdf.getPage(i); const c=await page.getTextContent(); text += c.items.map(it=>it.str).join(' ')+'\n'; }
-    return text.slice(0, 30000);
+    const n=Math.min(pdf.numPages, maxPages);
+    for(let i=1;i<=n;i++){ const page=await pdf.getPage(i); const c=await page.getTextContent(); text += c.items.map(it=>it.str).join(' ')+'\n';
+      if(onProgress && (i%10===0 || i===n)){ try{ onProgress(i, pdf.numPages); }catch(_){ } }
+      if(text.length>=maxChars) break; }   // corta al llegar al límite de caracteres (bibliotecas enormes)
+    return text.slice(0, maxChars);
   }catch(e){ showToast('No se pudo leer el PDF'); return ''; }
 }
 async function extractPdfText(file){ return extractPdfTextFromBuffer(await file.arrayBuffer()); }
@@ -3215,22 +3255,24 @@ async function driveListPdfs(folderId, recursive){
   return collect(folderId, 0);
 }
 /* Descarga + extrae texto a "markdown" plano, CACHEADO por id+fecha (no re-extrae si no cambió). */
-async function driveDownloadText(fileId, mt){
+async function driveDownloadText(fileId, mt, opts){
+  opts=opts||{};
   const key='fh_doctext_'+fileId;
-  try{ const c=JSON.parse(localStorage.getItem(key)); if(c && c.mt===mt && c.text) return c.text; }catch(e){}
+  if(!opts.force){ try{ const c=JSON.parse(localStorage.getItem(key)); if(c && c.mt===mt && c.text) return c.text; }catch(e){} }   // opts.force → re-extrae (p. ej. para completar un libro ya indexado truncado)
   if(!_driveToken) throw new Error('Conecta con Google Drive primero.');
   const r=await fetch('https://www.googleapis.com/drive/v3/files/'+fileId+'?alt=media', {headers:{Authorization:'Bearer '+_driveToken}});
   if(!r.ok) throw new Error('Drive download '+r.status);
-  const text=await extractPdfTextFromBuffer(await r.arrayBuffer());
-  try{ localStorage.setItem(key, JSON.stringify({mt, text})); }catch(e){}
+  // Repositorio/RAG: texto COMPLETO del documento (libros incluidos), no solo las primeras páginas.
+  const text=await extractPdfTextFromBuffer(await r.arrayBuffer(), Object.assign({maxPages:5000, maxChars:5000000}, opts||{}));
+  try{ localStorage.setItem(key, JSON.stringify({mt, text})); }catch(e){}   // si no cabe en localStorage, se sirve desde GitHub (docs/text)
   return text;
 }
 /* Texto de los documentos marcados para RAG (usa caché; no requiere reconexión si ya indexado). */
 /* ---------- RAG VECTORIAL (embeddings + recuperación por similitud) ----------
    Embeddings vía OpenAI (text-embedding-3-small). Si no hay clave OpenAI, se cae al modo "stuffing". */
 const EMBED_MODEL='text-embedding-3-small';
-function chunkText(text, size, overlap){ size=size||1100; overlap=overlap||150; const t=(text||'').replace(/\s+/g,' ').trim(); const out=[];
-  for(let i=0;i<t.length && out.length<60;i+=(size-overlap)){ out.push(t.slice(i,i+size)); } return out; }
+function chunkText(text, size, overlap, max){ size=size||1100; overlap=overlap||150; max=max||60; const t=(text||'').replace(/\s+/g,' ').trim(); const out=[];
+  for(let i=0;i<t.length && out.length<max;i+=(size-overlap)){ out.push(t.slice(i,i+size)); } return out; }
 function cosine(a,b){ let d=0,na=0,nb=0; for(let i=0;i<a.length;i++){ d+=a[i]*b[i]; na+=a[i]*a[i]; nb+=b[i]*b[i]; } return d/((Math.sqrt(na)*Math.sqrt(nb))||1); }
 async function embedTexts(texts){
   const c=loadCfg(); if(!c.openaiKey) return null;   // Anthropic no ofrece API de embeddings; se requiere OpenAI
@@ -3305,7 +3347,7 @@ async function docChunkTexts(id, mt){
   if(!text && ghConfigured()){ try{ const r=await ghGetFile('docs/text/'+id+'.json'); if(r.json&&r.json.text){ text=r.json.text; try{ localStorage.setItem('fh_doctext_'+id, JSON.stringify({mt, text})); }catch(e){} } }catch(e){} }
   if(!text){ try{ text=await driveDownloadText(id, mt); }catch(e){} if(text) ghSaveDocText(id, text); }   // primera vez: extrae de Drive y lo guarda
   if(!text) return null;
-  return chunkText(text);
+  return chunkText(text, 1100, 150, 6000);   // BM25 sobre el documento ENTERO (libros grandes incluidos), no solo las primeras páginas
 }
 async function ragRetrieveLocal(query, k){
   const list=await ragDocList(); if(!list.length) return {hits:[], sinTexto:[]};
@@ -3546,14 +3588,14 @@ function editarDocMeta(f, reg, onDone){
 }
 async function indexarDriveDoc(f, opts){
   opts=opts||{};
-  let pdfText=null; try{ pdfText=await driveDownloadText(f.id, f.modifiedTime); }catch(e){}   // texto real del PDF → análisis preciso
-  if(pdfText) ghSaveDocText(f.id, pdfText);   // guarda el texto → el documento queda en el corpus RAG (ya no hace falta marcar «RAG»)
+  let pdfText=null; try{ pdfText=await driveDownloadText(f.id, f.modifiedTime, {force:true, onProgress:(i,n)=>{ if(n>50) showToast('Leyendo «'+(f.name||'PDF')+'»… página '+i+'/'+n); }}); }catch(e){}   // force → re-extrae el texto COMPLETO (recupera libros ya indexados truncados)
+  if(pdfText) await ghSaveDocText(f.id, pdfText);   // guarda el texto COMPLETO → el documento queda en el corpus RAG (indexado UNA vez, permanente)
   const j = anyProvider() ? await analizarDocIA({titulo:f.name, url:f.webViewLink}, pdfText).catch(()=>null) : null;
   // Identificadores: los que dé la IA, y como respaldo los que aparezcan literalmente en el texto del PDF.
   const txtHead=(pdfText||'').slice(0,4000);
-  const doi=String((j&&j.doi)||'').trim()||doiFromUrl(f.webViewLink)||((txtHead.match(/10\.\d{4,9}\/[^\s"'<>,;)\]}]+/)||[])[0]||'').replace(/[).,;]+$/,'');
+  let doi=String((j&&j.doi)||'').trim()||doiFromUrl(f.webViewLink)||((txtHead.match(/10\.\d{4,9}\/[^\s"'<>,;)\]}]+/)||[])[0]||'').replace(/[).,;]+$/,'');
   let pmid=String((j&&j.pmid)||'').trim()||((txtHead.match(/pmid[:\s]*?(\d{4,9})/i)||[])[1]||'');
-  const pmcid=String((j&&j.pmcid)||'').trim()||((txtHead.match(/\bPMC\d{4,9}\b/i)||[])[0]||'').toUpperCase();
+  let pmcid=String((j&&j.pmcid)||'').trim()||((txtHead.match(/\bPMC\d{4,9}\b/i)||[])[0]||'').toUpperCase();
   // El NBK también sale del NOMBRE DEL FICHERO (los PDF de GeneReviews de NCBI Bookshelf se llaman Bookshelf_NBKxxxx.pdf).
   const fnameNbk=((String(f.name||'').match(/Bookshelf_(NBK\d{3,7})/i))||[])[1]||'';
   const nbk=(String((j&&j.nbk)||'').trim()||((txtHead.match(/\bNBK\d{3,7}\b/i)||[])[0]||'')||fnameNbk).toUpperCase();
@@ -3562,6 +3604,7 @@ async function indexarDriveDoc(f, opts){
   const esGr=!!nbk || (j&&j.genereviews===true) || /genereviews/i.test(String((j&&j.tipo)||''));
   // GeneReviews: el PMID NUNCA se toma de la IA (los inventa); se resuelve el auténtico a partir del NBK contra NCBI, o se deja vacío.
   if(nbk){ const vp=await nbkPmid(nbk); pmid = (vp!==null) ? vp : ''; }
+  else { try{ const v=await verifyArticleIds({doi, pmid, pmcid}); doi=v.doi; pmid=v.pmid; pmcid=v.pmcid; }catch(e){} }   // artículos normales: DOI/PMID/PMCID verificados (descarta los inventados)
   const doc={ titulo: cita||nombreIA||f.name, cita, nombreIA, descripcion:(j&&j.descripcion)||'',
     tipo:(j&&j.tipo)||(esGr?'GeneReviews':''), anio:(j&&j.anio)||(f.modifiedTime||'').slice(0,4),
     doi, pmid, pmcid, nbk, gr_updated:String((j&&j.gr_updated)||'').trim(),
@@ -3767,6 +3810,7 @@ async function findFuenteIds(f){
   // GeneReviews: el PMID lo resolvemos SIEMPRE contra NCBI a partir del NBK (la IA los inventa); auténtico o vacío.
   const nbk=String(r.nbk||(geneReviewsInfo(f)||{}).nbk||'').toUpperCase();
   if(nbk){ r.nbk=nbk; const vp=await nbkPmid(nbk); r.pmid = (vp!==null) ? vp : ''; }
+  else { try{ const v=await verifyArticleIds({doi:r.doi, pmid:r.pmid, pmcid:r.pmcid}); r.doi=v.doi; r.pmid=v.pmid; r.pmcid=v.pmcid; }catch(e){} }   // artículo normal: identificadores verificados
   return r;
 }
 /* Editor de referencias bibliográficas REUTILIZABLE (protocolos y síndromes prenatales): varias fuentes con
