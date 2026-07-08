@@ -487,8 +487,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.64.1';
+const APP_VERSION='1.64.2';
 const CHANGELOG=[
+  {v:'1.64.2', d:'2026-07-08', c:['El failover entre proveedores funciona en AMBOS sentidos (si falla Claude → OpenAI, y si falla OpenAI → Claude) y ahora se VE: el aviso «usando IA» de arriba muestra «⚠ X falló · reintentando con Y» cuando ocurre. Excepción: las embeddings (RAG semántico) solo las hace OpenAI, no tienen respaldo posible — si fallan, la búsqueda de tu biblioteca lo avisa en vez de degradar en silencio.']},
   {v:'1.64.1', d:'2026-07-08', c:['Botón global «↻ Re-indexar incompletos (N)» en la cabecera de «Documentos»: vuelve a leer el PDF entero de todos los documentos que se indexaron en una versión anterior (los marcados «texto sin medir», que podían estar recortados a las primeras páginas), de una vez y con progreso.']},
   {v:'1.64.0', d:'2026-07-08', c:['Nuevo modo «Automático» de proveedor de IA (⚙ Ajustes, junto a «Claude primero / OpenAI primero»): con las dos claves puestas, el programa decide por tarea con criterio claro — la autoría de protocolos y las búsquedas/verificaciones las hace Claude (calidad clínica), y la lectura/identificación de documentos el modelo más barato de OpenAI (gpt-4o-mini). Los embeddings del RAG semántico son siempre OpenAI, y en cualquier modo hay failover automático. El panel «🔀 Modelo por operación» de «Estado» muestra ahora el modo activo.','Aclarado el aviso de arriba durante las operaciones: donde ponía «(web)» ahora dice «🌐 buscando en la web» — significa que esa operación está consultando internet en directo (guías, PubMed), no solo tus documentos.']},
   {v:'1.63.0', d:'2026-07-08', c:['Enrutado de modelos y robustez de proveedores: (1) FAILOVER automático — si tu proveedor preferido (Claude por defecto) falla en una llamada, se reintenta al instante con el otro (OpenAI) si tienes su clave puesta. (2) Cada operación usa el modelo adecuado: autoría de protocolos con el más potente (Opus), búsquedas/verificaciones con un modelo medio, y la lectura/identificación de documentos (cuando ya hay texto) con un modelo barato (Haiku) para ahorrar. (3) Nuevo panel «🔀 Modelo por operación» dentro de «Estado» que audita, con tu configuración, qué proveedor y modelo usa cada tarea (y los embeddings de OpenAI para el RAG semántico). Recordatorio: los protocolos los redacta Claude; OpenAI solo hace los embeddings (búsqueda semántica) y el respaldo.']},
@@ -1897,6 +1898,9 @@ function aiBusyStart(label){
   if(!document.getElementById('aiSpStyle')){ const st=document.createElement('style'); st.id='aiSpStyle'; st.textContent='@keyframes aisp{to{transform:rotate(360deg)}}'; document.head.appendChild(st); }
 }
 function aiBusyEnd(){ _aiBusyN=Math.max(0,_aiBusyN-1); if(_aiBusyN===0){ const el=document.getElementById('aiBusy'); if(el) el.style.display='none'; } }
+/* Actualiza el TEXTO del aviso «usando IA» sin tocar el contador (p. ej. al hacer failover a otro proveedor). */
+function aiBusyUpdate(label){ const el=document.getElementById('aiBusy'); if(!el) return; el.innerHTML='<span style="width:12px;height:12px;border:2px solid var(--accent);border-top-color:transparent;border-radius:50%;display:inline-block;animation:aisp .7s linear infinite"></span> 🤖 '+escHtml(label||'trabajando…')+(AI_DEBUG?' <span class="dx-meta">· debug</span>':''); }
+function provName(p){ return p==='anthropic'?'Claude':'OpenAI'; }
 function descargarAiLog(){
   if(!AI_LOG.length){ showToast('El log IA está vacío (actívalo con Debug).'); return; }
   const txt=AI_LOG.map((e,i)=>`### ${i+1}. ${e.t} · ${AI_TASKS[e.task]||e.task||'?'} · ${e.ms||'?'} ms\n--- SYSTEM ---\n${e.system||''}\n--- USER ---\n${e.user||''}\n${e.reasoning?('--- RAZONAMIENTO ---\n'+e.reasoning+'\n'):''}--- RESPUESTA ---\n${e.response||e.error||''}\n`).join('\n==================================================\n\n');
@@ -1969,7 +1973,13 @@ async function _callLLMImpl(opts, _dbg){
   let lastErr=null;
   for(let i=0;i<avail.length;i++){ const p=avail[i];
     try{ return await _callProvider(p, opts, _dbg); }
-    catch(e){ lastErr=e; if(i<avail.length-1){ if(_dbg) _dbg.fallback=(_dbg.fallback?_dbg.fallback+'; ':'')+p+' falló → reintento con '+avail[i+1]; try{ console.warn('LLM '+p+' falló ('+e.message+') → reintento con '+avail[i+1]); }catch(_){ } } }
+    catch(e){ lastErr=e;
+      if(i<avail.length-1){ const next=avail[i+1];
+        if(_dbg) _dbg.fallback=(_dbg.fallback?_dbg.fallback+'; ':'')+p+' falló → reintento con '+next;
+        try{ console.warn('LLM '+provName(p)+' falló ('+e.message+') → reintento con '+provName(next)); }catch(_){ }
+        try{ aiBusyUpdate('⚠ '+provName(p)+' falló · reintentando con '+prettyModel(next, modelForTier(next, TASK_TIER[opts.task||'deepen']||'mid'))); }catch(_){ }
+      }
+    }
   }
   throw lastErr;   // fallaron todos los proveedores disponibles
 }
@@ -3422,6 +3432,9 @@ async function buscarDocsRAG(query){
   catch(e){ out.innerHTML='<div class="err">Error: '+escHtml(e.message)+'</div>'; return; }
   const {hits:lex, sinTexto}=res;
   let sem=null; try{ sem=await semRetrieve(query, 8); }catch(e){}
+  // ¿se esperaba semántica (hay clave OpenAI y algún documento con índice) pero no respondió? → avisar (las embeddings solo las hace OpenAI, no hay respaldo).
+  const anyEmb=((cachedDocs()||{}).docs||[]).some(d=>d.embN && d.embMt===d.mt);
+  const semFailed = !!loadCfg().openaiKey && anyEmb && !sem;
   const keyOf=h=>(h.doc||'')+'|'+String(h.t||'').slice(0,80);
   const semKeys=new Set((sem||[]).map(keyOf)), lexKeys=new Set((lex||[]).map(keyOf));
   const hits=mergeRag([sem, lex], 8);
@@ -3430,7 +3443,7 @@ async function buscarDocsRAG(query){
     if(sinTexto.length===nDocs){ out.innerHTML='<div class="study-flag">No pude leer el texto de tus documentos. Pulsa <b>Conectar</b> en «Documentos» (el acceso a Drive caduca a la hora) y vuelve a buscar — necesito extraer el texto del PDF una vez.</div>'; return; }
     out.innerHTML='<div class="empty">Sin coincidencias para «'+escHtml(query)+'».'+(sinTexto.length?(' ('+sinTexto.length+' doc sin texto: conecta Drive)'):'')+'</div>'; return;
   }
-  const modo = sem ? 'híbrida (palabras + significado)' : 'por palabras (BM25)';
+  const modo = sem ? 'híbrida (palabras + significado)' : (semFailed ? 'por palabras · <span style="color:var(--danger)">⚠ el buscador semántico (OpenAI) no respondió — sin respaldo posible</span>' : 'por palabras (BM25)');
   out.innerHTML='<div class="cart-group-title">Fragmentos más relevantes <span class="dx-meta">· búsqueda '+modo+' · (en '+(nDocs-sinTexto.length)+'/'+nDocs+' documento(s)'+(sinTexto.length?' · '+sinTexto.length+' sin texto':'')+')</span></div>'
     + hits.map(h=>`<div class="study" style="margin:6px 0"><div class="dx-meta"><b>${escHtml(h.doc||'doc')}</b>${h._src?' · <span style="color:#9b8cff">'+escHtml(h._src)+'</span>':''}</div><div style="font-size:12.5px;line-height:1.5">${escHtml(h.t.slice(0,420))}…</div></div>`).join('');
 }
