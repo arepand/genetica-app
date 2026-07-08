@@ -344,9 +344,11 @@
   .gr-badge>a:hover{border-color:#7e63c9;}
   .gr-stale{display:inline-block; font-size:11px; font-weight:600; color:#e8a13a; margin-left:6px;}
   .dx-src{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--accent); margin:4px 0 5px;}
-  .prenatal-layout{display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:0; align-items:start;}
+  .prenatal-layout{display:grid; grid-template-columns:minmax(0,1fr) 380px; gap:0; align-items:start;}
   .prenatal-main{padding-right:22px; min-width:0;}
   .prenatal-aside{min-width:0;}
+  #prenatalView.section-view{max-width:none;}   /* prenatal ocupa TODA la página (sin hueco a la derecha) */
+  #prenatalPanelSlot .hastip .tooltip{left:auto; right:0;}   /* en el panel derecho, los tooltips abren hacia la izquierda (no se cortan) */
   @media (max-width:900px){ .prenatal-layout{grid-template-columns:1fr;} .prenatal-main{padding-right:0;} }
   .cart.cart-full{position:static; top:auto; border-left:none; width:auto; max-width:none; margin:0; padding:22px 26px 90px;}
   .patient-bar{display:flex; align-items:center; flex-wrap:wrap; gap:14px; padding:9px 30px; border-bottom:1px solid var(--line); background:var(--panel2); font-size:12.5px;}
@@ -440,6 +442,7 @@
   <button class="section-btn" data-section="paneles">🧩 Paneles</button>
   <button class="section-btn" data-section="biblioteca">📚 Protocolos</button>
   <button class="section-btn" data-section="documentos">📁 Documentos</button>
+  <button class="section-btn" data-section="consultar">💬 Consultar</button>
 </nav>
 
 <div class="patient-bar" id="patientBar"></div>
@@ -475,6 +478,7 @@
 <div id="seguimientoView" class="section-view" style="display:none"></div>
 <div id="panelesView" class="section-view" style="display:none"></div>
 <div id="documentosView" class="section-view" style="display:none"></div>
+<div id="consultarView" class="section-view" style="display:none"></div>
 <div id="cuadromandoView" class="section-view" style="display:none"></div>
 
 <div id="toast"></div>
@@ -487,8 +491,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='1.64.2';
+const APP_VERSION='2.0.0';
 const CHANGELOG=[
+  {v:'2.0.0', d:'2026-07-08', c:['🎉 Ariadna 2.0 — Nuevo apartado «💬 Consultar»: un chat que responde ÚNICAMENTE con la información de tu documentación indexada (tus PDF y libros), citando de qué documento sale cada respuesta. Si algo no está en tu documentación, te lo dice — no usa conocimiento externo. Usa la búsqueda híbrida (palabras + significado). Ejemplo: «¿es indicación de DGP en el SERGAS una pareja portadora de PKD1? ¿según qué documento?». Consume IA (una llamada por pregunta; la redacta Claude).','Referencias sin PDF: al «Asignar/fusionar» un PDF a una referencia, esta desaparece de «Referencias sin PDF» de forma fiable (reconoce la fusión por alias además de por identificadores). Las referencias de la indicación prenatal ahora funcionan igual que el resto: si están en tu repositorio se ligan, y si no, aparecen en «Referencias sin PDF» para asignarles un documento.','Protocolos: retirado el botón «Pestaña nueva» (el deep-link ?proto= sigue funcionando si lo necesitas).','Prenatal: la vista ocupa ahora todo el ancho de la página (sin hueco a la derecha) y los tooltips del panel derecho ya no se cortan.']},
   {v:'1.64.2', d:'2026-07-08', c:['El failover entre proveedores funciona en AMBOS sentidos (si falla Claude → OpenAI, y si falla OpenAI → Claude) y ahora se VE: el aviso «usando IA» de arriba muestra «⚠ X falló · reintentando con Y» cuando ocurre. Excepción: las embeddings (RAG semántico) solo las hace OpenAI, no tienen respaldo posible — si fallan, la búsqueda de tu biblioteca lo avisa en vez de degradar en silencio.']},
   {v:'1.64.1', d:'2026-07-08', c:['Botón global «↻ Re-indexar incompletos (N)» en la cabecera de «Documentos»: vuelve a leer el PDF entero de todos los documentos que se indexaron en una versión anterior (los marcados «texto sin medir», que podían estar recortados a las primeras páginas), de una vez y con progreso.']},
   {v:'1.64.0', d:'2026-07-08', c:['Nuevo modo «Automático» de proveedor de IA (⚙ Ajustes, junto a «Claude primero / OpenAI primero»): con las dos claves puestas, el programa decide por tarea con criterio claro — la autoría de protocolos y las búsquedas/verificaciones las hace Claude (calidad clínica), y la lectura/identificación de documentos el modelo más barato de OpenAI (gpt-4o-mini). Los embeddings del RAG semántico son siempre OpenAI, y en cualquier modo hay failover automático. El panel «🔀 Modelo por operación» de «Estado» muestra ahora el modo activo.','Aclarado el aviso de arriba durante las operaciones: donde ponía «(web)» ahora dice «🌐 buscando en la web» — significa que esa operación está consultando internet en directo (guías, PubMed), no solo tus documentos.']},
@@ -1200,7 +1205,7 @@ function saveCfg(c){ try{ localStorage.setItem(CFG_KEY, JSON.stringify(c)); }cat
 /* Niveles: cheap (tareas triviales, ahorrar) · mid (extracción/anamnesis) ·
    search (chequeos con web: guías/freshness) · author (LA CIENCIA: autoría de
    ficha rigurosa por el estado del arte → modelo MÁS potente, sin escatimar). */
-const TASK_TIER = { assign:'cheap', extract:'mid', deepen:'mid', author:'author', freshness:'search', eval:'search' };
+const TASK_TIER = { assign:'cheap', extract:'mid', deepen:'mid', author:'author', freshness:'search', eval:'search', chat:'search' };
 const DEFAULT_MODELS = {
   anthropic: { cheap:'claude-haiku-4-5', mid:'claude-sonnet-4-6', search:'claude-sonnet-4-6', author:'claude-opus-4-8' },
   openai:    { cheap:'gpt-4o-mini',      mid:'gpt-4o-mini',       search:'gpt-4o-search-preview', author:'gpt-4o-search-preview' }
@@ -1525,6 +1530,9 @@ function docMatchesFuente(d, f){
   if(furl && (furl===durl || furl===den)) return true;
   const ft=normTxt(f.titulo), dt=normTxt(d.titulo);
   if(ft && dt && ft===dt) return true;
+  // Alias añadidos al fusionar/enlazar una referencia a este documento (url o «t:»+título) → reconoce la fusión.
+  if(d.aliases && d.aliases.length){ if((furl && d.aliases.includes(furl)) || (ft && d.aliases.includes('t:'+ft))) return true; }
+  if(f.aliases && f.aliases.length){ if((durl && f.aliases.includes(durl)) || (dt && f.aliases.includes('t:'+dt))) return true; }
   return false;
 }
 /* Fase 2b: asegura que TODA cita del protocolo esté en el repositorio (repo = lista única). Las que no estén
@@ -1888,7 +1896,7 @@ function extractJSON(text){
 }
 /* ---- Transparencia IA: indicador de proceso + log de depuración (opt-in) ---- */
 let AI_DEBUG=false; const AI_LOG=[]; let _aiBusyN=0;
-const AI_TASKS={assign:'asignando protocolo', extract:'extrayendo HPO del informe', deepen:'profundizando', author:'generando protocolo · 🌐 buscando en la web', freshness:'comprobando novedades · 🌐 buscando en la web', eval:'consultando guías · 🌐 buscando en la web', actividad:'leyendo actividad (visión)'};
+const AI_TASKS={assign:'asignando protocolo', extract:'extrayendo HPO del informe', deepen:'profundizando', author:'generando protocolo · 🌐 buscando en la web', freshness:'comprobando novedades · 🌐 buscando en la web', eval:'consultando guías · 🌐 buscando en la web', chat:'consultando tu documentación', actividad:'leyendo actividad (visión)'};
 function aiBusyStart(label){
   _aiBusyN++;
   let el=document.getElementById('aiBusy');
@@ -3505,6 +3513,68 @@ async function ragContext(maxDocs, query){
   return out;
 }
 
+/* ===========================================================================
+   Consultar — chatbot que responde SOLO con la documentación indexada (RAG estricto)
+   =========================================================================== */
+const CHAT_SYSTEM='Eres un asistente documental para un genetista clínico. Respondes ÚNICA y EXCLUSIVAMENTE con la información contenida en los EXTRACTOS de la propia documentación del clínico que se te proporcionan. REGLAS ESTRICTAS: (1) NO uses conocimiento externo, general ni previo; solo los extractos. (2) Si la respuesta NO está en los extractos, dilo con claridad: «No encuentro esa información en tu documentación» y, si procede, sugiere qué tipo de documento podría faltar; NO la completes con lo que "sabrías". (3) CITA de qué documento sale cada afirmación, por su título o número de extracto. (4) Si distintos documentos discrepan, indícalo. (5) Responde en español, con precisión clínica y de forma concreta. Es un apoyo documental; no sustituye el juicio clínico.';
+let _chatMsgs=[];
+async function retrieveRepo(query, k){
+  let lex=[]; try{ const r=await ragRetrieveLocal(query, k||10); lex=r.hits||[]; }catch(e){}
+  let sem=null; try{ sem=await semRetrieve(query, k||10); }catch(e){}
+  return mergeRag([sem, lex], k||12);
+}
+async function askRepo(q){
+  q=(q||'').trim(); if(!q) return;
+  if(!anyProvider()){ _chatMsgs.push({role:'assistant', text:'Configura una API key (Claude u OpenAI) en ⚙ Ajustes para poder consultar.'}); renderChatMsgs(); return; }
+  _chatMsgs.push({role:'user', text:q});
+  const pend={role:'assistant', text:'', pending:true}; _chatMsgs.push(pend); renderChatMsgs();
+  try{
+    const hits=await retrieveRepo(q, 12);
+    if(!hits.length){ pend.pending=false; pend.text='No encuentro nada en tu documentación indexada. Ve a «Documentos», conéctate a Drive e indexa tus PDF (y, si quieres búsqueda por significado, construye el índice semántico).'; renderChatMsgs(); return; }
+    const ctx=hits.map((h,i)=>'['+(i+1)+'] '+(h.doc||'documento')+':\n'+String(h.t||'').slice(0,1500)).join('\n\n');
+    const hist=_chatMsgs.filter(m=>!m.pending && m.text).slice(-7,-1).map(m=>(m.role==='user'?'Usuario: ':'Asistente: ')+m.text).join('\n');
+    const user=(hist?('Conversación previa (contexto):\n'+hist+'\n\n'):'')+'EXTRACTOS DE TU DOCUMENTACIÓN (ÚNICA fuente permitida):\n'+ctx+'\n\nPREGUNTA: '+q;
+    const resp=await callLLM({system:CHAT_SYSTEM, user, webSearch:false, maxTokens:1200, task:'chat'});
+    pend.pending=false; pend.text=(resp||'').trim()||'(sin respuesta)';
+    pend.sources=[...new Set(hits.map(h=>h.doc).filter(Boolean))];
+    renderChatMsgs();
+  }catch(e){ pend.pending=false; pend.text='Error al consultar: '+e.message; renderChatMsgs(); }
+}
+function chatSourceHtml(name){
+  const docs=(cachedDocs()||{}).docs||[]; const d=docs.find(x=>normTxt(x.titulo||x.nombre||'')===normTxt(name));
+  const url=d&&(d.enlace||d.url);
+  return url?`<a href="${escA(url)}" target="_blank" rel="noopener" style="color:var(--accent)">${escHtml(name)}</a>`:`<span>${escHtml(name)}</span>`;
+}
+function renderChatMsgs(){
+  const el=document.getElementById('chatMsgs'); if(!el) return;
+  if(!_chatMsgs.length){ el.innerHTML='<div class="placeholder">Pregunta lo que quieras sobre tus documentos. Por ejemplo: «¿es indicación de DGP en el SERGAS una pareja portadora de PKD1? ¿según qué documento?»</div>'; return; }
+  el.innerHTML=_chatMsgs.map(m=>{
+    const who=m.role==='user'?'Tú':'Ariadna · según tu documentación';
+    const bg=m.role==='user'?'var(--panel2)':'rgba(120,180,255,.07)';
+    const body=m.pending?'<span class="dx-meta">…consultando tu documentación</span>':escHtml(m.text).replace(/\n/g,'<br>');
+    const src=(m.sources&&m.sources.length)?`<div class="dx-meta" style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px">📎 Fuentes: ${m.sources.map(chatSourceHtml).join(' · ')}</div>`:'';
+    return `<div style="background:${bg};border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0"><div class="dx-meta" style="font-weight:600;margin-bottom:4px">${who}</div><div style="font-size:13.5px;line-height:1.6">${body}</div>${src}</div>`;
+  }).join('');
+  el.scrollTop=el.scrollHeight;
+}
+function renderConsultar(){
+  const box=document.getElementById('consultarView'); if(!box) return;
+  box.innerHTML=`
+    <div class="lib-head"><h2>💬 Consultar tu documentación</h2><button class="btn ghost" id="chatClear" style="padding:3px 10px;font-size:12px">Limpiar</button></div>
+    <div class="sec-note" style="max-width:900px;margin:0 auto">Respondo <b>solo</b> con la información de tus PDF y libros indexados (búsqueda híbrida: palabras + significado), citando de qué documento sale. Si algo no está en tu documentación, te lo digo — <b>no uso conocimiento externo</b>. Consume IA (una llamada por pregunta).</div>
+    <div id="chatMsgs" style="max-width:900px;margin:12px auto;min-height:180px"></div>
+    <div style="max-width:900px;margin:0 auto;display:flex;gap:8px;position:sticky;bottom:0;padding:10px 0;background:var(--bg)">
+      <textarea id="chatInput" rows="2" placeholder="Escribe tu pregunta… (Cmd/Ctrl+Enter para enviar)" style="flex:1;box-sizing:border-box;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);color:var(--ink);font-size:13.5px;resize:vertical"></textarea>
+      <button class="btn primary" id="chatSend">Preguntar</button>
+    </div>`;
+  renderChatMsgs();
+  const inp=box.querySelector('#chatInput'), send=box.querySelector('#chatSend');
+  const go=()=>{ const q=inp.value; inp.value=''; askRepo(q); };
+  if(send) send.addEventListener('click', go);
+  if(inp) inp.addEventListener('keydown', e=>{ if(e.key==='Enter' && (e.metaKey||e.ctrlKey)){ e.preventDefault(); go(); } });
+  const clr=box.querySelector('#chatClear'); if(clr) clr.addEventListener('click', ()=>{ _chatMsgs=[]; renderChatMsgs(); });
+}
+
 function renderDocumentos(){
   const box=document.getElementById('documentosView'); if(!box) return;
   if(!driveClientId()){ box.innerHTML='<div class="placeholder">Configura el <b>Client ID de Google Drive</b> en ⚙ Ajustes para conectar tu repositorio documental.</div>'; return; }
@@ -3648,7 +3718,10 @@ async function renderDriveList(files){
    aparte de los PDFs de Drive, con sus badges; se les puede asignar un PDF de Drive o quitarlas. */
 function renderExternalRefs(){
   const box=document.getElementById('docExternos'); if(!box) return;
-  const docs=((cachedDocs()||{}).docs||[]).filter(d=>d && !d.driveId && !d.enlace);
+  const all=((cachedDocs()||{}).docs||[]);
+  const withFile=all.filter(d=>d.driveId||d.enlace);
+  // Referencia sin PDF = sin fichero Y que NINGÚN documento con PDF ya cubra (por id/doi/pmid/nbk/url/título/alias) → si se fusionó, desaparece.
+  const docs=all.filter(d=>d && !d.driveId && !d.enlace && !withFile.some(w=>docMatchesFuente(w, d)));
   if(!docs.length){ box.innerHTML=''; return; }
   box.innerHTML=`<div class="cart-group-title">📑 Referencias sin PDF <span class="dx-meta">(${docs.length}) — citas de tus protocolos que aún no tienen un documento en Drive</span></div>
     <div class="lib-grid">`+docs.map(d=>`<div class="lib-card">
@@ -6168,11 +6241,14 @@ function prenatalIndicacion(){
   if(!nucal && !mayores && marcadores) lines.push({html:`<b>${marcadores} marcador(es) blando(s) aislado(s)</b> → ajustar riesgo de aneuploidía / cribado; estudio invasivo no indicado de rutina si es realmente aislado.`, refs:['jogc456','overview']});
   return {lines, nucal, mayores, marcadores};
 }
+let _prenatalRefsEnsured=false;
 function renderPrenatalInd(){
   renderPrenatalDx();   // panel derecho: síndromes que cumplen criterios
   const box=document.getElementById('prenatalInd'); if(!box) return;
   const r=prenatalIndicacion();
   if(!r){ box.innerHTML='<div class="empty">Marca hallazgos fetales para sugerir la indicación.</div>'; return; }
+  // Unifica con el repositorio: las referencias de la indicación prenatal se añaden como cualquier cita → si no tienen PDF, salen en «Referencias sin PDF»; si lo tienen, se ligan (una vez por sesión).
+  try{ if(!_prenatalRefsEnsured && ghConfigured()){ _prenatalRefsEnsured=true; ensureFuentesInRepo(Object.values(PRENATAL_REFS).map(x=>({titulo:x.t, url:x.u, anio:x.a}))); } }catch(e){}
   box.innerHTML=`<div class="cart-group-title">Indicación de estudio prenatal sugerida</div>`
     +`<div class="dx-meta" style="margin-bottom:6px">${r.mayores} anomalía(s) mayor(es) · ${r.marcadores} marcador(es) · ${r.nucal} nucal/hidrops</div>`
     +r.lines.map(l=>`<div class="study" style="margin:6px 0">${l.html}${refsHtml(l.refs)}</div>`).join('')
@@ -6701,8 +6777,9 @@ function showSection(s){
   const seg=document.getElementById('seguimientoView');
   const pan=document.getElementById('panelesView');
   const cmv=document.getElementById('cuadromandoView');
+  const cons=document.getElementById('consultarView');
   const panel=document.getElementById('phenoPanel');
-  [fen,feno,bib,doc,dis,ant,pv0,inf,seg,pan,cmv].forEach(v=>{ if(v) v.style.display='none'; });
+  [fen,feno,bib,doc,dis,ant,pv0,inf,seg,pan,cmv,cons].forEach(v=>{ if(v) v.style.display='none'; });
   if(s==='cuadromando'){ if(panel && fen && panel.parentElement!==fen){ fen.appendChild(panel); panel.classList.remove('cart-full'); } if(cmv){ cmv.style.display='block'; renderCuadroMando(); } return; }
   // El panel de fenotipo (búsqueda + carrito + diferencial + Monarch + export) es ÚNICO:
   // en "fenotipo" va a pantalla completa; en el resto vuelve al aside del protocolo.
@@ -6714,6 +6791,7 @@ function showSection(s){
   if(panel && fen && panel.parentElement!==fen){ fen.appendChild(panel); panel.classList.remove('cart-full'); }
   if(s==='biblioteca'){ if(bib){ bib.style.display='block'; renderBiblioteca(); } }
   else if(s==='documentos'){ if(doc){ doc.style.display='block'; renderDocumentos(); } }
+  else if(s==='consultar'){ if(cons){ cons.style.display='block'; renderConsultar(); } }
   else if(s==='dismorfologia'){ if(dis){ dis.style.display='block'; renderDismorfologia(); } }
   else if(s==='antropometria'){ if(ant){ ant.style.display='block'; renderAntropometria(); } }
   else if(s==='informes'){ if(inf){ inf.style.display='block'; renderInformes(); } }
@@ -6837,7 +6915,6 @@ function libCardHtml(f){
     <div class="meta">${f.id}${(f.sinonimos&&f.sinonimos.length)?' · '+f.sinonimos.slice(0,4).join(', '):''}</div>
     <div class="acts">
       <button class="btn" data-ver="${f.id}">👁 Ver / imprimir</button>
-      <button class="btn" data-vertab="${f.id}" title="Abrir el protocolo en una pestaña nueva">↗ Pestaña nueva</button>
       <button class="btn" data-edit="${f.id}">✎ Editar</button>
     </div>
   </div>`;
