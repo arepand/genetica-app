@@ -491,8 +491,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.2.0';
+const APP_VERSION='2.3.0';
 const CHANGELOG=[
+  {v:'2.3.0', d:'2026-07-09', c:['El chat «Consultar» ahora muestra sus FUENTES como referencias reales, no como nombres de fichero: cada cita sale con su badge (📖 GeneReviews / PMID / DOI / Papers) y un botón «➕ a mi biblioteca» para añadirla a tu repositorio bibliográfico igual que el resto. Para los títulos y datos exactos, configura en ⚙ Ajustes el nuevo campo «Segundo cerebro — repositorio de referencias» (owner/repo del pipeline, que contiene sources.json). Sin él, las citas de GeneReviews igualmente salen con su badge y enlace al capítulo (derivado del NBK).']},
   {v:'2.2.0', d:'2026-07-09', c:['El chat «💬 Consultar» se conecta al SEGUNDO CEREBRO (Vector Store de OpenAI). En ⚙ Ajustes hay un campo nuevo «Segundo cerebro — id(s) del Vector Store»: pega ahí el id que genera el pipeline (secondbrain/store.json). Cuando está puesto, el chat pregunta a ese store (File Search) en vez de al buscador local: mucho más rápido y con síntesis coherente, sobre GeneReviews + tus documentos, citando las fuentes (con enlace al capítulo NBK). Si dejas el campo vacío, el chat sigue usando el buscador local de Ariadna como hasta ahora.']},
   {v:'2.1.2', d:'2026-07-08', c:['(Segundo cerebro — herramientas) Nuevo botón «⬇ Token 2º cerebro» en «Documentos» (visible con Drive conectado): copia una línea lista para pegar en la terminal, con tu token de Drive, para que el script del segundo cerebro descargue automáticamente tus PDF de Drive. El token es tuyo, caduca en ~1h y no sale de tu Mac.']},
   {v:'2.1.1', d:'2026-07-08', c:['Al fusionar una referencia con su PDF, ahora también se marca la flag «✓ bibliografía» correctamente (antes desaparecía de «sin PDF» pero no se marcaba como citada): la flag reconoce la cita por DOI/PMID/NBK/URL/título/alias, aunque el título del documento difiera del de la cita del protocolo.','Chatbot «Consultar» más conversacional: puedes repreguntar y seguir el hilo — las preguntas de seguimiento tienen en cuenta el contexto de la conversación para recuperar los documentos correctos. Ahora se envía con Enter (Shift+Enter = salto de línea).']},
@@ -1194,7 +1195,7 @@ function resetPatient(){
 /* ---- Config en localStorage ---- */
 const CFG_KEY='fh_cfg';
 const CFG_DEFAULTS={ anthropicKey:'', openaiKey:'', preferProvider:'anthropic', models:{}, gh_owner:'', gh_repo:'', gh_branch:'main', gh_pat:'',
-  driveClientId:'672017094614-goqdjb7159poff6jieh7rgjtop06askb.apps.googleusercontent.com', driveFolder:'', driveSubfolders:false, secondBrainStore:'' };
+  driveClientId:'672017094614-goqdjb7159poff6jieh7rgjtop06askb.apps.googleusercontent.com', driveFolder:'', driveSubfolders:false, secondBrainStore:'', secondBrainRepo:'' };
 function loadCfg(){
   let c; try{ c=Object.assign({}, CFG_DEFAULTS, JSON.parse(localStorage.getItem(CFG_KEY))||{}); }catch(e){ c=Object.assign({}, CFG_DEFAULTS); }
   // Migración desde el esquema antiguo {provider, llmKey}
@@ -2232,6 +2233,8 @@ function openSettings(){
       <input id="cfgOpenaiKey" type="password" value="${c.openaiKey||''}" placeholder="sk-…" autocomplete="off"></div>
     <div class="field"><label>Segundo cerebro — id(s) del Vector Store <span class="dx-meta">(el chat «Consultar» preguntará a este store; varios separados por coma)</span></label>
       <input id="cfgSbStore" type="text" value="${escHtml(c.secondBrainStore||'').replace(/"/g,'&quot;')}" placeholder="vs_… (lo da secondbrain/store.json; vacío = usar el buscador local)" autocomplete="off"></div>
+    <div class="field"><label>Segundo cerebro — repositorio de referencias <span class="dx-meta">(owner/repo del pipeline con sources.json → citas con badge y «añadir a biblioteca»)</span></label>
+      <input id="cfgSbRepo" type="text" value="${escHtml(c.secondBrainRepo||'').replace(/"/g,'&quot;')}" placeholder="tu-usuario/ariadna-secondbrain (usa tu token de GitHub; opcional)" autocomplete="off"></div>
     <div class="field"><label>Proveedor de IA cuando tienes las dos claves</label>
       <div class="seg" id="prefSeg">
         <button data-pref="anthropic" class="${(c.preferProvider||'anthropic')==='anthropic'?'on':''}">Claude primero</button>
@@ -2391,6 +2394,7 @@ function openSettings(){
       anthropicKey: ov.querySelector('#cfgAnthropicKey').value.trim(),
       openaiKey: ov.querySelector('#cfgOpenaiKey').value.trim(),
       secondBrainStore: (ov.querySelector('#cfgSbStore')?ov.querySelector('#cfgSbStore').value.trim():(prev.secondBrainStore||'')),
+      secondBrainRepo: (ov.querySelector('#cfgSbRepo')?ov.querySelector('#cfgSbRepo').value.trim():(prev.secondBrainRepo||'')),
       preferProvider: pref,
       models,
       gh_owner: ov.querySelector('#cfgOwner').value.trim(),
@@ -3536,7 +3540,34 @@ async function retrieveRepo(query, k){
 }
 /* Segundo cerebro: id(s) del/los Vector Store(s) de OpenAI configurados. Si hay → el chat pregunta ahí. */
 function secondBrainStores(){ return String(loadCfg().secondBrainStore||'').split(/[\s,]+/).filter(Boolean); }
-const CHAT_SYSTEM_STORE='Eres un asistente documental para un genetista clínico. Responde ÚNICA y EXCLUSIVAMENTE con la información recuperada de la documentación por la herramienta de búsqueda (file_search). Da UNA respuesta coherente que INTEGRE las fuentes en una explicación fluida y clínica (NO listes fragmentos sueltos ni "el documento X dice…"). Si la respuesta no está en la documentación, dilo con claridad. Al final, en «Fuentes:», nombra los documentos usados. Responde en español, con precisión, sin inventar.';
+/* Mapa fichero→referencia (sources.json del repo del pipeline) → mostrar cada cita del chat como referencia
+   real con su badge (GeneReviews/PMID/DOI) y «añadir a biblioteca». Se carga una vez (localStorage). */
+let _sbSources=null;
+async function loadSbSources(){
+  if(_sbSources) return _sbSources;
+  try{ const c=JSON.parse(localStorage.getItem('fh_sb_sources')); if(c){ _sbSources=c; } }catch(e){}
+  const cfg=loadCfg(); const repo=(cfg.secondBrainRepo||'').trim();
+  if(repo && cfg.gh_pat){
+    try{ const [own,rp]=repo.split('/'); if(own&&rp){
+      const r=await fetch('https://api.github.com/repos/'+own+'/'+rp+'/contents/sources.json', {headers:{Authorization:'token '+cfg.gh_pat, Accept:'application/vnd.github.raw+json'}, cache:'no-store'});
+      if(r.ok){ const j=await r.json(); _sbSources=j; try{ localStorage.setItem('fh_sb_sources', JSON.stringify(j)); }catch(e){} }
+    } }catch(e){}
+  }
+  return _sbSources||{};
+}
+/* Dado el nombre de fichero que cita el store (NBK1246__seccion.md / docslug__seccion.md) → una fuente {titulo,url,nbk,...}. */
+function chatSourceFuente(name){
+  const key=String(name).split('__')[0];
+  const s=(_sbSources||{})[key];
+  if(s){
+    if(s.source==='GeneReviews') return {titulo:s.titulo||('GeneReviews '+s.nbk), url:s.url, nbk:s.nbk, gr_updated:s.updated, _src:'GeneReviews'};
+    return {titulo:s.titulo||name, url:s.url||'', doi:s.doi||'', pmid:s.pmid||'', _src:s.source};
+  }
+  const nbk=(String(name).match(/NBK\d+/i)||[])[0];
+  if(nbk) return {titulo:'GeneReviews '+nbk.toUpperCase(), url:'https://www.ncbi.nlm.nih.gov/books/'+nbk.toUpperCase()+'/', nbk:nbk.toUpperCase(), _src:'GeneReviews'};
+  return {titulo:String(name).replace(/\.(md|txt|pdf)$/i,'').replace(/__/g,' · ')};
+}
+const CHAT_SYSTEM_STORE='Eres un asistente documental para un genetista clínico. Responde ÚNICA y EXCLUSIVAMENTE con la información recuperada de la documentación por la herramienta de búsqueda (file_search). Da UNA respuesta coherente que INTEGRE las fuentes en una explicación fluida y clínica (NO listes fragmentos sueltos ni "el documento X dice…"). Si la respuesta no está en la documentación, dilo con claridad. NO escribas una sección de «Fuentes» ni nombres de fichero: la aplicación muestra las referencias por su cuenta. Responde en español, con precisión, sin inventar.';
 /* Consulta el/los Vector Store(s) vía la Responses API de OpenAI (File Search) → respuesta única + citas. */
 async function askRepoStore(input, ids){
   const c=loadCfg();
@@ -3561,6 +3592,7 @@ async function askRepo(q){
     if(ids.length && loadCfg().openaiKey){
       const h=histText();
       const input=(h?('Conversación previa (contexto):\n'+h+'\n\n'):'')+'PREGUNTA: '+q;
+      try{ await loadSbSources(); }catch(e){}   // mapa fichero→referencia (para mostrar badges + añadir a biblioteca)
       const {text, sources}=await askRepoStore(input, ids);
       pend.pending=false; pend.text=text||'No encuentro esa información en tu documentación.'; pend.sources=sources; renderChatMsgs(); return;
     }
@@ -3595,7 +3627,15 @@ function renderChatMsgs(){
     const who=m.role==='user'?'Tú':'Ariadna · según tu documentación';
     const bg=m.role==='user'?'var(--panel2)':'rgba(120,180,255,.07)';
     const body=m.pending?'<span class="dx-meta">…consultando tu documentación</span>':escHtml(m.text).replace(/\n/g,'<br>');
-    const src=(m.sources&&m.sources.length)?`<div class="dx-meta" style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px">📎 Fuentes: ${m.sources.map(chatSourceHtml).join(' · ')}</div>`:'';
+    let src='';
+    if(m.sources && m.sources.length){
+      const seen=new Set(), fuentes=[];
+      for(const nm of m.sources){ const k=String(nm).split('__')[0]; if(seen.has(k)) continue; seen.add(k); fuentes.push(chatSourceFuente(nm)); }
+      src='<div class="dx-meta" style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px">📎 Fuentes:<div style="margin-top:3px">'
+        + fuentes.map(f=>{ const enc=encodeURIComponent(JSON.stringify(f));
+            return '<div style="margin:2px 0">'+(f.url?('<a href="'+escA(f.url)+'" target="_blank" rel="noopener" style="color:var(--accent)">'+escHtml(f.titulo)+'</a>'):('<span>'+escHtml(f.titulo)+'</span>'))+bibRefHtml(f,{noAssign:true})+' <a class="tip-ai chat-add" data-fu="'+enc+'" title="Añadir esta referencia a tu repositorio bibliográfico">➕ a mi biblioteca</a></div>'; }).join('')
+        + '</div></div>';
+    }
     return `<div style="background:${bg};border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0"><div class="dx-meta" style="font-weight:600;margin-bottom:4px">${who}</div><div style="font-size:13.5px;line-height:1.6">${body}</div>${src}</div>`;
   }).join('');
   el.scrollTop=el.scrollHeight;
@@ -3616,6 +3656,14 @@ function renderConsultar(){
   if(send) send.addEventListener('click', go);
   if(inp) inp.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); go(); } });   // Enter envía · Shift+Enter salta de línea
   const clr=box.querySelector('#chatClear'); if(clr) clr.addEventListener('click', ()=>{ _chatMsgs=[]; renderChatMsgs(); });
+  // «➕ a mi biblioteca» en las fuentes citadas → añade la referencia al repositorio (igual que el resto).
+  const cm=box.querySelector('#chatMsgs');
+  if(cm) cm.addEventListener('click', e=>{ const a=e.target.closest && e.target.closest('.chat-add'); if(!a) return; e.preventDefault();
+    let f={}; try{ f=JSON.parse(decodeURIComponent(a.dataset.fu)); }catch(_){}
+    if(!ghConfigured()){ showToast('Configura GitHub en ⚙ Ajustes para tener biblioteca'); return; }
+    ensureFuentesInRepo([f]).then(n=>{ showToast(n?('Añadida a tu biblioteca'):'Ya estaba en tu biblioteca'); a.textContent='✓ en tu biblioteca'; a.style.pointerEvents='none'; a.style.opacity='.6'; _fichaRefSet=null; }).catch(err=>showToast('Error: '+err.message));
+  });
+  loadSbSources().then(()=>{ if(document.getElementById('chatMsgs')) renderChatMsgs(); });   // carga el mapa de referencias (y re-renderiza citas)
 }
 
 function renderDocumentos(){
