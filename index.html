@@ -491,8 +491,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.3.2';
+const APP_VERSION='2.4.0';
 const CHANGELOG=[
+  {v:'2.4.0', d:'2026-07-09', c:['GeneReviews sin «Last Update»: en TODA Ariadna (badges, tooltips, referencias, chat del segundo cerebro) ahora, si un capítulo de GeneReviews no tiene fecha de última revisión, se muestra su fecha de INCLUSIÓN (Initial Posting) etiquetada como «Publicación inicial», en vez del antiguo «revisión: —». La IA la captura al indexar/buscar referencias y el pipeline del segundo cerebro la extrae del capítulo.']},
   {v:'2.3.2', d:'2026-07-09', c:['CHAT «Consultar» — grounding estricto: ya NO responde con conocimiento general cuando la pregunta no está en tu documentación. Antes, si el tema no estaba indexado (p. ej. una enfermedad aún no subida al segundo cerebro), contestaba de memoria y colgaba una cita equivocada; ahora el buscador aplica un umbral de relevancia, y si no recupera pasajes que traten de lo preguntado responde «No encuentro esto en tu documentación» sin inventar respuesta ni fuentes.']},
   {v:'2.3.1', d:'2026-07-09', c:['En las fuentes del chat «Consultar», el botón «➕ a mi biblioteca» solo aparece cuando la referencia NO está ya en tu repositorio; si ya la tienes, muestra «✓ en tu biblioteca» (lo detecta por NBK/PMID/DOI/URL/alias, como el resto de la app).']},
   {v:'2.3.0', d:'2026-07-09', c:['El chat «Consultar» ahora muestra sus FUENTES como referencias reales, no como nombres de fichero: cada cita sale con su badge (📖 GeneReviews / PMID / DOI / Papers) y un botón «➕ a mi biblioteca» para añadirla a tu repositorio bibliográfico igual que el resto. Para los títulos y datos exactos, configura en ⚙ Ajustes el nuevo campo «Segundo cerebro — repositorio de referencias» (owner/repo del pipeline, que contiene sources.json). Sin él, las citas de GeneReviews igualmente salen con su badge y enlace al capítulo (derivado del NBK).']},
@@ -1562,7 +1563,7 @@ async function ensureFuentesInRepo(fuentes){
     idx.docs.push({ id:slugify(f.titulo||f.url||'ref')+'-'+Math.random().toString(36).slice(2,6),
       titulo:f.titulo||f.url||'', cita:f.titulo||f.url||'', descripcion:'', tipo:gr?'GeneReviews':'referencia', anio:f.anio||'',
       doi:f.doi||'', pmid:f.pmid||'', pmcid:f.pmcid||'', readcube:f.readcube||'',
-      nbk:(gr&&gr.nbk)||f.nbk||'', gr_updated:f.gr_updated||'',
+      nbk:(gr&&gr.nbk)||f.nbk||'', gr_updated:f.gr_updated||'', gr_initial:f.gr_initial||'',
       url:f.url||'', enlace:'', externo:true, iaAnalizado:false });
     added++;
   }
@@ -1737,7 +1738,14 @@ function geneReviewsInfo(s){
   const looksGr=/genereviews/i.test(String(s.titulo||s.nombre||'')) || /genereviews/i.test(u) || !!nbk;
   if(!looksGr) return null;
   const url = nbk ? ('https://www.ncbi.nlm.nih.gov/books/'+nbk+'/') : (u||'https://www.ncbi.nlm.nih.gov/books/n/gene/');
-  return { nbk, url, updated:(s.gr_updated||s.revisado||'').trim(), pdf: nbk?('https://www.ncbi.nlm.nih.gov/books/'+nbk+'/pdf/Bookshelf_'+nbk+'.pdf'):'' };
+  return { nbk, url, updated:(s.gr_updated||s.revisado||'').trim(), initial:(s.gr_initial||'').trim(), pdf: nbk?('https://www.ncbi.nlm.nih.gov/books/'+nbk+'/pdf/Bookshelf_'+nbk+'.pdf'):'' };
+}
+/* Fecha a mostrar de un GeneReviews: la de «última revisión» si existe; si no, la de INCLUSIÓN (Initial Posting).
+   Devuelve {fecha, tipo:'revisión'|'inclusión'} o null si no hay ninguna. */
+function grFecha(g){
+  if(g&&g.updated) return { fecha:g.updated, tipo:'revisión', label:'Última revisión' };
+  if(g&&g.initial) return { fecha:g.initial, tipo:'inclusión', label:'Publicación inicial' };
+  return null;
 }
 /* Fecha de «Last Update» de GeneReviews en español: "September 29, 2022" → "29 sept 2022" (se conserva el valor crudo para comparar). */
 function fmtGrDate(raw){
@@ -1817,7 +1825,8 @@ async function verifyArticleIds(ids){
 /* Badge propio para GeneReviews: enlace al capítulo + tooltip con NBK y fecha de última revisión + enlace al PDF. */
 function geneReviewsBadgeHtml(s){
   const g=geneReviewsInfo(s); if(!g) return '';
-  const tip='GeneReviews'+(g.nbk?' · '+g.nbk:'')+(g.updated?'<br>Última revisión: '+escHtml(fmtGrDate(g.updated)):'<br><span class="dx-meta">revisión: —</span>')+(g.pdf?'<br><a href="'+escA(g.pdf)+'" target="_blank" rel="noopener">Abrir PDF ↗</a> <span class="dx-meta">(guárdalo en tu Drive para tenerlo en el repositorio)</span>':'');
+  const fe=grFecha(g);
+  const tip='GeneReviews'+(g.nbk?' · '+g.nbk:'')+(fe?'<br>'+fe.label+': '+escHtml(fmtGrDate(fe.fecha)):'<br><span class="dx-meta">revisión: —</span>')+(g.pdf?'<br><a href="'+escA(g.pdf)+'" target="_blank" rel="noopener">Abrir PDF ↗</a> <span class="dx-meta">(guárdalo en tu Drive para tenerlo en el repositorio)</span>':'');
   return ` <span class="hastip gr-badge"><a href="${escA(g.url)}" target="_blank" rel="noopener">📖 GeneReviews</a><span class="tooltip">${tip}</span></span>`;
 }
 /* Aviso si un GeneReviews citado se ha REVISADO después de la última revisión del protocolo (documento vivo). */
@@ -3089,7 +3098,7 @@ async function profundizarIA(){
    PARTE E — Módulo 4: Autoría de ficha con IA (web search) + revisión + commit
    =========================================================================== */
 /* Orden de prioridad de fuentes científicas (repositorio interno → ES → EU → US). */
-const SOURCE_PRIORITY = 'Consulta y prioriza fuentes científicas en ESTE ORDEN: (1) la guía o documento aportado por el clínico (repositorio interno), si lo hay; (2) sociedades científicas ESPAÑOLAS (p. ej. AEGH, AEP y las sociedades de la especialidad correspondiente); (3) EUROPEAS (p. ej. ESHG, ERN, EMA); (4) AMERICANAS (p. ej. ACMG, AAP, NIH/GeneReviews/OMIM). Busca en la web siguiendo ese orden de preferencia y CITA siempre las fuentes con su título, URL y año en "fuentes". Si la fuente es un artículo científico, añade TAMBIÉN, siempre que los conozcas: "doi" (identificador DOI real, sin el prefijo https://doi.org/), "pmid" (PubMed ID, solo dígitos) y "pmcid" (PubMed Central ID, formato PMCxxxxxxx) — permiten detectar la referencia en gestores bibliográficos del clínico (basta con UNO de los tres si no conoces los demás). Si la fuente es un capítulo de GeneReviews, añade además "nbk" (formato NBKxxxxx) y "gr_updated" (la fecha exacta de «Last Update», p. ej. "September 29, 2022").';
+const SOURCE_PRIORITY = 'Consulta y prioriza fuentes científicas en ESTE ORDEN: (1) la guía o documento aportado por el clínico (repositorio interno), si lo hay; (2) sociedades científicas ESPAÑOLAS (p. ej. AEGH, AEP y las sociedades de la especialidad correspondiente); (3) EUROPEAS (p. ej. ESHG, ERN, EMA); (4) AMERICANAS (p. ej. ACMG, AAP, NIH/GeneReviews/OMIM). Busca en la web siguiendo ese orden de preferencia y CITA siempre las fuentes con su título, URL y año en "fuentes". Si la fuente es un artículo científico, añade TAMBIÉN, siempre que los conozcas: "doi" (identificador DOI real, sin el prefijo https://doi.org/), "pmid" (PubMed ID, solo dígitos) y "pmcid" (PubMed Central ID, formato PMCxxxxxxx) — permiten detectar la referencia en gestores bibliográficos del clínico (basta con UNO de los tres si no conoces los demás). Si la fuente es un capítulo de GeneReviews, añade además "nbk" (formato NBKxxxxx), "gr_updated" (la fecha exacta de «Last Update», p. ej. "September 29, 2022") y "gr_initial" (la fecha exacta de «Initial Posting»/inclusión, p. ej. "January 3, 2001"); si el capítulo no tiene «Last Update», deja "gr_updated" vacío pero rellena SIEMPRE "gr_initial".';
 try{ if(typeof window!=='undefined') window.SOURCE_PRIORITY=SOURCE_PRIORITY; }catch(e){}
 
 const FICHA_SYSTEM_PROMPT = `Eres genetista clínico experto en fenotipado HPO. Genera una FICHA en JSON (y NADA más que el JSON) para la entidad o grupo nosológico del motivo dado, siguiendo EXACTAMENTE este esquema:
@@ -3562,7 +3571,7 @@ function chatSourceFuente(name){
   const key=String(name).split('__')[0];
   const s=(_sbSources||{})[key];
   if(s){
-    if(s.source==='GeneReviews') return {titulo:s.titulo||('GeneReviews '+s.nbk), url:s.url, nbk:s.nbk, gr_updated:s.updated, _src:'GeneReviews'};
+    if(s.source==='GeneReviews') return {titulo:s.titulo||('GeneReviews '+s.nbk), url:s.url, nbk:s.nbk, gr_updated:s.updated, gr_initial:s.initial||'', _src:'GeneReviews'};
     return {titulo:s.titulo||name, url:s.url||'', doi:s.doi||'', pmid:s.pmid||'', _src:s.source};
   }
   const nbk=(String(name).match(/NBK\d+/i)||[])[0];
@@ -3977,7 +3986,7 @@ async function indexarDriveDoc(f, opts){
   else { try{ const v=await verifyArticleIds({doi, pmid, pmcid}); doi=v.doi; pmid=v.pmid; pmcid=v.pmcid; }catch(e){} }   // artículos normales: DOI/PMID/PMCID verificados (descarta los inventados)
   const doc={ titulo: cita||nombreIA||f.name, cita, nombreIA, descripcion:(j&&j.descripcion)||'',
     tipo:(j&&j.tipo)||(esGr?'GeneReviews':''), anio:(j&&j.anio)||(f.modifiedTime||'').slice(0,4),
-    doi, pmid, pmcid, nbk, gr_updated:String((j&&j.gr_updated)||'').trim(),
+    doi, pmid, pmcid, nbk, gr_updated:String((j&&j.gr_updated)||'').trim(), gr_initial:String((j&&j.gr_initial)||'').trim(),
     textLen:(pdfText||'').length, pages:pTot||0, truncado:((pdfText||'').length>=5000000),   // indicador de indexado completo (cuánto texto se extrajo; truncado si topó el límite de 5M)
     url:f.webViewLink||('drive:'+f.id), enlace:f.webViewLink||('https://drive.google.com/file/d/'+f.id), driveId:f.id, mt:f.modifiedTime||'', iaAnalizado:!!j };
   await registrarDoc(doc);
@@ -4175,7 +4184,7 @@ function replaceHpoInReview(oldId, newId, name){
    segura; nunca inventa. Reutilizado por el editor de fuentes de protocolos y el de síndromes prenatales. */
 async function findFuenteIds(f){
   const isGr=!!geneReviewsInfo(f);
-  const system='Eres bibliotecario científico especializado en identificadores de publicaciones. Te doy el título (y URL si la hay) de UNA referencia bibliográfica. Busca en PubMed/CrossRef/DOI.org su identificador REAL: "doi" (sin el prefijo https://doi.org/), "pmid" (solo dígitos) y/o "pmcid" (formato PMCxxxxxxx). '+(isGr?'Es un capítulo de GeneReviews (NCBI Bookshelf): busca su "nbk" (formato NBKxxxxx) y "gr_updated" (la fecha EXACTA de «Last Update»/«Last Revision» tal cual aparece en la página, p. ej. "September 29, 2022"); DEJA "pmid" VACÍO para GeneReviews (no lo adivines: se deriva del NBK automáticamente).':'')+'Devuelve un identificador SOLO si estás SEGURO de que corresponde EXACTAMENTE a esa referencia (mismo título/autores/año) — déjalo vacío ("") si no encuentras una coincidencia fiable. NUNCA inventes nada. Devuelve SOLO JSON {"doi":"","pmid":"","pmcid":""'+(isGr?',"nbk":"","gr_updated":""':'')+'}.';
+  const system='Eres bibliotecario científico especializado en identificadores de publicaciones. Te doy el título (y URL si la hay) de UNA referencia bibliográfica. Busca en PubMed/CrossRef/DOI.org su identificador REAL: "doi" (sin el prefijo https://doi.org/), "pmid" (solo dígitos) y/o "pmcid" (formato PMCxxxxxxx). '+(isGr?'Es un capítulo de GeneReviews (NCBI Bookshelf): busca su "nbk" (formato NBKxxxxx), "gr_updated" (la fecha EXACTA de «Last Update»/«Last Revision» tal cual aparece, p. ej. "September 29, 2022") y "gr_initial" (la fecha EXACTA de «Initial Posting»/inclusión, p. ej. "January 3, 2001"); si no hay «Last Update», deja "gr_updated" vacío pero rellena SIEMPRE "gr_initial". DEJA "pmid" VACÍO para GeneReviews (no lo adivines: se deriva del NBK automáticamente).':'')+'Devuelve un identificador SOLO si estás SEGURO de que corresponde EXACTAMENTE a esa referencia (mismo título/autores/año) — déjalo vacío ("") si no encuentras una coincidencia fiable. NUNCA inventes nada. Devuelve SOLO JSON {"doi":"","pmid":"","pmcid":""'+(isGr?',"nbk":"","gr_updated":"","gr_initial":""':'')+'}.';
   const user='Referencia: "'+(f.titulo||'')+'"'+(f.url?' — '+f.url:'');
   const resp=await callLLM({system, user, webSearch:true, maxTokens:500, task:'eval'});
   const r=extractJSON(resp)||{};
@@ -4233,9 +4242,10 @@ function buildFuentesEditor(container, getArr, setArr){
       else if(r.pmid){ arr2[fi].pmid=String(r.pmid).trim(); hit=true; }
       if(r.pmcid){ arr2[fi].pmcid=String(r.pmcid).trim(); hit=true; }
       if(r.gr_updated){ arr2[fi].gr_updated=String(r.gr_updated).trim(); hit=true; }
+      if(r.gr_initial){ arr2[fi].gr_initial=String(r.gr_initial).trim(); hit=true; }
       setArr(arr2, true); render();
       const outEl2=container.querySelector('[data-fu="findout"][data-fi="'+fi+'"]');
-      if(outEl2) outEl2.textContent = hit ? ('✓ Encontrado'+(r.gr_updated?' · GeneReviews revisado '+r.gr_updated:'')+'.') : 'No se encontró ningún dato fiable.';
+      if(outEl2) outEl2.textContent = hit ? ('✓ Encontrado'+(r.gr_updated?' · GeneReviews revisado '+r.gr_updated:(r.gr_initial?' · GeneReviews (inclusión '+r.gr_initial+')':''))+'.') : 'No se encontró ningún dato fiable.';
     }catch(e){ const o=container.querySelector('[data-fu="findout"][data-fi="'+fi+'"]'); if(o) o.textContent='Error al buscar: '+e.message; }
   }
   container.addEventListener('input', e=>{
@@ -4604,13 +4614,13 @@ function openFichaReview(f, opts){
     kinds.forEach(([kind,list])=>{ if(Array.isArray(list)) list.forEach((f,idx)=>{ if(!f||!f.titulo) return;
       const isGr=!!geneReviewsInfo(f);
       const faltaId=!f.doi && !f.pmid && !f.pmcid;
-      const faltaGr=isGr && !(f.gr_updated||'').trim();
+      const faltaGr=isGr && !(f.gr_updated||'').trim() && !(f.gr_initial||'').trim();   // sin revisión Y sin fecha de inclusión
       if(faltaId || faltaGr) targets.push({kind, idx, titulo:f.titulo, url:f.url||'', isGr}); }); });
     if(!targets.length){ fout.className='test-out ok'; fout.textContent='Todas las fuentes ya tienen sus identificadores (y las de GeneReviews su fecha de revisión).'; return; }
     if(!anyProvider()){ fout.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
     fout.className='test-out'; fout.textContent='Buscando datos de '+targets.length+' referencia(s)…';
     try{
-      const system='Eres bibliotecario científico especializado en identificadores de publicaciones. Te doy una lista NUMERADA de referencias bibliográficas (título + URL si la hay). Para CADA una, busca en PubMed/CrossRef/DOI.org su identificador REAL: "doi" (sin el prefijo https://doi.org/), "pmid" (solo dígitos) y/o "pmcid" (formato PMCxxxxxxx). Si una referencia es un capítulo de GeneReviews (URL con /books/NBK… o el título menciona GeneReviews), añade además su "nbk" (formato NBKxxxxx) y "gr_updated" (la fecha EXACTA de «Last Update»/«Last Revision» tal cual aparece, p. ej. "September 29, 2022"). Devuelve un dato SOLO si estás SEGURO de que corresponde EXACTAMENTE a esa referencia — déjalo vacío ("") si no. NUNCA inventes nada. Devuelve SOLO JSON {"resultados":[{"index":1,"doi":"","pmid":"","pmcid":"","nbk":"","gr_updated":""}]} — un elemento por cada referencia, mismo "index" que en la lista (empieza en 1).';
+      const system='Eres bibliotecario científico especializado en identificadores de publicaciones. Te doy una lista NUMERADA de referencias bibliográficas (título + URL si la hay). Para CADA una, busca en PubMed/CrossRef/DOI.org su identificador REAL: "doi" (sin el prefijo https://doi.org/), "pmid" (solo dígitos) y/o "pmcid" (formato PMCxxxxxxx). Si una referencia es un capítulo de GeneReviews (URL con /books/NBK… o el título menciona GeneReviews), añade además su "nbk" (formato NBKxxxxx), "gr_updated" (la fecha EXACTA de «Last Update»/«Last Revision» tal cual aparece, p. ej. "September 29, 2022") y "gr_initial" (la fecha EXACTA de «Initial Posting»/inclusión, p. ej. "January 3, 2001"); si no hay «Last Update», deja "gr_updated" vacío pero rellena SIEMPRE "gr_initial". Devuelve un dato SOLO si estás SEGURO de que corresponde EXACTAMENTE a esa referencia — déjalo vacío ("") si no. NUNCA inventes nada. Devuelve SOLO JSON {"resultados":[{"index":1,"doi":"","pmid":"","pmcid":"","nbk":"","gr_updated":"","gr_initial":""}]} — un elemento por cada referencia, mismo "index" que en la lista (empieza en 1).';
       const user='Referencias:\n'+targets.map((t,i)=>(i+1)+'. "'+t.titulo+'"'+(t.url?' — '+t.url:'')+(t.isGr?' [GeneReviews: busca NBK y fecha de Last Update]':'')).join('\n');
       const resp=await callLLM({system, user, webSearch:true, maxTokens:2000, task:'eval'});
       const j2=extractJSON(resp);
@@ -4633,6 +4643,7 @@ function openFichaReview(f, opts){
         if(r.pmcid){ f.pmcid=String(r.pmcid).trim(); hit=true; }
         if(r.nbk){ f.nbk=String(r.nbk).trim().toUpperCase(); hit=true; }
         if(r.gr_updated){ f.gr_updated=String(r.gr_updated).trim(); hit=true; }
+        if(r.gr_initial){ f.gr_initial=String(r.gr_initial).trim(); hit=true; }
         if(hit) found++;
       });
       ta.value=JSON.stringify(jj,null,2); renderPrev(); renderFuentes();   // refresca también el editor visual de referencias (si no, sus campos quedan desfasados y una edición posterior los sobrescribiría con el valor viejo)
@@ -7169,7 +7180,7 @@ async function renderFichaView(f){
 /* La IA identifica el documento (por título/URL/DOI, con búsqueda web) → nombre + descripción + tipo.
    Es el "análisis una sola vez": el resultado se guarda en docs/index.json (GitHub). */
 async function analizarDocIA(fuente, pdfText){
-  const sys='Eres documentalista clínico-genético. Identifica el documento bibliográfico. '+(pdfText?'Te doy un EXTRACTO del texto real del PDF: úsalo como FUENTE PRINCIPAL (el nombre del fichero puede inducir a error, NO te fíes de él). ':'Usa el título/URL/DOI y búsqueda web; NO inventes. ')+'Si es un artículo científico, incluye además su "doi" (10.xxxx, sin el prefijo https://doi.org/), "pmid" (solo dígitos) y "pmcid" (PMCxxxxxxx) SIEMPRE que puedas identificarlos con seguridad (déjalos en "" si no); NO los inventes. Si es un capítulo de GeneReviews (NCBI Bookshelf), pon "genereviews":true, su "nbk" (formato NBKxxxxx) y "gr_updated" (la fecha exacta de «Last Update»/«Last Revision», tal cual aparece, p. ej. "September 29, 2022"); para GeneReviews DEJA "pmid" VACÍO (no lo adivines: se obtiene de forma automática y verificada a partir del NBK). Devuelve SOLO JSON {"cita":"cita bibliográfica COMPLETA estilo Vancouver (Autores. Título. Revista Año;vol(núm):págs.; para libro/GeneReviews: Autores. Título. GeneReviews®. Año); déjala en "" si no puedes construirla con seguridad","nombre":"nombre CORTO y claro en español (NO es la cita), sin comillas","descripcion":"1-2 frases: QUÉ es y para qué sirve","tipo":"guía clínica|revisión|artículo original|consenso|libro|base de datos|GeneReviews|otro","anio":"AAAA","doi":"","pmid":"","pmcid":"","genereviews":false,"nbk":"","gr_updated":""}.';
+  const sys='Eres documentalista clínico-genético. Identifica el documento bibliográfico. '+(pdfText?'Te doy un EXTRACTO del texto real del PDF: úsalo como FUENTE PRINCIPAL (el nombre del fichero puede inducir a error, NO te fíes de él). ':'Usa el título/URL/DOI y búsqueda web; NO inventes. ')+'Si es un artículo científico, incluye además su "doi" (10.xxxx, sin el prefijo https://doi.org/), "pmid" (solo dígitos) y "pmcid" (PMCxxxxxxx) SIEMPRE que puedas identificarlos con seguridad (déjalos en "" si no); NO los inventes. Si es un capítulo de GeneReviews (NCBI Bookshelf), pon "genereviews":true, su "nbk" (formato NBKxxxxx), "gr_updated" (la fecha exacta de «Last Update»/«Last Revision», tal cual aparece, p. ej. "September 29, 2022") y "gr_initial" (la fecha exacta de «Initial Posting»/inclusión, p. ej. "January 3, 2001"); si no hay «Last Update», deja "gr_updated" vacío pero rellena SIEMPRE "gr_initial"; para GeneReviews DEJA "pmid" VACÍO (no lo adivines: se obtiene de forma automática y verificada a partir del NBK). Devuelve SOLO JSON {"cita":"cita bibliográfica COMPLETA estilo Vancouver (Autores. Título. Revista Año;vol(núm):págs.; para libro/GeneReviews: Autores. Título. GeneReviews®. Año); déjala en "" si no puedes construirla con seguridad","nombre":"nombre CORTO y claro en español (NO es la cita), sin comillas","descripcion":"1-2 frases: QUÉ es y para qué sirve","tipo":"guía clínica|revisión|artículo original|consenso|libro|base de datos|GeneReviews|otro","anio":"AAAA","doi":"","pmid":"","pmcid":"","genereviews":false,"nbk":"","gr_updated":"","gr_initial":""}.';
   const user='Documento: '+JSON.stringify({titulo:fuente.titulo||'', url:fuente.url||'', doi:fuente.doi||''})+(pdfText?('\n\nEXTRACTO DEL PDF (texto real, prioritario):\n'+pdfText.slice(0,6000)):'');
   // Con texto del PDF, identificar el documento es una tarea sencilla → modelo BARATO (assign). Sin texto, hace falta búsqueda web (eval).
   const resp=await callLLM({system:sys, user, webSearch:!pdfText, maxTokens:700, task: pdfText ? 'assign' : 'eval'});
