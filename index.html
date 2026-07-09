@@ -491,8 +491,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.3.0';
+const APP_VERSION='2.3.1';
 const CHANGELOG=[
+  {v:'2.3.1', d:'2026-07-09', c:['En las fuentes del chat «Consultar», el botón «➕ a mi biblioteca» solo aparece cuando la referencia NO está ya en tu repositorio; si ya la tienes, muestra «✓ en tu biblioteca» (lo detecta por NBK/PMID/DOI/URL/alias, como el resto de la app).']},
   {v:'2.3.0', d:'2026-07-09', c:['El chat «Consultar» ahora muestra sus FUENTES como referencias reales, no como nombres de fichero: cada cita sale con su badge (📖 GeneReviews / PMID / DOI / Papers) y un botón «➕ a mi biblioteca» para añadirla a tu repositorio bibliográfico igual que el resto. Para los títulos y datos exactos, configura en ⚙ Ajustes el nuevo campo «Segundo cerebro — repositorio de referencias» (owner/repo del pipeline, que contiene sources.json). Sin él, las citas de GeneReviews igualmente salen con su badge y enlace al capítulo (derivado del NBK).']},
   {v:'2.2.0', d:'2026-07-09', c:['El chat «💬 Consultar» se conecta al SEGUNDO CEREBRO (Vector Store de OpenAI). En ⚙ Ajustes hay un campo nuevo «Segundo cerebro — id(s) del Vector Store»: pega ahí el id que genera el pipeline (secondbrain/store.json). Cuando está puesto, el chat pregunta a ese store (File Search) en vez de al buscador local: mucho más rápido y con síntesis coherente, sobre GeneReviews + tus documentos, citando las fuentes (con enlace al capítulo NBK). Si dejas el campo vacío, el chat sigue usando el buscador local de Ariadna como hasta ahora.']},
   {v:'2.1.2', d:'2026-07-08', c:['(Segundo cerebro — herramientas) Nuevo botón «⬇ Token 2º cerebro» en «Documentos» (visible con Drive conectado): copia una línea lista para pegar en la terminal, con tu token de Drive, para que el script del segundo cerebro descargue automáticamente tus PDF de Drive. El token es tuyo, caduca en ~1h y no sale de tu Mac.']},
@@ -3631,9 +3632,13 @@ function renderChatMsgs(){
     if(m.sources && m.sources.length){
       const seen=new Set(), fuentes=[];
       for(const nm of m.sources){ const k=String(nm).split('__')[0]; if(seen.has(k)) continue; seen.add(k); fuentes.push(chatSourceFuente(nm)); }
+      const repoDocs=(cachedDocs()||{}).docs||[];
       src='<div class="dx-meta" style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px">📎 Fuentes:<div style="margin-top:3px">'
         + fuentes.map(f=>{ const enc=encodeURIComponent(JSON.stringify(f));
-            return '<div style="margin:2px 0">'+(f.url?('<a href="'+escA(f.url)+'" target="_blank" rel="noopener" style="color:var(--accent)">'+escHtml(f.titulo)+'</a>'):('<span>'+escHtml(f.titulo)+'</span>'))+bibRefHtml(f,{noAssign:true})+' <a class="tip-ai chat-add" data-fu="'+enc+'" title="Añadir esta referencia a tu repositorio bibliográfico">➕ a mi biblioteca</a></div>'; }).join('')
+            const inRepo=!!matchDoc(f, repoDocs);   // ya en tu biblioteca (por NBK/PMID/DOI/URL/alias) → no ofrecer «añadir»
+            const add=inRepo ? '<span class="dx-meta" style="color:var(--ok)" title="Ya está en tu biblioteca">✓ en tu biblioteca</span>'
+                             : '<a class="tip-ai chat-add" data-fu="'+enc+'" title="Añadir esta referencia a tu repositorio bibliográfico">➕ a mi biblioteca</a>';
+            return '<div style="margin:2px 0">'+(f.url?('<a href="'+escA(f.url)+'" target="_blank" rel="noopener" style="color:var(--accent)">'+escHtml(f.titulo)+'</a>'):('<span>'+escHtml(f.titulo)+'</span>'))+bibRefHtml(f,{noAssign:true})+' '+add+'</div>'; }).join('')
         + '</div></div>';
     }
     return `<div style="background:${bg};border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0"><div class="dx-meta" style="font-weight:600;margin-bottom:4px">${who}</div><div style="font-size:13.5px;line-height:1.6">${body}</div>${src}</div>`;
