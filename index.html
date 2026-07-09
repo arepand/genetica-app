@@ -491,8 +491,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.3.1';
+const APP_VERSION='2.3.2';
 const CHANGELOG=[
+  {v:'2.3.2', d:'2026-07-09', c:['CHAT «Consultar» — grounding estricto: ya NO responde con conocimiento general cuando la pregunta no está en tu documentación. Antes, si el tema no estaba indexado (p. ej. una enfermedad aún no subida al segundo cerebro), contestaba de memoria y colgaba una cita equivocada; ahora el buscador aplica un umbral de relevancia, y si no recupera pasajes que traten de lo preguntado responde «No encuentro esto en tu documentación» sin inventar respuesta ni fuentes.']},
   {v:'2.3.1', d:'2026-07-09', c:['En las fuentes del chat «Consultar», el botón «➕ a mi biblioteca» solo aparece cuando la referencia NO está ya en tu repositorio; si ya la tienes, muestra «✓ en tu biblioteca» (lo detecta por NBK/PMID/DOI/URL/alias, como el resto de la app).']},
   {v:'2.3.0', d:'2026-07-09', c:['El chat «Consultar» ahora muestra sus FUENTES como referencias reales, no como nombres de fichero: cada cita sale con su badge (📖 GeneReviews / PMID / DOI / Papers) y un botón «➕ a mi biblioteca» para añadirla a tu repositorio bibliográfico igual que el resto. Para los títulos y datos exactos, configura en ⚙ Ajustes el nuevo campo «Segundo cerebro — repositorio de referencias» (owner/repo del pipeline, que contiene sources.json). Sin él, las citas de GeneReviews igualmente salen con su badge y enlace al capítulo (derivado del NBK).']},
   {v:'2.2.0', d:'2026-07-09', c:['El chat «💬 Consultar» se conecta al SEGUNDO CEREBRO (Vector Store de OpenAI). En ⚙ Ajustes hay un campo nuevo «Segundo cerebro — id(s) del Vector Store»: pega ahí el id que genera el pipeline (secondbrain/store.json). Cuando está puesto, el chat pregunta a ese store (File Search) en vez de al buscador local: mucho más rápido y con síntesis coherente, sobre GeneReviews + tus documentos, citando las fuentes (con enlace al capítulo NBK). Si dejas el campo vacío, el chat sigue usando el buscador local de Ariadna como hasta ahora.']},
@@ -3568,17 +3569,30 @@ function chatSourceFuente(name){
   if(nbk) return {titulo:'GeneReviews '+nbk.toUpperCase(), url:'https://www.ncbi.nlm.nih.gov/books/'+nbk.toUpperCase()+'/', nbk:nbk.toUpperCase(), _src:'GeneReviews'};
   return {titulo:String(name).replace(/\.(md|txt|pdf)$/i,'').replace(/__/g,' · ')};
 }
-const CHAT_SYSTEM_STORE='Eres un asistente documental para un genetista clínico. Responde ÚNICA y EXCLUSIVAMENTE con la información recuperada de la documentación por la herramienta de búsqueda (file_search). Da UNA respuesta coherente que INTEGRE las fuentes en una explicación fluida y clínica (NO listes fragmentos sueltos ni "el documento X dice…"). Si la respuesta no está en la documentación, dilo con claridad. NO escribas una sección de «Fuentes» ni nombres de fichero: la aplicación muestra las referencias por su cuenta. Responde en español, con precisión, sin inventar.';
+const CHAT_SYSTEM_STORE='Eres un asistente documental para un genetista clínico. Respondes SOLO con lo que aparezca en los PASAJES recuperados por file_search de SU documentación. REGLAS ESTRICTAS: (1) PROHIBIDO usar conocimiento general, externo o de memoria. (2) Si la respuesta no está en los pasajes recuperados, o los pasajes tratan de OTRA enfermedad/gen/tema distinto al preguntado, responde EXACTAMENTE con la palabra NO_ENCONTRADO y nada más. (3) Nunca cites ni menciones un documento que no trate específicamente lo preguntado. Cuando SÍ esté en los pasajes: da UNA respuesta coherente que integre las fuentes en una explicación clínica fluida (no listes fragmentos sueltos ni "el documento X dice…"); NO escribas una sección de «Fuentes» ni nombres de fichero (la app las muestra aparte). Responde en español, con precisión, sin inventar.';
 /* Consulta el/los Vector Store(s) vía la Responses API de OpenAI (File Search) → respuesta única + citas. */
 async function askRepoStore(input, ids){
   const c=loadCfg();
-  const body={ model:'gpt-4o-mini', instructions:CHAT_SYSTEM_STORE, input, tools:[{type:'file_search', vector_store_ids:ids}] };
+  const body={ model:'gpt-4o-mini', instructions:CHAT_SYSTEM_STORE, input,
+    // umbral de relevancia → descarta coincidencias flojas (p. ej. otra enfermedad); pedimos los resultados
+    tools:[{type:'file_search', vector_store_ids:ids, max_num_results:8, ranking_options:{score_threshold:0.5}}],
+    include:['file_search_call.results'] };
   const r=await fetch('https://api.openai.com/v1/responses', { method:'POST', headers:{Authorization:'Bearer '+c.openaiKey,'Content-Type':'application/json'}, body:JSON.stringify(body) });
   if(!r.ok) throw new Error('OpenAI '+r.status+' '+(await r.text()).slice(0,160));
   const d=await r.json();
-  let text=''; const cites=new Set();
-  for(const o of (d.output||[])){ if(o.type==='message'){ for(const cc of (o.content||[])){ if(cc.type==='output_text'){ text+=cc.text||''; for(const a of (cc.annotations||[])) if(a.filename) cites.add(a.filename); } } } }
-  return { text:(text || d.output_text || '').trim(), sources:[...cites] };
+  let text=''; const cites=new Set(); const retrieved=new Set();
+  for(const o of (d.output||[])){
+    if(o.type==='file_search_call'){ for(const rr of (o.results||[])) if(rr.filename) retrieved.add(rr.filename); }
+    if(o.type==='message'){ for(const cc of (o.content||[])){ if(cc.type==='output_text'){ text+=cc.text||''; for(const a of (cc.annotations||[])) if(a.filename) cites.add(a.filename); } } }
+  }
+  text=(text || d.output_text || '').trim();
+  // GROUNDING: si el buscador no recuperó nada relevante, o el modelo señaló que no está → NO respondas de memoria
+  if(!retrieved.size || /^NO_ENCONTRADO/i.test(text)){
+    return { text:'No encuentro esto en tu documentación. El chat responde solo con tus documentos y las GeneReviews indexadas — si acabas de lanzar el segundo cerebro, puede que aún se esté cargando.', sources:[], notFound:true };
+  }
+  // Solo se muestran como fuente los documentos REALMENTE recuperados (no una cita colgada de un doc ajeno)
+  const src=[...cites].filter(f=>retrieved.has(f));
+  return { text, sources: src.length ? src : [...retrieved].slice(0,4) };
 }
 async function askRepo(q){
   q=(q||'').trim(); if(!q) return;
