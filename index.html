@@ -491,8 +491,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.1.2';
+const APP_VERSION='2.2.0';
 const CHANGELOG=[
+  {v:'2.2.0', d:'2026-07-09', c:['El chat «💬 Consultar» se conecta al SEGUNDO CEREBRO (Vector Store de OpenAI). En ⚙ Ajustes hay un campo nuevo «Segundo cerebro — id(s) del Vector Store»: pega ahí el id que genera el pipeline (secondbrain/store.json). Cuando está puesto, el chat pregunta a ese store (File Search) en vez de al buscador local: mucho más rápido y con síntesis coherente, sobre GeneReviews + tus documentos, citando las fuentes (con enlace al capítulo NBK). Si dejas el campo vacío, el chat sigue usando el buscador local de Ariadna como hasta ahora.']},
   {v:'2.1.2', d:'2026-07-08', c:['(Segundo cerebro — herramientas) Nuevo botón «⬇ Token 2º cerebro» en «Documentos» (visible con Drive conectado): copia una línea lista para pegar en la terminal, con tu token de Drive, para que el script del segundo cerebro descargue automáticamente tus PDF de Drive. El token es tuyo, caduca en ~1h y no sale de tu Mac.']},
   {v:'2.1.1', d:'2026-07-08', c:['Al fusionar una referencia con su PDF, ahora también se marca la flag «✓ bibliografía» correctamente (antes desaparecía de «sin PDF» pero no se marcaba como citada): la flag reconoce la cita por DOI/PMID/NBK/URL/título/alias, aunque el título del documento difiera del de la cita del protocolo.','Chatbot «Consultar» más conversacional: puedes repreguntar y seguir el hilo — las preguntas de seguimiento tienen en cuenta el contexto de la conversación para recuperar los documentos correctos. Ahora se envía con Enter (Shift+Enter = salto de línea).']},
   {v:'2.1.0', d:'2026-07-08', c:['Indicaciones de estudio prenatal EDITABLES: en la pestaña Prenatal, junto a «Indicación de estudio prenatal sugerida», hay ahora un «✎ editar» que abre un editor donde puedes cambiar el texto de cada recomendación (CMA, exoma, etc.) y sus referencias (con el mismo editor del repositorio: 📁 vincular, 🔍 buscar, badges). Las condiciones (nº de anomalías mayores, nucal, marcadores) siguen fijas. Se guarda en tu GitHub y puedes «Restaurar por defecto» cuando quieras. Antes esto solo se podía cambiar en el código.']},
@@ -1193,7 +1194,7 @@ function resetPatient(){
 /* ---- Config en localStorage ---- */
 const CFG_KEY='fh_cfg';
 const CFG_DEFAULTS={ anthropicKey:'', openaiKey:'', preferProvider:'anthropic', models:{}, gh_owner:'', gh_repo:'', gh_branch:'main', gh_pat:'',
-  driveClientId:'672017094614-goqdjb7159poff6jieh7rgjtop06askb.apps.googleusercontent.com', driveFolder:'', driveSubfolders:false };
+  driveClientId:'672017094614-goqdjb7159poff6jieh7rgjtop06askb.apps.googleusercontent.com', driveFolder:'', driveSubfolders:false, secondBrainStore:'' };
 function loadCfg(){
   let c; try{ c=Object.assign({}, CFG_DEFAULTS, JSON.parse(localStorage.getItem(CFG_KEY))||{}); }catch(e){ c=Object.assign({}, CFG_DEFAULTS); }
   // Migración desde el esquema antiguo {provider, llmKey}
@@ -2229,6 +2230,8 @@ function openSettings(){
       <input id="cfgAnthropicKey" type="password" value="${c.anthropicKey||''}" placeholder="sk-ant-…" autocomplete="off"></div>
     <div class="field"><label>OpenAI — API key</label>
       <input id="cfgOpenaiKey" type="password" value="${c.openaiKey||''}" placeholder="sk-…" autocomplete="off"></div>
+    <div class="field"><label>Segundo cerebro — id(s) del Vector Store <span class="dx-meta">(el chat «Consultar» preguntará a este store; varios separados por coma)</span></label>
+      <input id="cfgSbStore" type="text" value="${escHtml(c.secondBrainStore||'').replace(/"/g,'&quot;')}" placeholder="vs_… (lo da secondbrain/store.json; vacío = usar el buscador local)" autocomplete="off"></div>
     <div class="field"><label>Proveedor de IA cuando tienes las dos claves</label>
       <div class="seg" id="prefSeg">
         <button data-pref="anthropic" class="${(c.preferProvider||'anthropic')==='anthropic'?'on':''}">Claude primero</button>
@@ -2387,6 +2390,7 @@ function openSettings(){
     saveCfg({
       anthropicKey: ov.querySelector('#cfgAnthropicKey').value.trim(),
       openaiKey: ov.querySelector('#cfgOpenaiKey').value.trim(),
+      secondBrainStore: (ov.querySelector('#cfgSbStore')?ov.querySelector('#cfgSbStore').value.trim():(prev.secondBrainStore||'')),
       preferProvider: pref,
       models,
       gh_owner: ov.querySelector('#cfgOwner').value.trim(),
@@ -3530,13 +3534,37 @@ async function retrieveRepo(query, k){
   let sem=null; try{ sem=await semRetrieve(query, k||10); }catch(e){}
   return mergeRag([sem, lex], k||12);
 }
+/* Segundo cerebro: id(s) del/los Vector Store(s) de OpenAI configurados. Si hay → el chat pregunta ahí. */
+function secondBrainStores(){ return String(loadCfg().secondBrainStore||'').split(/[\s,]+/).filter(Boolean); }
+const CHAT_SYSTEM_STORE='Eres un asistente documental para un genetista clínico. Responde ÚNICA y EXCLUSIVAMENTE con la información recuperada de la documentación por la herramienta de búsqueda (file_search). Da UNA respuesta coherente que INTEGRE las fuentes en una explicación fluida y clínica (NO listes fragmentos sueltos ni "el documento X dice…"). Si la respuesta no está en la documentación, dilo con claridad. Al final, en «Fuentes:», nombra los documentos usados. Responde en español, con precisión, sin inventar.';
+/* Consulta el/los Vector Store(s) vía la Responses API de OpenAI (File Search) → respuesta única + citas. */
+async function askRepoStore(input, ids){
+  const c=loadCfg();
+  const body={ model:'gpt-4o-mini', instructions:CHAT_SYSTEM_STORE, input, tools:[{type:'file_search', vector_store_ids:ids}] };
+  const r=await fetch('https://api.openai.com/v1/responses', { method:'POST', headers:{Authorization:'Bearer '+c.openaiKey,'Content-Type':'application/json'}, body:JSON.stringify(body) });
+  if(!r.ok) throw new Error('OpenAI '+r.status+' '+(await r.text()).slice(0,160));
+  const d=await r.json();
+  let text=''; const cites=new Set();
+  for(const o of (d.output||[])){ if(o.type==='message'){ for(const cc of (o.content||[])){ if(cc.type==='output_text'){ text+=cc.text||''; for(const a of (cc.annotations||[])) if(a.filename) cites.add(a.filename); } } } }
+  return { text:(text || d.output_text || '').trim(), sources:[...cites] };
+}
 async function askRepo(q){
   q=(q||'').trim(); if(!q) return;
   if(!anyProvider()){ _chatMsgs.push({role:'assistant', text:'Configura una API key (Claude u OpenAI) en ⚙ Ajustes para poder consultar.'}); renderChatMsgs(); return; }
   const prevUser=_chatMsgs.filter(m=>m.role==='user').slice(-1)[0];   // para repreguntas: da contexto a la recuperación
   _chatMsgs.push({role:'user', text:q});
   const pend={role:'assistant', text:'', pending:true}; _chatMsgs.push(pend); renderChatMsgs();
+  const histText=()=>_chatMsgs.filter(m=>!m.pending && m.text).slice(-7,-1).map(m=>(m.role==='user'?'Usuario: ':'Asistente: ')+m.text).join('\n');
   try{
+    // SEGUNDO CEREBRO: si hay Vector Store configurado + clave OpenAI, se pregunta ahí (rápido, síntesis, citas).
+    const ids=secondBrainStores();
+    if(ids.length && loadCfg().openaiKey){
+      const h=histText();
+      const input=(h?('Conversación previa (contexto):\n'+h+'\n\n'):'')+'PREGUNTA: '+q;
+      const {text, sources}=await askRepoStore(input, ids);
+      pend.pending=false; pend.text=text||'No encuentro esa información en tu documentación.'; pend.sources=sources; renderChatMsgs(); return;
+    }
+    // Respaldo (sin store): buscador LOCAL (BM25 + semántico) sobre lo indexado en Ariadna.
     const retrievalQuery = prevUser ? (prevUser.text+' \n '+q) : q;   // combina la pregunta anterior + la actual → recupera bien los seguimientos
     const hits=await retrieveRepo(retrievalQuery, 12);
     if(!hits.length){ pend.pending=false; pend.text='No encuentro nada en tu documentación indexada. Ve a «Documentos», conéctate a Drive e indexa tus PDF (y, si quieres búsqueda por significado, construye el índice semántico).'; renderChatMsgs(); return; }
@@ -3550,6 +3578,12 @@ async function askRepo(q){
   }catch(e){ pend.pending=false; pend.text='Error al consultar: '+e.message; renderChatMsgs(); }
 }
 function chatSourceHtml(name){
+  // Nombres del Vector Store son ficheros (NBK1246__genetic-counseling.md) → legibles; los locales, por título.
+  if(/\.(md|txt|pdf)$/i.test(name) || name.includes('__')){
+    const nice=String(name).replace(/\.(md|txt|pdf)$/i,'').replace(/__/g,' · ').replace(/-/g,' ').replace(/\b(nbk\d+)\b/i,m=>m.toUpperCase());
+    const nbk=(name.match(/NBK\d+/i)||[])[0];
+    return nbk?`<a href="https://www.ncbi.nlm.nih.gov/books/${nbk.toUpperCase()}/" target="_blank" rel="noopener" style="color:var(--accent)">${escHtml(nice)}</a>`:`<span>${escHtml(nice)}</span>`;
+  }
   const docs=(cachedDocs()||{}).docs||[]; const d=docs.find(x=>normTxt(x.titulo||x.nombre||'')===normTxt(name));
   const url=d&&(d.enlace||d.url);
   return url?`<a href="${escA(url)}" target="_blank" rel="noopener" style="color:var(--accent)">${escHtml(name)}</a>`:`<span>${escHtml(name)}</span>`;
@@ -3570,7 +3604,7 @@ function renderConsultar(){
   const box=document.getElementById('consultarView'); if(!box) return;
   box.innerHTML=`
     <div class="lib-head"><h2>💬 Consultar tu documentación</h2><button class="btn ghost" id="chatClear" style="padding:3px 10px;font-size:12px">Limpiar</button></div>
-    <div class="sec-note" style="max-width:900px;margin:0 auto">Respondo <b>solo</b> con la información de tus PDF y libros indexados (búsqueda híbrida: palabras + significado), citando de qué documento sale. Si algo no está en tu documentación, te lo digo — <b>no uso conocimiento externo</b>. Consume IA (una llamada por pregunta).</div>
+    <div class="sec-note" style="max-width:900px;margin:0 auto">Respondo <b>solo</b> con la información de tu documentación${secondBrainStores().length?' — conectado a tu <b>segundo cerebro</b> (Vector Store de OpenAI: GeneReviews + tus documentos)':' indexada en Ariadna (búsqueda local; configura el Vector Store en ⚙ Ajustes para el segundo cerebro)'}, citando de qué documento sale. Si algo no está, te lo digo — <b>no uso conocimiento externo</b>. Consume IA.</div>
     <div id="chatMsgs" style="max-width:900px;margin:12px auto;min-height:180px"></div>
     <div style="max-width:900px;margin:0 auto;display:flex;gap:8px;position:sticky;bottom:0;padding:10px 0;background:var(--bg)">
       <textarea id="chatInput" rows="2" placeholder="Escribe tu pregunta y pulsa Enter (Shift+Enter = salto de línea). Puedes repreguntar y seguir la conversación." style="flex:1;box-sizing:border-box;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);color:var(--ink);font-size:13.5px;resize:vertical"></textarea>
