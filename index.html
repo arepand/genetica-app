@@ -491,8 +491,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.7.0';
+const APP_VERSION='2.7.1';
 const CHANGELOG=[
+  {v:'2.7.1', d:'2026-07-10', c:['Al pulsar «↻ Refrescar modelos disponibles» (⚙ Ajustes) ahora se LISTA la lista real de modelos que devuelve tu cuenta OpenAI/Claude, para ver de un vistazo si gpt-5, o-series, etc. están disponibles. Recordatorio: los modos «rápido» del chat usan el modelo barato a propósito (gpt-4o-mini); gpt-5 aparece en los modos «concienzudo».']},
   {v:'2.7.0', d:'2026-07-10', c:['Selector del chat «Consultar» simplificado a 4 modos claros que ELIGEN SOLOS el mejor modelo disponible (y muestran cuáles usan entre paréntesis): «OpenAI · rápido», «OpenAI · concienzudo», «Híbrido · rápido» e «Híbrido · concienzudo». NUEVO modo HÍBRIDO: OpenAI busca en tu Vector Store y CLAUDE redacta la respuesta clínica a partir de los pasajes recuperados — así puedes usar Claude sobre el segundo cerebro (necesita clave de Claude). El grounding estricto y las referencias se mantienen en todos los modos.']},
   {v:'2.6.0', d:'2026-07-10', c:['El chat «Consultar» ahora deja ELEGIR el modelo de OpenAI (⚙ Ajustes → «Modelo del chat»): antes estaba fijado a gpt-4o-mini y no usaba los modelos nuevos. El desplegable se rellena con los modelos de tu cuenta OpenAI (pulsa «↻ Refrescar modelos disponibles» para traer los recién salidos, p. ej. gpt-5). Por defecto sigue gpt-4o-mini (barato); súbelo a uno mayor si quieres síntesis más fina.']},
   {v:'2.5.0', d:'2026-07-10', c:['Chat «Consultar» a nivel especialista: las respuestas se dirigen a un genetista clínico EXPERIMENTADO (precisas y técnicas, sin explicaciones básicas). Cuando VARIAS fuentes tratan lo preguntado, ahora INTEGRA todas en una respuesta única y muestra TODAS las referencias utilizadas (antes tendía a dar solo una). Se recuperan más pasajes por consulta para poder combinar fuentes.']},
@@ -2385,7 +2386,11 @@ function openSettings(){
       catch(e){ msgs.push(p+': ✗ '+e.message); }
     }
     saveCfg(prev); // restaura hasta Guardar
-    out.className='test-out ok'; out.textContent = msgs.length? ('Modelos: '+msgs.join(' · ')) : 'Escribe alguna API key primero.';
+    const oaList=cachedModels('openai'), clList=cachedModels('anthropic');
+    // Muestra la LISTA real que devuelve tu cuenta (para ver si gpt-5, o-series, etc. están disponibles)
+    out.className='test-out ok'; out.innerHTML = (msgs.length? ('Modelos: '+msgs.join(' · ')) : 'Escribe alguna API key primero.')
+      + (oaList.length? '<br><span class="dx-meta" style="font-size:10px;line-height:1.5">OpenAI ('+oaList.length+'): '+oaList.map(escHtml).join(', ')+'</span>':'')
+      + (clList.length? '<br><span class="dx-meta" style="font-size:10px;line-height:1.5">Claude ('+clList.length+'): '+clList.map(escHtml).join(', ')+'</span>':'');
     ov.querySelector('#cfgModelGrid').innerHTML = modelGridHtml(); // re-render con la lista nueva
     const csel=ov.querySelector('#cfgChatMode');   // repuebla los modelos entre paréntesis del selector del chat
     if(csel){ csel.innerHTML=chatModeOptionsHtml(csel.value); }
