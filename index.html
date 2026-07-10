@@ -491,8 +491,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.5.0';
+const APP_VERSION='2.6.0';
 const CHANGELOG=[
+  {v:'2.6.0', d:'2026-07-10', c:['El chat «Consultar» ahora deja ELEGIR el modelo de OpenAI (⚙ Ajustes → «Modelo del chat»): antes estaba fijado a gpt-4o-mini y no usaba los modelos nuevos. El desplegable se rellena con los modelos de tu cuenta OpenAI (pulsa «↻ Refrescar modelos disponibles» para traer los recién salidos, p. ej. gpt-5). Por defecto sigue gpt-4o-mini (barato); súbelo a uno mayor si quieres síntesis más fina.']},
   {v:'2.5.0', d:'2026-07-10', c:['Chat «Consultar» a nivel especialista: las respuestas se dirigen a un genetista clínico EXPERIMENTADO (precisas y técnicas, sin explicaciones básicas). Cuando VARIAS fuentes tratan lo preguntado, ahora INTEGRA todas en una respuesta única y muestra TODAS las referencias utilizadas (antes tendía a dar solo una). Se recuperan más pasajes por consulta para poder combinar fuentes.']},
   {v:'2.4.2', d:'2026-07-10', c:['Las citas de GeneReviews en el chat «Consultar» ahora muestran «NBKxxxx — Título de la enfermedad» (antes solo el NBK). El título se toma del sources.json del segundo cerebro; mientras no esté disponible, se muestra el NBK a secas (con su badge 📖 GeneReviews).']},
   {v:'2.4.1', d:'2026-07-10', c:['Chat «Consultar» más robusto: ante un error TEMPORAL del servidor de OpenAI (500/429/503) al consultar el segundo cerebro, ahora reintenta automáticamente (con espera creciente) en vez de cortar con «Error al consultar: OpenAI 500». Si aun así falla, el mensaje lo explica como temporal e invita a reintentar.']},
@@ -1201,7 +1202,9 @@ function resetPatient(){
 /* ---- Config en localStorage ---- */
 const CFG_KEY='fh_cfg';
 const CFG_DEFAULTS={ anthropicKey:'', openaiKey:'', preferProvider:'anthropic', models:{}, gh_owner:'', gh_repo:'', gh_branch:'main', gh_pat:'',
-  driveClientId:'672017094614-goqdjb7159poff6jieh7rgjtop06askb.apps.googleusercontent.com', driveFolder:'', driveSubfolders:false, secondBrainStore:'', secondBrainRepo:'' };
+  driveClientId:'672017094614-goqdjb7159poff6jieh7rgjtop06askb.apps.googleusercontent.com', driveFolder:'', driveSubfolders:false, secondBrainStore:'', secondBrainRepo:'', chatModel:'' };
+const CHAT_MODEL_DEFAULT='gpt-4o-mini';
+function chatModel(){ const m=(loadCfg().chatModel||'').trim(); return m||CHAT_MODEL_DEFAULT; }
 function loadCfg(){
   let c; try{ c=Object.assign({}, CFG_DEFAULTS, JSON.parse(localStorage.getItem(CFG_KEY))||{}); }catch(e){ c=Object.assign({}, CFG_DEFAULTS); }
   // Migración desde el esquema antiguo {provider, llmKey}
@@ -2249,6 +2252,10 @@ function openSettings(){
       <input id="cfgSbStore" type="text" value="${escHtml(c.secondBrainStore||'').replace(/"/g,'&quot;')}" placeholder="vs_… (lo da secondbrain/store.json; vacío = usar el buscador local)" autocomplete="off"></div>
     <div class="field"><label>Segundo cerebro — repositorio de referencias <span class="dx-meta">(owner/repo del pipeline con sources.json → citas con badge y «añadir a biblioteca»)</span></label>
       <input id="cfgSbRepo" type="text" value="${escHtml(c.secondBrainRepo||'').replace(/"/g,'&quot;')}" placeholder="tu-usuario/ariadna-secondbrain (usa tu token de GitHub; opcional)" autocomplete="off"></div>
+    <div class="field"><label>Modelo del chat «Consultar» (OpenAI) <span class="dx-meta">(el que responde en el segundo cerebro; refresca la lista con el botón de «Modelos por tarea» de abajo)</span></label>
+      <select id="cfgChatModel" style="width:100%; padding:8px 9px; border:1px solid var(--line); border-radius:8px; background:var(--panel2); color:var(--ink)">
+        ${[...new Set([CHAT_MODEL_DEFAULT, chatModel(), ...cachedModels('openai')])].map(id=>`<option value="${id}" ${id===chatModel()?'selected':''}>${id}${id===CHAT_MODEL_DEFAULT?' · def.':''}</option>`).join('')}
+      </select></div>
     <div class="field"><label>Proveedor de IA cuando tienes las dos claves</label>
       <div class="seg" id="prefSeg">
         <button data-pref="anthropic" class="${(c.preferProvider||'anthropic')==='anthropic'?'on':''}">Claude primero</button>
@@ -2359,6 +2366,8 @@ function openSettings(){
     saveCfg(prev); // restaura hasta Guardar
     out.className='test-out ok'; out.textContent = msgs.length? ('Modelos: '+msgs.join(' · ')) : 'Escribe alguna API key primero.';
     ov.querySelector('#cfgModelGrid').innerHTML = modelGridHtml(); // re-render con la lista nueva
+    const csel=ov.querySelector('#cfgChatModel');   // repuebla también el modelo del chat con la lista nueva
+    if(csel){ const sel=csel.value; csel.innerHTML=[...new Set([CHAT_MODEL_DEFAULT, chatModel(), ...cachedModels('openai')])].map(id=>`<option value="${id}" ${id===sel?'selected':''}>${id}${id===CHAT_MODEL_DEFAULT?' · def.':''}</option>`).join(''); }
   });
 
   ov.querySelector('#cfgTestGh').addEventListener('click', async ()=>{
@@ -2409,6 +2418,7 @@ function openSettings(){
       openaiKey: ov.querySelector('#cfgOpenaiKey').value.trim(),
       secondBrainStore: (ov.querySelector('#cfgSbStore')?ov.querySelector('#cfgSbStore').value.trim():(prev.secondBrainStore||'')),
       secondBrainRepo: (ov.querySelector('#cfgSbRepo')?ov.querySelector('#cfgSbRepo').value.trim():(prev.secondBrainRepo||'')),
+      chatModel: (ov.querySelector('#cfgChatModel')?ov.querySelector('#cfgChatModel').value.trim():(prev.chatModel||'')),
       preferProvider: pref,
       models,
       gh_owner: ov.querySelector('#cfgOwner').value.trim(),
@@ -3590,7 +3600,7 @@ const CHAT_SYSTEM_STORE='Eres un asistente documental para un GENETISTA CLÍNICO
 /* Consulta el/los Vector Store(s) vía la Responses API de OpenAI (File Search) → respuesta única + citas. */
 async function askRepoStore(input, ids){
   const c=loadCfg();
-  const body={ model:'gpt-4o-mini', instructions:CHAT_SYSTEM_STORE, input,
+  const body={ model:chatModel(), instructions:CHAT_SYSTEM_STORE, input,
     // umbral de relevancia → descarta coincidencias flojas (p. ej. otra enfermedad); pedimos los resultados
     tools:[{type:'file_search', vector_store_ids:ids, max_num_results:12, ranking_options:{score_threshold:0.5}}],
     include:['file_search_call.results'] };
