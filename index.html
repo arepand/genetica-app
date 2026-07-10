@@ -491,8 +491,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.6.0';
+const APP_VERSION='2.7.0';
 const CHANGELOG=[
+  {v:'2.7.0', d:'2026-07-10', c:['Selector del chat «Consultar» simplificado a 4 modos claros que ELIGEN SOLOS el mejor modelo disponible (y muestran cuáles usan entre paréntesis): «OpenAI · rápido», «OpenAI · concienzudo», «Híbrido · rápido» e «Híbrido · concienzudo». NUEVO modo HÍBRIDO: OpenAI busca en tu Vector Store y CLAUDE redacta la respuesta clínica a partir de los pasajes recuperados — así puedes usar Claude sobre el segundo cerebro (necesita clave de Claude). El grounding estricto y las referencias se mantienen en todos los modos.']},
   {v:'2.6.0', d:'2026-07-10', c:['El chat «Consultar» ahora deja ELEGIR el modelo de OpenAI (⚙ Ajustes → «Modelo del chat»): antes estaba fijado a gpt-4o-mini y no usaba los modelos nuevos. El desplegable se rellena con los modelos de tu cuenta OpenAI (pulsa «↻ Refrescar modelos disponibles» para traer los recién salidos, p. ej. gpt-5). Por defecto sigue gpt-4o-mini (barato); súbelo a uno mayor si quieres síntesis más fina.']},
   {v:'2.5.0', d:'2026-07-10', c:['Chat «Consultar» a nivel especialista: las respuestas se dirigen a un genetista clínico EXPERIMENTADO (precisas y técnicas, sin explicaciones básicas). Cuando VARIAS fuentes tratan lo preguntado, ahora INTEGRA todas en una respuesta única y muestra TODAS las referencias utilizadas (antes tendía a dar solo una). Se recuperan más pasajes por consulta para poder combinar fuentes.']},
   {v:'2.4.2', d:'2026-07-10', c:['Las citas de GeneReviews en el chat «Consultar» ahora muestran «NBKxxxx — Título de la enfermedad» (antes solo el NBK). El título se toma del sources.json del segundo cerebro; mientras no esté disponible, se muestra el NBK a secas (con su badge 📖 GeneReviews).']},
@@ -1202,9 +1203,28 @@ function resetPatient(){
 /* ---- Config en localStorage ---- */
 const CFG_KEY='fh_cfg';
 const CFG_DEFAULTS={ anthropicKey:'', openaiKey:'', preferProvider:'anthropic', models:{}, gh_owner:'', gh_repo:'', gh_branch:'main', gh_pat:'',
-  driveClientId:'672017094614-goqdjb7159poff6jieh7rgjtop06askb.apps.googleusercontent.com', driveFolder:'', driveSubfolders:false, secondBrainStore:'', secondBrainRepo:'', chatModel:'' };
-const CHAT_MODEL_DEFAULT='gpt-4o-mini';
-function chatModel(){ const m=(loadCfg().chatModel||'').trim(); return m||CHAT_MODEL_DEFAULT; }
+  driveClientId:'672017094614-goqdjb7159poff6jieh7rgjtop06askb.apps.googleusercontent.com', driveFolder:'', driveSubfolders:false, secondBrainStore:'', secondBrainRepo:'', chatMode:'openai-fast' };
+/* Modelo del chat «Consultar»: 4 modos curados que ELIGEN SOLOS el mejor modelo disponible (de los descubiertos
+   en tu cuenta; si no, un default estable). 'oa'=OpenAI, 'cl'=Claude; '-fast'=rápido/barato, '-deep'=concienzudo. */
+const CHAT_MODEL_PREFS={ 'oa-fast':['gpt-5-mini','gpt-4.1-mini','gpt-4o-mini'], 'oa-deep':['gpt-5','gpt-4.1','gpt-4o'], 'cl-fast':['claude-haiku-4-5'], 'cl-deep':['claude-opus-4-8'] };
+function pickChatModel(kind){ const prov=kind.indexOf('oa')===0?'openai':'anthropic'; const prefs=CHAT_MODEL_PREFS[kind]||['gpt-4o-mini']; const av=cachedModels(prov)||[];
+  for(const p of prefs){ if(av.includes(p)) return p; }                             // 1º exacto (modelo nuevo ya descubierto)
+  for(const p of prefs){ const h=av.find(m=>String(m).indexOf(p)===0); if(h) return h; }  // 2º por prefijo (variantes)
+  return prefs[prefs.length-1]; }                                                    // 3º default estable conocido
+const CHAT_MODES={
+  'openai-fast':{hybrid:false, retrieve:'oa-fast', answer:'oa-fast', label:'OpenAI · rápido'},
+  'openai-deep':{hybrid:false, retrieve:'oa-deep', answer:'oa-deep', label:'OpenAI · concienzudo'},
+  'hybrid-fast':{hybrid:true,  retrieve:'oa-fast', answer:'cl-fast', label:'Híbrido · rápido'},
+  'hybrid-deep':{hybrid:true,  retrieve:'oa-fast', answer:'cl-deep', label:'Híbrido · concienzudo'} };
+function chatModeInfo(){ const mode=(loadCfg().chatMode||'openai-fast'); const m=Object.assign({}, CHAT_MODES[mode]||CHAT_MODES['openai-fast']);
+  m.mode=CHAT_MODES[mode]?mode:'openai-fast'; m.retrieveModel=pickChatModel(m.retrieve); m.answerModel=pickChatModel(m.answer);
+  m.uses = m.hybrid ? ('busca '+m.retrieveModel+' + redacta '+m.answerModel) : m.answerModel; return m; }
+/* <option>s del selector del chat: los 4 modos con los modelos que usa cada uno (auto-resueltos) entre paréntesis. */
+function chatModeOptionsHtml(sel){
+  return Object.keys(CHAT_MODES).map(k=>{ const m=CHAT_MODES[k];
+    const uses = m.hybrid ? ('busca '+pickChatModel(m.retrieve)+' + redacta '+pickChatModel(m.answer)) : pickChatModel(m.answer);
+    return '<option value="'+k+'"'+(k===sel?' selected':'')+'>'+m.label+' ('+uses+')</option>'; }).join('');
+}
 function loadCfg(){
   let c; try{ c=Object.assign({}, CFG_DEFAULTS, JSON.parse(localStorage.getItem(CFG_KEY))||{}); }catch(e){ c=Object.assign({}, CFG_DEFAULTS); }
   // Migración desde el esquema antiguo {provider, llmKey}
@@ -2252,10 +2272,11 @@ function openSettings(){
       <input id="cfgSbStore" type="text" value="${escHtml(c.secondBrainStore||'').replace(/"/g,'&quot;')}" placeholder="vs_… (lo da secondbrain/store.json; vacío = usar el buscador local)" autocomplete="off"></div>
     <div class="field"><label>Segundo cerebro — repositorio de referencias <span class="dx-meta">(owner/repo del pipeline con sources.json → citas con badge y «añadir a biblioteca»)</span></label>
       <input id="cfgSbRepo" type="text" value="${escHtml(c.secondBrainRepo||'').replace(/"/g,'&quot;')}" placeholder="tu-usuario/ariadna-secondbrain (usa tu token de GitHub; opcional)" autocomplete="off"></div>
-    <div class="field"><label>Modelo del chat «Consultar» (OpenAI) <span class="dx-meta">(el que responde en el segundo cerebro; refresca la lista con el botón de «Modelos por tarea» de abajo)</span></label>
-      <select id="cfgChatModel" style="width:100%; padding:8px 9px; border:1px solid var(--line); border-radius:8px; background:var(--panel2); color:var(--ink)">
-        ${[...new Set([CHAT_MODEL_DEFAULT, chatModel(), ...cachedModels('openai')])].map(id=>`<option value="${id}" ${id===chatModel()?'selected':''}>${id}${id===CHAT_MODEL_DEFAULT?' · def.':''}</option>`).join('')}
-      </select></div>
+    <div class="field"><label>Modelo del chat «Consultar» <span class="dx-meta">(elige solo el mejor modelo disponible; refresca la lista con «Modelos por tarea» abajo)</span></label>
+      <select id="cfgChatMode" style="width:100%; padding:8px 9px; border:1px solid var(--line); border-radius:8px; background:var(--panel2); color:var(--ink)">
+        ${chatModeOptionsHtml(c.chatMode||'openai-fast')}
+      </select>
+      <div class="dx-meta" style="margin-top:5px;font-size:11px;line-height:1.5"><b>OpenAI</b>: busca y redacta OpenAI. <b>Híbrido</b>: OpenAI busca en tu Vector Store y <b>Claude redacta</b> la respuesta clínica (necesita clave de Claude). <b>rápido</b> = barato/ágil; <b>concienzudo</b> = más calidad y coste.</div></div>
     <div class="field"><label>Proveedor de IA cuando tienes las dos claves</label>
       <div class="seg" id="prefSeg">
         <button data-pref="anthropic" class="${(c.preferProvider||'anthropic')==='anthropic'?'on':''}">Claude primero</button>
@@ -2366,8 +2387,8 @@ function openSettings(){
     saveCfg(prev); // restaura hasta Guardar
     out.className='test-out ok'; out.textContent = msgs.length? ('Modelos: '+msgs.join(' · ')) : 'Escribe alguna API key primero.';
     ov.querySelector('#cfgModelGrid').innerHTML = modelGridHtml(); // re-render con la lista nueva
-    const csel=ov.querySelector('#cfgChatModel');   // repuebla también el modelo del chat con la lista nueva
-    if(csel){ const sel=csel.value; csel.innerHTML=[...new Set([CHAT_MODEL_DEFAULT, chatModel(), ...cachedModels('openai')])].map(id=>`<option value="${id}" ${id===sel?'selected':''}>${id}${id===CHAT_MODEL_DEFAULT?' · def.':''}</option>`).join(''); }
+    const csel=ov.querySelector('#cfgChatMode');   // repuebla los modelos entre paréntesis del selector del chat
+    if(csel){ csel.innerHTML=chatModeOptionsHtml(csel.value); }
   });
 
   ov.querySelector('#cfgTestGh').addEventListener('click', async ()=>{
@@ -2418,7 +2439,7 @@ function openSettings(){
       openaiKey: ov.querySelector('#cfgOpenaiKey').value.trim(),
       secondBrainStore: (ov.querySelector('#cfgSbStore')?ov.querySelector('#cfgSbStore').value.trim():(prev.secondBrainStore||'')),
       secondBrainRepo: (ov.querySelector('#cfgSbRepo')?ov.querySelector('#cfgSbRepo').value.trim():(prev.secondBrainRepo||'')),
-      chatModel: (ov.querySelector('#cfgChatModel')?ov.querySelector('#cfgChatModel').value.trim():(prev.chatModel||'')),
+      chatMode: (ov.querySelector('#cfgChatMode')?ov.querySelector('#cfgChatMode').value.trim():(prev.chatMode||'openai-fast')),
       preferProvider: pref,
       models,
       gh_owner: ov.querySelector('#cfgOwner').value.trim(),
@@ -3596,12 +3617,25 @@ function chatSourceFuente(name){
   if(nbk) return {titulo:grRefTitle(nbk, ''), url:'https://www.ncbi.nlm.nih.gov/books/'+nbk.toUpperCase()+'/', nbk:nbk.toUpperCase(), _src:'GeneReviews'};
   return {titulo:String(name).replace(/\.(md|txt|pdf)$/i,'').replace(/__/g,' · ')};
 }
-const CHAT_SYSTEM_STORE='Eres un asistente documental para un GENETISTA CLÍNICO EXPERIMENTADO. Respondes SOLO con lo que aparezca en los PASAJES recuperados por file_search de SU documentación. REGLAS ESTRICTAS: (1) PROHIBIDO usar conocimiento general, externo o de memoria. (2) Si la respuesta no está en los pasajes recuperados, o los pasajes tratan de OTRA enfermedad/gen/tema distinto al preguntado, responde EXACTAMENTE con la palabra NO_ENCONTRADO y nada más. (3) Nunca cites ni menciones un documento que no trate específicamente lo preguntado. Cuando SÍ esté en los pasajes: responde a NIVEL ESPECIALISTA (preciso, técnico, terminología y matices propios de un genetista clínico; SIN definiciones elementales ni explicaciones básicas). Si VARIAS fuentes tratan lo preguntado, INTEGRA TODAS en UNA sola respuesta coherente apoyándote en todas ellas (no te limites a una; contrasta y combina lo que aportan). NO escribas una sección de «Fuentes» ni nombres de fichero: la app muestra por su cuenta TODAS las referencias utilizadas. Responde en español, con precisión, sin inventar.';
-/* Consulta el/los Vector Store(s) vía la Responses API de OpenAI (File Search) → respuesta única + citas. */
-async function askRepoStore(input, ids){
+const _CHAT_RULES=' REGLAS ESTRICTAS: (1) PROHIBIDO usar conocimiento general, externo o de memoria. (2) Si la respuesta no está en los pasajes, o tratan de OTRA enfermedad/gen/tema distinto al preguntado, responde EXACTAMENTE con la palabra NO_ENCONTRADO y nada más. (3) Nunca menciones un documento que no trate específicamente lo preguntado. Cuando SÍ esté en los pasajes: responde a NIVEL ESPECIALISTA (preciso, técnico, terminología y matices propios de un genetista clínico; SIN definiciones elementales). Si VARIAS fuentes tratan lo preguntado, INTEGRA TODAS en UNA sola respuesta coherente apoyándote en todas ellas (contrasta y combina). NO escribas una sección de «Fuentes» ni nombres de fichero: la app muestra por su cuenta TODAS las referencias utilizadas. Responde en español, con precisión, sin inventar.';
+const CHAT_SYSTEM_STORE='Eres un asistente documental para un GENETISTA CLÍNICO EXPERIMENTADO. Respondes SOLO con lo que aparezca en los PASAJES recuperados por file_search de SU documentación.'+_CHAT_RULES;
+const CHAT_SYSTEM_HYBRID='Eres un asistente documental para un GENETISTA CLÍNICO EXPERIMENTADO. A continuación te doy PASAJES recuperados de SU documentación; respondes SOLO con lo que aparezca en ellos.'+_CHAT_RULES;
+/* Redacta con Claude (síntesis) a partir de los pasajes que recuperó OpenAI. Modo híbrido. */
+async function synthWithClaude(question, passages, model){
   const c=loadCfg();
-  const body={ model:chatModel(), instructions:CHAT_SYSTEM_STORE, input,
-    // umbral de relevancia → descarta coincidencias flojas (p. ej. otra enfermedad); pedimos los resultados
+  const ctx=passages.map((p,i)=>'[Pasaje '+(i+1)+' · '+(p.filename||'?')+']\n'+(p.text||'')).join('\n\n---\n\n');
+  const body={ model, max_tokens:1500, system:CHAT_SYSTEM_HYBRID, messages:[{role:'user', content:'PASAJES:\n\n'+ctx+'\n\nPREGUNTA: '+question}] };
+  const r=await fetch('https://api.anthropic.com/v1/messages', { method:'POST', headers:{'x-api-key':c.anthropicKey,'anthropic-version':'2023-06-01','content-type':'application/json','anthropic-dangerous-direct-browser-access':'true'}, body:JSON.stringify(body) });
+  if(!r.ok) throw new Error('Anthropic '+r.status+' '+(await r.text()).slice(0,160));
+  const d=await r.json();
+  return (d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').trim();
+}
+/* Consulta el/los Vector Store(s) vía la Responses API de OpenAI (File Search). Recupera SIEMPRE con OpenAI; la
+   redacción la hace OpenAI o (modo híbrido) Claude a partir de los pasajes recuperados. Respuesta única + citas. */
+async function askRepoStore(input, ids){
+  const c=loadCfg(); const info=chatModeInfo();
+  const body={ model:info.retrieveModel, instructions:CHAT_SYSTEM_STORE, input,
+    // umbral de relevancia → descarta coincidencias flojas (p. ej. otra enfermedad); pedimos los resultados (con texto)
     tools:[{type:'file_search', vector_store_ids:ids, max_num_results:12, ranking_options:{score_threshold:0.5}}],
     include:['file_search_call.results'] };
   // Reintentos ante errores TRANSITORIOS de OpenAI (429/500/502/503/504): el servidor a veces falla y basta reintentar.
@@ -3615,18 +3649,23 @@ async function askRepoStore(input, ids){
     throw new Error('OpenAI '+r.status+(transitorio?' (error temporal del servidor; vuelve a intentarlo en un momento)':'')+' '+errTxt);
   }
   const d=await r.json();
-  let text=''; const cites=new Set(); const retrieved=new Set();
+  let text=''; const cites=new Set(); const retrieved=new Set(); const passages=[];
   for(const o of (d.output||[])){
-    if(o.type==='file_search_call'){ for(const rr of (o.results||[])) if(rr.filename) retrieved.add(rr.filename); }
+    if(o.type==='file_search_call'){ for(const rr of (o.results||[])){ if(!rr.filename) continue; retrieved.add(rr.filename);
+      const t = typeof rr.text==='string' ? rr.text : (Array.isArray(rr.content)?rr.content.map(x=>x&&x.text||'').join(' '):(rr.content||''));
+      passages.push({filename:rr.filename, text:t}); } }
     if(o.type==='message'){ for(const cc of (o.content||[])){ if(cc.type==='output_text'){ text+=cc.text||''; for(const a of (cc.annotations||[])) if(a.filename) cites.add(a.filename); } } }
   }
   text=(text || d.output_text || '').trim();
-  // GROUNDING: si el buscador no recuperó nada relevante, o el modelo señaló que no está → NO respondas de memoria
-  if(!retrieved.size || /^NO_ENCONTRADO/i.test(text)){
-    return { text:'No encuentro esto en tu documentación. El chat responde solo con tus documentos y las GeneReviews indexadas — si acabas de lanzar el segundo cerebro, puede que aún se esté cargando.', sources:[], notFound:true };
+  const notFound=()=>({ text:'No encuentro esto en tu documentación. El chat responde solo con tus documentos y las GeneReviews indexadas — si acabas de lanzar el segundo cerebro, puede que aún se esté cargando.', sources:[], notFound:true });
+  // GROUNDING: si el buscador no recuperó nada relevante → NO respondas de memoria
+  if(!retrieved.size) return notFound();
+  // MODO HÍBRIDO: redacta con Claude a partir de los pasajes recuperados (si hay clave; si no, cae a la respuesta de OpenAI)
+  if(info.hybrid && providerKey('anthropic')){
+    try{ text = await synthWithClaude(input, passages, info.answerModel); }catch(e){ /* si Claude falla, usa la de OpenAI */ }
   }
-  // Muestra TODAS las fuentes citadas por el modelo que además se recuperaron de verdad (no una cita colgada de un
-  // doc ajeno). Si el modelo no anotó ninguna, muestra los documentos recuperados (deduplicados luego por NBK/doc).
+  if(/^NO_ENCONTRADO/i.test(text) || !text) return notFound();
+  // Muestra TODAS las fuentes citadas que además se recuperaron; si no hubo anotaciones, los documentos recuperados.
   const src=[...cites].filter(f=>retrieved.has(f));
   return { text, sources: src.length ? src : [...retrieved].slice(0,8) };
 }
