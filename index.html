@@ -491,8 +491,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.4.2';
+const APP_VERSION='2.5.0';
 const CHANGELOG=[
+  {v:'2.5.0', d:'2026-07-10', c:['Chat «Consultar» a nivel especialista: las respuestas se dirigen a un genetista clínico EXPERIMENTADO (precisas y técnicas, sin explicaciones básicas). Cuando VARIAS fuentes tratan lo preguntado, ahora INTEGRA todas en una respuesta única y muestra TODAS las referencias utilizadas (antes tendía a dar solo una). Se recuperan más pasajes por consulta para poder combinar fuentes.']},
   {v:'2.4.2', d:'2026-07-10', c:['Las citas de GeneReviews en el chat «Consultar» ahora muestran «NBKxxxx — Título de la enfermedad» (antes solo el NBK). El título se toma del sources.json del segundo cerebro; mientras no esté disponible, se muestra el NBK a secas (con su badge 📖 GeneReviews).']},
   {v:'2.4.1', d:'2026-07-10', c:['Chat «Consultar» más robusto: ante un error TEMPORAL del servidor de OpenAI (500/429/503) al consultar el segundo cerebro, ahora reintenta automáticamente (con espera creciente) en vez de cortar con «Error al consultar: OpenAI 500». Si aun así falla, el mensaje lo explica como temporal e invita a reintentar.']},
   {v:'2.4.0', d:'2026-07-09', c:['GeneReviews sin «Last Update»: en TODA Ariadna (badges, tooltips, referencias, chat del segundo cerebro) ahora, si un capítulo de GeneReviews no tiene fecha de última revisión, se muestra su fecha de INCLUSIÓN (Initial Posting) etiquetada como «Publicación inicial», en vez del antiguo «revisión: —». La IA la captura al indexar/buscar referencias y el pipeline del segundo cerebro la extrae del capítulo.']},
@@ -3585,13 +3586,13 @@ function chatSourceFuente(name){
   if(nbk) return {titulo:grRefTitle(nbk, ''), url:'https://www.ncbi.nlm.nih.gov/books/'+nbk.toUpperCase()+'/', nbk:nbk.toUpperCase(), _src:'GeneReviews'};
   return {titulo:String(name).replace(/\.(md|txt|pdf)$/i,'').replace(/__/g,' · ')};
 }
-const CHAT_SYSTEM_STORE='Eres un asistente documental para un genetista clínico. Respondes SOLO con lo que aparezca en los PASAJES recuperados por file_search de SU documentación. REGLAS ESTRICTAS: (1) PROHIBIDO usar conocimiento general, externo o de memoria. (2) Si la respuesta no está en los pasajes recuperados, o los pasajes tratan de OTRA enfermedad/gen/tema distinto al preguntado, responde EXACTAMENTE con la palabra NO_ENCONTRADO y nada más. (3) Nunca cites ni menciones un documento que no trate específicamente lo preguntado. Cuando SÍ esté en los pasajes: da UNA respuesta coherente que integre las fuentes en una explicación clínica fluida (no listes fragmentos sueltos ni "el documento X dice…"); NO escribas una sección de «Fuentes» ni nombres de fichero (la app las muestra aparte). Responde en español, con precisión, sin inventar.';
+const CHAT_SYSTEM_STORE='Eres un asistente documental para un GENETISTA CLÍNICO EXPERIMENTADO. Respondes SOLO con lo que aparezca en los PASAJES recuperados por file_search de SU documentación. REGLAS ESTRICTAS: (1) PROHIBIDO usar conocimiento general, externo o de memoria. (2) Si la respuesta no está en los pasajes recuperados, o los pasajes tratan de OTRA enfermedad/gen/tema distinto al preguntado, responde EXACTAMENTE con la palabra NO_ENCONTRADO y nada más. (3) Nunca cites ni menciones un documento que no trate específicamente lo preguntado. Cuando SÍ esté en los pasajes: responde a NIVEL ESPECIALISTA (preciso, técnico, terminología y matices propios de un genetista clínico; SIN definiciones elementales ni explicaciones básicas). Si VARIAS fuentes tratan lo preguntado, INTEGRA TODAS en UNA sola respuesta coherente apoyándote en todas ellas (no te limites a una; contrasta y combina lo que aportan). NO escribas una sección de «Fuentes» ni nombres de fichero: la app muestra por su cuenta TODAS las referencias utilizadas. Responde en español, con precisión, sin inventar.';
 /* Consulta el/los Vector Store(s) vía la Responses API de OpenAI (File Search) → respuesta única + citas. */
 async function askRepoStore(input, ids){
   const c=loadCfg();
   const body={ model:'gpt-4o-mini', instructions:CHAT_SYSTEM_STORE, input,
     // umbral de relevancia → descarta coincidencias flojas (p. ej. otra enfermedad); pedimos los resultados
-    tools:[{type:'file_search', vector_store_ids:ids, max_num_results:8, ranking_options:{score_threshold:0.5}}],
+    tools:[{type:'file_search', vector_store_ids:ids, max_num_results:12, ranking_options:{score_threshold:0.5}}],
     include:['file_search_call.results'] };
   // Reintentos ante errores TRANSITORIOS de OpenAI (429/500/502/503/504): el servidor a veces falla y basta reintentar.
   let r, errTxt='';
@@ -3614,9 +3615,10 @@ async function askRepoStore(input, ids){
   if(!retrieved.size || /^NO_ENCONTRADO/i.test(text)){
     return { text:'No encuentro esto en tu documentación. El chat responde solo con tus documentos y las GeneReviews indexadas — si acabas de lanzar el segundo cerebro, puede que aún se esté cargando.', sources:[], notFound:true };
   }
-  // Solo se muestran como fuente los documentos REALMENTE recuperados (no una cita colgada de un doc ajeno)
+  // Muestra TODAS las fuentes citadas por el modelo que además se recuperaron de verdad (no una cita colgada de un
+  // doc ajeno). Si el modelo no anotó ninguna, muestra los documentos recuperados (deduplicados luego por NBK/doc).
   const src=[...cites].filter(f=>retrieved.has(f));
-  return { text, sources: src.length ? src : [...retrieved].slice(0,4) };
+  return { text, sources: src.length ? src : [...retrieved].slice(0,8) };
 }
 async function askRepo(q){
   q=(q||'').trim(); if(!q) return;
