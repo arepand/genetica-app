@@ -234,6 +234,13 @@
   .dx-prog{height:5px; border-radius:3px; background:var(--line); margin-top:7px; overflow:hidden;}
   .dx-prog>span{display:block; height:100%; background:var(--accent);}
   .dx-meta{font-size:11px; color:var(--ink3); margin-top:6px;}
+  .chat-tblwrap{overflow-x:auto; margin:8px 0;}
+  .chat-tbl{border-collapse:collapse; font-size:12.5px; min-width:100%;}
+  .chat-tbl th,.chat-tbl td{border:1px solid var(--line); padding:5px 8px; text-align:left; vertical-align:top;}
+  .chat-tbl th{background:var(--panel2); font-weight:600;}
+  .chat-h{font-weight:700; margin:8px 0 2px; font-size:13.5px;}
+  .chat-ul{margin:4px 0 4px 2px; padding-left:18px;}
+  .chat-ul li{margin:2px 0;}
   .hp-chip{display:inline-block; font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11px; background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:0 5px; margin:1px 2px; cursor:pointer;}
   .hp-chip:hover{border-color:var(--accent);}
   .hp-fix-pop{display:block; margin:4px 0 6px; padding:6px; background:#0a0f14; border:1px solid var(--accent2); border-radius:8px;}
@@ -491,8 +498,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.8.0';
+const APP_VERSION='2.9.0';
 const CHANGELOG=[
+  {v:'2.9.0', d:'2026-07-10', c:['Chat «Consultar» — respuestas con FORMATO: las TABLAS de GeneReviews (frecuencias, criterios…) ahora se ven como tabla de verdad, con negritas y listas, en vez de texto plano.','FIGURAS de GeneReviews: bajo cada fuente citada aparece «🖼 Ver figuras» que muestra las imágenes del capítulo (embebidas directamente de NCBI, sin almacenarlas). El pipeline genera figures.json con las URLs y pies. (Las figuras de tus PDFs propios quedan para más adelante.)']},
   {v:'2.8.0', d:'2026-07-10', c:['⚙ Ajustes reorganizados en PESTAÑAS (antes era una lista larga): 🤖 IA (claves, proveedor, modelos por tarea) · 🧠 Segundo cerebro (Vector Store, repo de referencias, modelo del chat) · 📦 GitHub · 📁 Drive · 📗 ReadCube. Más fácil de encontrar cada cosa; no cambia ninguna funcionalidad.']},
   {v:'2.7.1', d:'2026-07-10', c:['Al pulsar «↻ Refrescar modelos disponibles» (⚙ Ajustes) ahora se LISTA la lista real de modelos que devuelve tu cuenta OpenAI/Claude, para ver de un vistazo si gpt-5, o-series, etc. están disponibles. Recordatorio: los modos «rápido» del chat usan el modelo barato a propósito (gpt-4o-mini); gpt-5 aparece en los modos «concienzudo».']},
   {v:'2.7.0', d:'2026-07-10', c:['Selector del chat «Consultar» simplificado a 4 modos claros que ELIGEN SOLOS el mejor modelo disponible (y muestran cuáles usan entre paréntesis): «OpenAI · rápido», «OpenAI · concienzudo», «Híbrido · rápido» e «Híbrido · concienzudo». NUEVO modo HÍBRIDO: OpenAI busca en tu Vector Store y CLAUDE redacta la respuesta clínica a partir de los pasajes recuperados — así puedes usar Claude sobre el segundo cerebro (necesita clave de Claude). El grounding estricto y las referencias se mantienen en todos los modos.']},
@@ -3638,10 +3646,56 @@ async function loadSbSources(){
   }
   return _sbSources||{};
 }
+/* Figuras por NBK (figures.json del pipeline) → mostrar bajo cada fuente GeneReviews citada en el chat. */
+let _sbFigures=null;
+async function loadSbFigures(){
+  if(_sbFigures) return _sbFigures;
+  try{ const c=JSON.parse(localStorage.getItem('fh_sb_figures')); if(c){ _sbFigures=c; } }catch(e){}
+  const cfg=loadCfg(); const repo=(cfg.secondBrainRepo||'').trim();
+  if(repo && cfg.gh_pat){
+    try{ const [own,rp]=repo.split('/'); if(own&&rp){
+      const r=await fetch('https://api.github.com/repos/'+own+'/'+rp+'/contents/figures.json', {headers:{Authorization:'token '+cfg.gh_pat, Accept:'application/vnd.github.raw+json'}, cache:'no-store'});
+      if(r.ok){ const j=await r.json(); _sbFigures=j; try{ localStorage.setItem('fh_sb_figures', JSON.stringify(j)); }catch(e){} }
+    } }catch(e){}
+  }
+  return _sbFigures||{};
+}
+/* HTML de las figuras de un capítulo GeneReviews (imágenes embebidas de NCBI + pie), plegable. '' si no hay. */
+function grFiguresHtml(nbk){
+  const figs=(_sbFigures||{})[String(nbk||'').toUpperCase()]; if(!figs||!figs.length) return '';
+  const imgs=figs.map(f=>`<figure style="margin:6px 0"><img src="${escA(f.url)}" loading="lazy" style="max-width:100%;border:1px solid var(--line);border-radius:8px" alt="${escA(f.caption||'figura')}"><figcaption class="dx-meta" style="margin-top:2px">${escHtml(f.caption||'')}</figcaption></figure>`).join('');
+  return `<details style="margin-top:4px"><summary class="tip-ai" style="display:inline">🖼 Ver figuras (${figs.length})</summary><div style="margin-top:4px">${imgs}</div></details>`;
+}
 /* Título visible de una GeneReviews: «NBKxxxx — Enfermedad» (NBK + título); si no hay enfermedad, solo el NBK. */
 function grRefTitle(nbk, disease){
   nbk=String(nbk||'').toUpperCase(); disease=String(disease||'').trim();
   return nbk ? (nbk + (disease ? ' — ' + disease : '')) : (disease || 'GeneReviews');
+}
+/* Markdown ligero y SEGURO para las respuestas del chat: tablas, negritas/cursivas, listas, encabezados.
+   Escapa el HTML primero (anti-XSS) y luego aplica el markdown. */
+function chatMd(src){
+  const lines=String(src||'').split('\n');
+  const inline=s=> escHtml(s)
+    .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
+    .replace(/(^|[^*])\*([^*\n]+)\*/g,'$1<i>$2</i>')
+    .replace(/`([^`]+)`/g,'<code>$1</code>');
+  const cells=r=>r.replace(/^\s*\|/,'').replace(/\|\s*$/,'').split('|').map(c=>c.trim());
+  let html='', i=0, listOpen=false; const closeList=()=>{ if(listOpen){ html+='</ul>'; listOpen=false; } };
+  while(i<lines.length){
+    const ln=lines[i];
+    // Tabla markdown: fila con | seguida de una fila separadora |---|---|
+    if(/\|/.test(ln) && i+1<lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i+1]) && /-/.test(lines[i+1])){
+      closeList(); const head=cells(ln); i+=2; let rows='';
+      while(i<lines.length && /\|/.test(lines[i]) && lines[i].trim()){ rows+='<tr>'+cells(lines[i]).map(c=>'<td>'+inline(c)+'</td>').join('')+'</tr>'; i++; }
+      html+='<div class="chat-tblwrap"><table class="chat-tbl"><thead><tr>'+head.map(c=>'<th>'+inline(c)+'</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
+      continue;
+    }
+    if(/^\s*#{1,4}\s+/.test(ln)){ closeList(); html+='<div class="chat-h">'+inline(ln.replace(/^\s*#{1,4}\s+/,''))+'</div>'; i++; continue; }
+    if(/^\s*[-*]\s+/.test(ln)){ if(!listOpen){ html+='<ul class="chat-ul">'; listOpen=true; } html+='<li>'+inline(ln.replace(/^\s*[-*]\s+/,''))+'</li>'; i++; continue; }
+    if(!ln.trim()){ closeList(); html+='<br>'; i++; continue; }
+    closeList(); html+=inline(ln)+'<br>'; i++;
+  }
+  closeList(); return html;
 }
 /* Dado el nombre de fichero que cita el store (NBK1246__seccion.md / docslug__seccion.md) → una fuente {titulo,url,nbk,...}. */
 function chatSourceFuente(name){
@@ -3720,7 +3774,7 @@ async function askRepo(q){
     if(ids.length && loadCfg().openaiKey){
       const h=histText();
       const input=(h?('Conversación previa (contexto):\n'+h+'\n\n'):'')+'PREGUNTA: '+q;
-      try{ await loadSbSources(); }catch(e){}   // mapa fichero→referencia (para mostrar badges + añadir a biblioteca)
+      try{ await loadSbSources(); await loadSbFigures(); }catch(e){}   // mapa fichero→referencia + figuras por NBK
       const {text, sources}=await askRepoStore(input, ids);
       pend.pending=false; pend.text=text||'No encuentro esa información en tu documentación.'; pend.sources=sources; renderChatMsgs(); return;
     }
@@ -3754,7 +3808,7 @@ function renderChatMsgs(){
   el.innerHTML=_chatMsgs.map(m=>{
     const who=m.role==='user'?'Tú':'Ariadna · según tu documentación';
     const bg=m.role==='user'?'var(--panel2)':'rgba(120,180,255,.07)';
-    const body=m.pending?'<span class="dx-meta">…consultando tu documentación</span>':escHtml(m.text).replace(/\n/g,'<br>');
+    const body=m.pending?'<span class="dx-meta">…consultando tu documentación</span>':(m.role==='user'?escHtml(m.text).replace(/\n/g,'<br>'):chatMd(m.text));
     let src='';
     if(m.sources && m.sources.length){
       const seen=new Set(), fuentes=[];
@@ -3765,7 +3819,8 @@ function renderChatMsgs(){
             const inRepo=!!matchDoc(f, repoDocs);   // ya en tu biblioteca (por NBK/PMID/DOI/URL/alias) → no ofrecer «añadir»
             const add=inRepo ? '<span class="dx-meta" style="color:var(--ok)" title="Ya está en tu biblioteca">✓ en tu biblioteca</span>'
                              : '<a class="tip-ai chat-add" data-fu="'+enc+'" title="Añadir esta referencia a tu repositorio bibliográfico">➕ a mi biblioteca</a>';
-            return '<div style="margin:2px 0">'+(f.url?('<a href="'+escA(f.url)+'" target="_blank" rel="noopener" style="color:var(--accent)">'+escHtml(f.titulo)+'</a>'):('<span>'+escHtml(f.titulo)+'</span>'))+bibRefHtml(f,{noAssign:true})+' '+add+'</div>'; }).join('')
+            const figs=f.nbk?grFiguresHtml(f.nbk):'';   // figuras del capítulo GeneReviews (embebidas de NCBI)
+            return '<div style="margin:2px 0">'+(f.url?('<a href="'+escA(f.url)+'" target="_blank" rel="noopener" style="color:var(--accent)">'+escHtml(f.titulo)+'</a>'):('<span>'+escHtml(f.titulo)+'</span>'))+bibRefHtml(f,{noAssign:true})+' '+add+figs+'</div>'; }).join('')
         + '</div></div>';
     }
     return `<div style="background:${bg};border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0"><div class="dx-meta" style="font-weight:600;margin-bottom:4px">${who}</div><div style="font-size:13.5px;line-height:1.6">${body}</div>${src}</div>`;
@@ -3795,7 +3850,7 @@ function renderConsultar(){
     if(!ghConfigured()){ showToast('Configura GitHub en ⚙ Ajustes para tener biblioteca'); return; }
     ensureFuentesInRepo([f]).then(n=>{ showToast(n?('Añadida a tu biblioteca'):'Ya estaba en tu biblioteca'); a.textContent='✓ en tu biblioteca'; a.style.pointerEvents='none'; a.style.opacity='.6'; _fichaRefSet=null; }).catch(err=>showToast('Error: '+err.message));
   });
-  loadSbSources().then(()=>{ if(document.getElementById('chatMsgs')) renderChatMsgs(); });   // carga el mapa de referencias (y re-renderiza citas)
+  Promise.all([loadSbSources(), loadSbFigures()]).then(()=>{ if(document.getElementById('chatMsgs')) renderChatMsgs(); });   // referencias + figuras (y re-renderiza citas)
 }
 
 function renderDocumentos(){
