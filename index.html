@@ -491,8 +491,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.4.1';
+const APP_VERSION='2.4.2';
 const CHANGELOG=[
+  {v:'2.4.2', d:'2026-07-10', c:['Las citas de GeneReviews en el chat «Consultar» ahora muestran «NBKxxxx — Título de la enfermedad» (antes solo el NBK). El título se toma del sources.json del segundo cerebro; mientras no esté disponible, se muestra el NBK a secas (con su badge 📖 GeneReviews).']},
   {v:'2.4.1', d:'2026-07-10', c:['Chat «Consultar» más robusto: ante un error TEMPORAL del servidor de OpenAI (500/429/503) al consultar el segundo cerebro, ahora reintenta automáticamente (con espera creciente) en vez de cortar con «Error al consultar: OpenAI 500». Si aun así falla, el mensaje lo explica como temporal e invita a reintentar.']},
   {v:'2.4.0', d:'2026-07-09', c:['GeneReviews sin «Last Update»: en TODA Ariadna (badges, tooltips, referencias, chat del segundo cerebro) ahora, si un capítulo de GeneReviews no tiene fecha de última revisión, se muestra su fecha de INCLUSIÓN (Initial Posting) etiquetada como «Publicación inicial», en vez del antiguo «revisión: —». La IA la captura al indexar/buscar referencias y el pipeline del segundo cerebro la extrae del capítulo.']},
   {v:'2.3.2', d:'2026-07-09', c:['CHAT «Consultar» — grounding estricto: ya NO responde con conocimiento general cuando la pregunta no está en tu documentación. Antes, si el tema no estaba indexado (p. ej. una enfermedad aún no subida al segundo cerebro), contestaba de memoria y colgaba una cita equivocada; ahora el buscador aplica un umbral de relevancia, y si no recupera pasajes que traten de lo preguntado responde «No encuentro esto en tu documentación» sin inventar respuesta ni fuentes.']},
@@ -3567,16 +3568,21 @@ async function loadSbSources(){
   }
   return _sbSources||{};
 }
+/* Título visible de una GeneReviews: «NBKxxxx — Enfermedad» (NBK + título); si no hay enfermedad, solo el NBK. */
+function grRefTitle(nbk, disease){
+  nbk=String(nbk||'').toUpperCase(); disease=String(disease||'').trim();
+  return nbk ? (nbk + (disease ? ' — ' + disease : '')) : (disease || 'GeneReviews');
+}
 /* Dado el nombre de fichero que cita el store (NBK1246__seccion.md / docslug__seccion.md) → una fuente {titulo,url,nbk,...}. */
 function chatSourceFuente(name){
   const key=String(name).split('__')[0];
   const s=(_sbSources||{})[key];
   if(s){
-    if(s.source==='GeneReviews') return {titulo:s.titulo||('GeneReviews '+s.nbk), url:s.url, nbk:s.nbk, gr_updated:s.updated, gr_initial:s.initial||'', _src:'GeneReviews'};
+    if(s.source==='GeneReviews') return {titulo:grRefTitle(s.nbk, s.titulo), url:s.url, nbk:s.nbk, gr_updated:s.updated, gr_initial:s.initial||'', _src:'GeneReviews'};
     return {titulo:s.titulo||name, url:s.url||'', doi:s.doi||'', pmid:s.pmid||'', _src:s.source};
   }
   const nbk=(String(name).match(/NBK\d+/i)||[])[0];
-  if(nbk) return {titulo:'GeneReviews '+nbk.toUpperCase(), url:'https://www.ncbi.nlm.nih.gov/books/'+nbk.toUpperCase()+'/', nbk:nbk.toUpperCase(), _src:'GeneReviews'};
+  if(nbk) return {titulo:grRefTitle(nbk, ''), url:'https://www.ncbi.nlm.nih.gov/books/'+nbk.toUpperCase()+'/', nbk:nbk.toUpperCase(), _src:'GeneReviews'};
   return {titulo:String(name).replace(/\.(md|txt|pdf)$/i,'').replace(/__/g,' · ')};
 }
 const CHAT_SYSTEM_STORE='Eres un asistente documental para un genetista clínico. Respondes SOLO con lo que aparezca en los PASAJES recuperados por file_search de SU documentación. REGLAS ESTRICTAS: (1) PROHIBIDO usar conocimiento general, externo o de memoria. (2) Si la respuesta no está en los pasajes recuperados, o los pasajes tratan de OTRA enfermedad/gen/tema distinto al preguntado, responde EXACTAMENTE con la palabra NO_ENCONTRADO y nada más. (3) Nunca cites ni menciones un documento que no trate específicamente lo preguntado. Cuando SÍ esté en los pasajes: da UNA respuesta coherente que integre las fuentes en una explicación clínica fluida (no listes fragmentos sueltos ni "el documento X dice…"); NO escribas una sección de «Fuentes» ni nombres de fichero (la app las muestra aparte). Responde en español, con precisión, sin inventar.';
