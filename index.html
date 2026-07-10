@@ -491,8 +491,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.7.1';
+const APP_VERSION='2.8.0';
 const CHANGELOG=[
+  {v:'2.8.0', d:'2026-07-10', c:['⚙ Ajustes reorganizados en PESTAÑAS (antes era una lista larga): 🤖 IA (claves, proveedor, modelos por tarea) · 🧠 Segundo cerebro (Vector Store, repo de referencias, modelo del chat) · 📦 GitHub · 📁 Drive · 📗 ReadCube. Más fácil de encontrar cada cosa; no cambia ninguna funcionalidad.']},
   {v:'2.7.1', d:'2026-07-10', c:['Al pulsar «↻ Refrescar modelos disponibles» (⚙ Ajustes) ahora se LISTA la lista real de modelos que devuelve tu cuenta OpenAI/Claude, para ver de un vistazo si gpt-5, o-series, etc. están disponibles. Recordatorio: los modos «rápido» del chat usan el modelo barato a propósito (gpt-4o-mini); gpt-5 aparece en los modos «concienzudo».']},
   {v:'2.7.0', d:'2026-07-10', c:['Selector del chat «Consultar» simplificado a 4 modos claros que ELIGEN SOLOS el mejor modelo disponible (y muestran cuáles usan entre paréntesis): «OpenAI · rápido», «OpenAI · concienzudo», «Híbrido · rápido» e «Híbrido · concienzudo». NUEVO modo HÍBRIDO: OpenAI busca en tu Vector Store y CLAUDE redacta la respuesta clínica a partir de los pasajes recuperados — así puedes usar Claude sobre el segundo cerebro (necesita clave de Claude). El grounding estricto y las referencias se mantienen en todos los modos.']},
   {v:'2.6.0', d:'2026-07-10', c:['El chat «Consultar» ahora deja ELEGIR el modelo de OpenAI (⚙ Ajustes → «Modelo del chat»): antes estaba fijado a gpt-4o-mini y no usaba los modelos nuevos. El desplegable se rellena con los modelos de tu cuenta OpenAI (pulsa «↻ Refrescar modelos disponibles» para traer los recién salidos, p. ej. gpt-5). Por defecto sigue gpt-4o-mini (barato); súbelo a uno mayor si quieres síntesis más fina.']},
@@ -2261,23 +2262,30 @@ function openSettings(){
   ov.className='overlay'; ov.id='settingsOverlay';
   ov.innerHTML = `
   <div class="modal" role="dialog" aria-label="Ajustes">
+    <style>
+      .cfg-tabs{display:flex;gap:2px;flex-wrap:wrap;margin:12px 0 14px;border-bottom:1px solid var(--line)}
+      .cfg-tabs button{background:none;border:none;border-bottom:2px solid transparent;color:var(--ink2);padding:7px 11px;font-size:12.5px;cursor:pointer;border-radius:7px 7px 0 0;margin-bottom:-1px}
+      .cfg-tabs button:hover{color:var(--ink)}
+      .cfg-tabs button.on{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+      .cfg-pane{display:none} .cfg-pane.on{display:block}
+    </style>
     <h2>⚙ Ajustes</h2>
-    <div class="msub">Las API keys y el PAT de GitHub se guardan <b>solo en el localStorage de este navegador</b>. Uso personal local. Pon <b>las dos keys</b>: la app elige por operación el modelo más adecuado y, si un proveedor no tiene key, usa el otro.</div>
+    <div class="msub">Las API keys y el PAT de GitHub se guardan <b>solo en el localStorage de este navegador</b>. Uso personal local.</div>
 
-    <h3>Proveedores LLM</h3>
+    <div class="cfg-tabs">
+      <button type="button" data-tab="ia" class="on">🤖 IA</button>
+      <button type="button" data-tab="sb">🧠 Segundo cerebro</button>
+      <button type="button" data-tab="gh">📦 GitHub</button>
+      <button type="button" data-tab="drive">📁 Drive</button>
+      <button type="button" data-tab="rc">📗 ReadCube</button>
+    </div>
+
+    <div class="cfg-pane on" data-pane="ia">
+    <div class="sec-note">Pon <b>las dos keys</b>: la app elige por operación el modelo más adecuado y, si un proveedor no tiene key, usa el otro.</div>
     <div class="field"><label>Anthropic (Claude) — API key</label>
       <input id="cfgAnthropicKey" type="password" value="${c.anthropicKey||''}" placeholder="sk-ant-…" autocomplete="off"></div>
     <div class="field"><label>OpenAI — API key</label>
       <input id="cfgOpenaiKey" type="password" value="${c.openaiKey||''}" placeholder="sk-…" autocomplete="off"></div>
-    <div class="field"><label>Segundo cerebro — id(s) del Vector Store <span class="dx-meta">(el chat «Consultar» preguntará a este store; varios separados por coma)</span></label>
-      <input id="cfgSbStore" type="text" value="${escHtml(c.secondBrainStore||'').replace(/"/g,'&quot;')}" placeholder="vs_… (lo da secondbrain/store.json; vacío = usar el buscador local)" autocomplete="off"></div>
-    <div class="field"><label>Segundo cerebro — repositorio de referencias <span class="dx-meta">(owner/repo del pipeline con sources.json → citas con badge y «añadir a biblioteca»)</span></label>
-      <input id="cfgSbRepo" type="text" value="${escHtml(c.secondBrainRepo||'').replace(/"/g,'&quot;')}" placeholder="tu-usuario/ariadna-secondbrain (usa tu token de GitHub; opcional)" autocomplete="off"></div>
-    <div class="field"><label>Modelo del chat «Consultar» <span class="dx-meta">(elige solo el mejor modelo disponible; refresca la lista con «Modelos por tarea» abajo)</span></label>
-      <select id="cfgChatMode" style="width:100%; padding:8px 9px; border:1px solid var(--line); border-radius:8px; background:var(--panel2); color:var(--ink)">
-        ${chatModeOptionsHtml(c.chatMode||'openai-fast')}
-      </select>
-      <div class="dx-meta" style="margin-top:5px;font-size:11px;line-height:1.5"><b>OpenAI</b>: busca y redacta OpenAI. <b>Híbrido</b>: OpenAI busca en tu Vector Store y <b>Claude redacta</b> la respuesta clínica (necesita clave de Claude). <b>rápido</b> = barato/ágil; <b>concienzudo</b> = más calidad y coste.</div></div>
     <div class="field"><label>Proveedor de IA cuando tienes las dos claves</label>
       <div class="seg" id="prefSeg">
         <button data-pref="anthropic" class="${(c.preferProvider||'anthropic')==='anthropic'?'on':''}">Claude primero</button>
@@ -2295,8 +2303,23 @@ function openSettings(){
         <div class="sec-note">Vacío/“def.” = modelo por defecto. Pulsa <b>Refrescar</b> para traer la lista vigente de cada proveedor (si mañana sale uno nuevo, aparece aquí). Niveles: <b>barato</b> (asignación), <b>medio</b> (extracción/anamnesis), <b>búsqueda</b> (autoría/guías/freshness, requiere modelo con web search).</div>
       </div>
     </details>
+    </div>
 
-    <h3>Almacén GitHub (librería de protocolos)</h3>
+    <div class="cfg-pane" data-pane="sb">
+    <div class="sec-note">El chat «Consultar» pregunta a tu <b>Vector Store</b> de OpenAI (GeneReviews + tus documentos). Refresca los modelos en la pestaña <b>IA</b> para que el selector muestre los recién salidos.</div>
+    <div class="field"><label>Id(s) del Vector Store <span class="dx-meta">(el chat preguntará aquí; varios separados por coma)</span></label>
+      <input id="cfgSbStore" type="text" value="${escHtml(c.secondBrainStore||'').replace(/"/g,'&quot;')}" placeholder="vs_… (lo da secondbrain/store.json; vacío = usar el buscador local)" autocomplete="off"></div>
+    <div class="field"><label>Repositorio de referencias <span class="dx-meta">(owner/repo del pipeline con sources.json → citas con badge y «añadir a biblioteca»)</span></label>
+      <input id="cfgSbRepo" type="text" value="${escHtml(c.secondBrainRepo||'').replace(/"/g,'&quot;')}" placeholder="tu-usuario/ariadna-secondbrain (usa tu token de GitHub; opcional)" autocomplete="off"></div>
+    <div class="field"><label>Modelo del chat «Consultar» <span class="dx-meta">(elige solo el mejor modelo disponible)</span></label>
+      <select id="cfgChatMode" style="width:100%; padding:8px 9px; border:1px solid var(--line); border-radius:8px; background:var(--panel2); color:var(--ink)">
+        ${chatModeOptionsHtml(c.chatMode||'openai-fast')}
+      </select>
+      <div class="dx-meta" style="margin-top:5px;font-size:11px;line-height:1.5"><b>OpenAI</b>: busca y redacta OpenAI. <b>Híbrido</b>: OpenAI busca en tu Vector Store y <b>Claude redacta</b> la respuesta clínica (necesita clave de Claude). <b>rápido</b> = barato/ágil; <b>concienzudo</b> = más calidad y coste.</div></div>
+    </div>
+
+    <div class="cfg-pane" data-pane="gh">
+    <div class="sec-note">Almacén de la librería de protocolos y del sources.json del segundo cerebro.</div>
     <div class="field"><label>Owner (usuario u organización)</label>
       <input id="cfgOwner" type="text" value="${c.gh_owner||''}" placeholder="tu-usuario" autocomplete="off"></div>
     <div class="field"><label>Repositorio</label>
@@ -2307,17 +2330,19 @@ function openSettings(){
       <input id="cfgPat" type="password" value="${c.gh_pat||''}" placeholder="github_pat_…" autocomplete="off"></div>
     <button class="btn" id="cfgTestGh">Probar conexión GitHub</button>
     <div class="test-out" id="cfgTestOut"></div>
-
     <div class="sec-note">PAT fine-grained limitado a un solo repo, permiso <b>Contents: Read and write</b>. Revócalo en GitHub → Developer settings si se compromete.</div>
+    </div>
 
-    <h3>Repositorio documental (Google Drive)</h3>
+    <div class="cfg-pane" data-pane="drive">
+    <div class="sec-note">Repositorio documental en Google Drive (tus PDFs).</div>
     <div class="field"><label>Client ID de Google <span class="hint">(público; atado a tu origen)</span></label>
       <input id="cfgDriveCid" type="text" value="${(c.driveClientId||'').replace(/"/g,'&quot;')}" placeholder="…apps.googleusercontent.com" autocomplete="off"></div>
     <div class="field"><label>Carpeta de Drive a vigilar (opcional) <span class="hint">(ID de carpeta; vacío = todos tus PDFs)</span></label>
       <input id="cfgDriveFolder" type="text" value="${(c.driveFolder||'').replace(/"/g,'&quot;')}" placeholder="ID de carpeta" autocomplete="off"></div>
     <label class="q-opt" style="font-size:13px"><input id="cfgDriveSub" type="checkbox" ${c.driveSubfolders?'checked':''}> Incluir también los PDFs de las subcarpetas</label>
+    </div>
 
-    <h3>Biblioteca ReadCube Papers</h3>
+    <div class="cfg-pane" data-pane="rc">
     <div class="sec-note">Exporta tu biblioteca (o una colección) desde ReadCube a <b>CSV</b> (recomendado: incluye la columna «Library URL» → cada referencia se enlaza directa a tu artículo). Sube el archivo o pégalo. También vale BibTeX/RIS o un listado de DOI/PMID (solo marca, sin enlace directo). Ariadna marca con «📗 Papers» las referencias de tus protocolos que tengas en tu biblioteca. Re-impórtalo cuando tu biblioteca cambie.</div>
     <div id="rcLibState" class="dx-meta" style="margin:2px 0 6px"></div>
     <div style="margin:4px 0"><input id="cfgRcFile" type="file" accept=".csv,.tsv,.txt,.ris,.bib,.nbib"></div>
@@ -2327,6 +2352,7 @@ function openSettings(){
       <button class="btn ghost" id="cfgRcClear">Vaciar</button>
     </div>
     <div class="test-out" id="cfgRcOut"></div>
+    </div>
 
     <div class="modal-actions">
       <button class="btn ghost" id="cfgCancel">Cancelar</button>
@@ -2334,6 +2360,13 @@ function openSettings(){
     </div>
   </div>`;
   document.body.appendChild(ov);
+
+  // Pestañas de Ajustes
+  ov.querySelectorAll('.cfg-tabs button').forEach(b=>b.addEventListener('click', ()=>{
+    const t=b.dataset.tab;
+    ov.querySelectorAll('.cfg-tabs button').forEach(x=>x.classList.toggle('on', x===b));
+    ov.querySelectorAll('.cfg-pane').forEach(p=>p.classList.toggle('on', p.dataset.pane===t));
+  }));
 
   let pref = c.preferProvider||'anthropic';
   ov.querySelectorAll('#prefSeg button').forEach(b=>{
