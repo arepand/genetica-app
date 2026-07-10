@@ -491,8 +491,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.4.0';
+const APP_VERSION='2.4.1';
 const CHANGELOG=[
+  {v:'2.4.1', d:'2026-07-10', c:['Chat «Consultar» más robusto: ante un error TEMPORAL del servidor de OpenAI (500/429/503) al consultar el segundo cerebro, ahora reintenta automáticamente (con espera creciente) en vez de cortar con «Error al consultar: OpenAI 500». Si aun así falla, el mensaje lo explica como temporal e invita a reintentar.']},
   {v:'2.4.0', d:'2026-07-09', c:['GeneReviews sin «Last Update»: en TODA Ariadna (badges, tooltips, referencias, chat del segundo cerebro) ahora, si un capítulo de GeneReviews no tiene fecha de última revisión, se muestra su fecha de INCLUSIÓN (Initial Posting) etiquetada como «Publicación inicial», en vez del antiguo «revisión: —». La IA la captura al indexar/buscar referencias y el pipeline del segundo cerebro la extrae del capítulo.']},
   {v:'2.3.2', d:'2026-07-09', c:['CHAT «Consultar» — grounding estricto: ya NO responde con conocimiento general cuando la pregunta no está en tu documentación. Antes, si el tema no estaba indexado (p. ej. una enfermedad aún no subida al segundo cerebro), contestaba de memoria y colgaba una cita equivocada; ahora el buscador aplica un umbral de relevancia, y si no recupera pasajes que traten de lo preguntado responde «No encuentro esto en tu documentación» sin inventar respuesta ni fuentes.']},
   {v:'2.3.1', d:'2026-07-09', c:['En las fuentes del chat «Consultar», el botón «➕ a mi biblioteca» solo aparece cuando la referencia NO está ya en tu repositorio; si ya la tienes, muestra «✓ en tu biblioteca» (lo detecta por NBK/PMID/DOI/URL/alias, como el resto de la app).']},
@@ -3586,8 +3587,16 @@ async function askRepoStore(input, ids){
     // umbral de relevancia → descarta coincidencias flojas (p. ej. otra enfermedad); pedimos los resultados
     tools:[{type:'file_search', vector_store_ids:ids, max_num_results:8, ranking_options:{score_threshold:0.5}}],
     include:['file_search_call.results'] };
-  const r=await fetch('https://api.openai.com/v1/responses', { method:'POST', headers:{Authorization:'Bearer '+c.openaiKey,'Content-Type':'application/json'}, body:JSON.stringify(body) });
-  if(!r.ok) throw new Error('OpenAI '+r.status+' '+(await r.text()).slice(0,160));
+  // Reintentos ante errores TRANSITORIOS de OpenAI (429/500/502/503/504): el servidor a veces falla y basta reintentar.
+  let r, errTxt='';
+  for(let attempt=1; ; attempt++){
+    r=await fetch('https://api.openai.com/v1/responses', { method:'POST', headers:{Authorization:'Bearer '+c.openaiKey,'Content-Type':'application/json'}, body:JSON.stringify(body) });
+    if(r.ok) break;
+    errTxt=(await r.text()).slice(0,160);
+    const transitorio=[429,500,502,503,504].includes(r.status);
+    if(transitorio && attempt<3){ await new Promise(res=>setTimeout(res, 1200*attempt)); continue; }   // 1,2s · 2,4s
+    throw new Error('OpenAI '+r.status+(transitorio?' (error temporal del servidor; vuelve a intentarlo en un momento)':'')+' '+errTxt);
+  }
   const d=await r.json();
   let text=''; const cites=new Set(); const retrieved=new Set();
   for(const o of (d.output||[])){
