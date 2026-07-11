@@ -498,8 +498,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.9.0';
+const APP_VERSION='2.9.1';
 const CHANGELOG=[
+  {v:'2.9.1', d:'2026-07-11', c:['En las fuentes del chat «Consultar», cuando la referencia es uno de TUS documentos (un PDF de tu Drive) ya no ofrece «➕ a mi biblioteca» (porque ya lo tienes): muestra «📄 abrir en Drive» para abrir el documento + su badge de Papers/PMID/DOI si es artículo. El enlace de Drive lo aporta el pipeline (nuevo campo en sources.json).']},
   {v:'2.9.0', d:'2026-07-10', c:['Chat «Consultar» — respuestas con FORMATO: las TABLAS de GeneReviews (frecuencias, criterios…) ahora se ven como tabla de verdad, con negritas y listas, en vez de texto plano.','FIGURAS de GeneReviews: bajo cada fuente citada aparece «🖼 Ver figuras» que muestra las imágenes del capítulo (embebidas directamente de NCBI, sin almacenarlas). El pipeline genera figures.json con las URLs y pies. (Las figuras de tus PDFs propios quedan para más adelante.)']},
   {v:'2.8.0', d:'2026-07-10', c:['⚙ Ajustes reorganizados en PESTAÑAS (antes era una lista larga): 🤖 IA (claves, proveedor, modelos por tarea) · 🧠 Segundo cerebro (Vector Store, repo de referencias, modelo del chat) · 📦 GitHub · 📁 Drive · 📗 ReadCube. Más fácil de encontrar cada cosa; no cambia ninguna funcionalidad.']},
   {v:'2.7.1', d:'2026-07-10', c:['Al pulsar «↻ Refrescar modelos disponibles» (⚙ Ajustes) ahora se LISTA la lista real de modelos que devuelve tu cuenta OpenAI/Claude, para ver de un vistazo si gpt-5, o-series, etc. están disponibles. Recordatorio: los modos «rápido» del chat usan el modelo barato a propósito (gpt-4o-mini); gpt-5 aparece en los modos «concienzudo».']},
@@ -3816,11 +3817,18 @@ function renderChatMsgs(){
       const repoDocs=(cachedDocs()||{}).docs||[];
       src='<div class="dx-meta" style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px">📎 Fuentes:<div style="margin-top:3px">'
         + fuentes.map(f=>{ const enc=encodeURIComponent(JSON.stringify(f));
-            const inRepo=!!matchDoc(f, repoDocs);   // ya en tu biblioteca (por NBK/PMID/DOI/URL/alias) → no ofrecer «añadir»
-            const add=inRepo ? '<span class="dx-meta" style="color:var(--ok)" title="Ya está en tu biblioteca">✓ en tu biblioteca</span>'
-                             : '<a class="tip-ai chat-add" data-fu="'+enc+'" title="Añadir esta referencia a tu repositorio bibliográfico">➕ a mi biblioteca</a>';
+            const isPdf = f._src==='PDF';   // documento TUYO (de Drive): ya lo tienes → abrir en Drive + Papers, no «añadir»
+            let act;
+            if(isPdf){
+              act = (f.url?('<a class="tip-ai" href="'+escA(f.url)+'" target="_blank" rel="noopener" title="Abrir el documento en Google Drive">📄 abrir en Drive</a>'):'')
+                  + '<span class="dx-meta" style="color:var(--ok);margin-left:6px" title="Es un documento de tu Drive, ya en tu biblioteca">✓ en tu biblioteca</span>';
+            } else {
+              const inRepo=!!matchDoc(f, repoDocs);   // ya en tu biblioteca (por NBK/PMID/DOI/URL/alias) → no ofrecer «añadir»
+              act = inRepo ? '<span class="dx-meta" style="color:var(--ok)" title="Ya está en tu biblioteca">✓ en tu biblioteca</span>'
+                           : '<a class="tip-ai chat-add" data-fu="'+enc+'" title="Añadir esta referencia a tu repositorio bibliográfico">➕ a mi biblioteca</a>';
+            }
             const figs=f.nbk?grFiguresHtml(f.nbk):'';   // figuras del capítulo GeneReviews (embebidas de NCBI)
-            return '<div style="margin:2px 0">'+(f.url?('<a href="'+escA(f.url)+'" target="_blank" rel="noopener" style="color:var(--accent)">'+escHtml(f.titulo)+'</a>'):('<span>'+escHtml(f.titulo)+'</span>'))+bibRefHtml(f,{noAssign:true})+' '+add+figs+'</div>'; }).join('')
+            return '<div style="margin:2px 0">'+(f.url?('<a href="'+escA(f.url)+'" target="_blank" rel="noopener" style="color:var(--accent)">'+escHtml(f.titulo)+'</a>'):('<span>'+escHtml(f.titulo)+'</span>'))+bibRefHtml(f,{noAssign:true})+' '+act+figs+'</div>'; }).join('')
         + '</div></div>';
     }
     return `<div style="background:${bg};border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0"><div class="dx-meta" style="font-weight:600;margin-bottom:4px">${who}</div><div style="font-size:13.5px;line-height:1.6">${body}</div>${src}</div>`;
