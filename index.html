@@ -498,8 +498,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.11.0';
+const APP_VERSION='2.12.0';
 const CHANGELOG=[
+  {v:'2.12.0', d:'2026-07-11', c:['La CREACIÓN/actualización de protocolos ahora se apoya en tu SEGUNDO CEREBRO (Vector Store) en vez del RAG local: OpenAI recupera por file_search los pasajes relevantes de tus documentos y GeneReviews, la web la busca y el protocolo lo redacta Opus (búsqueda cerebro = OpenAI · web + redacción = Opus). Nuevo selector en ⚙ Ajustes → 🧠 Segundo cerebro → «Fuente de documentos al crear protocolos» (Segundo cerebro / RAG propio local; provisional, el RAG local se retirará).']},
   {v:'2.11.0', d:'2026-07-11', c:['Inventario del segundo cerebro mejorado: cada entrada se muestra ahora como CUALQUIER referencia de Ariadna — chips clicables PMID/DOI, badges 📖 GeneReviews / 📗 Papers y el icono de Google Drive para abrir el documento; con filtro por tipo (Todo / GeneReviews / Documentos) y buscador (incluye ISBN).','En las fuentes del chat «Consultar», los documentos propios muestran el icono de Drive (en vez del texto «abrir en Drive») y sus chips PMID/DOI, igual que el resto.','⚙ Ajustes y el panel de Estado son ahora bastante más anchos (se leen mejor).']},
   {v:'2.10.0', d:'2026-07-11', c:['Nuevo INVENTARIO del segundo cerebro en ⚙ Ajustes → 🧠 Segundo cerebro: muestra cuántas GeneReviews y cuántos documentos hay indexados en tu Vector Store, con la lista (cada uno enlazado a su capítulo NCBI o a su documento en Drive) y un BUSCADOR (por enfermedad, NBK, DOI, PMID o nombre de documento). Se nutre del sources.json del repo del pipeline.']},
   {v:'2.9.1', d:'2026-07-11', c:['En las fuentes del chat «Consultar», cuando la referencia es uno de TUS documentos (un PDF de tu Drive) ya no ofrece «➕ a mi biblioteca» (porque ya lo tienes): muestra «📄 abrir en Drive» para abrir el documento + su badge de Papers/PMID/DOI si es artículo. El enlace de Drive lo aporta el pipeline (nuevo campo en sources.json).']},
@@ -1216,7 +1217,7 @@ function resetPatient(){
 /* ---- Config en localStorage ---- */
 const CFG_KEY='fh_cfg';
 const CFG_DEFAULTS={ anthropicKey:'', openaiKey:'', preferProvider:'anthropic', models:{}, gh_owner:'', gh_repo:'', gh_branch:'main', gh_pat:'',
-  driveClientId:'672017094614-goqdjb7159poff6jieh7rgjtop06askb.apps.googleusercontent.com', driveFolder:'', driveSubfolders:false, secondBrainStore:'', secondBrainRepo:'', chatMode:'openai-fast' };
+  driveClientId:'672017094614-goqdjb7159poff6jieh7rgjtop06askb.apps.googleusercontent.com', driveFolder:'', driveSubfolders:false, secondBrainStore:'', secondBrainRepo:'', chatMode:'openai-fast', authoringSource:'sb' };
 /* Modelo del chat «Consultar»: 4 modos curados que ELIGEN SOLOS el mejor modelo disponible (de los descubiertos
    en tu cuenta; si no, un default estable). 'oa'=OpenAI, 'cl'=Claude; '-fast'=rápido/barato, '-deep'=concienzudo. */
 const CHAT_MODEL_PREFS={ 'oa-fast':['gpt-5-mini','gpt-4.1-mini','gpt-4o-mini'], 'oa-deep':['gpt-5','gpt-4.1','gpt-4o'], 'cl-fast':['claude-haiku-4-5'], 'cl-deep':['claude-opus-4-8'] };
@@ -2327,6 +2328,12 @@ function openSettings(){
         ${chatModeOptionsHtml(c.chatMode||'openai-fast')}
       </select>
       <div class="dx-meta" style="margin-top:5px;font-size:11px;line-height:1.5"><b>OpenAI</b>: busca y redacta OpenAI. <b>Híbrido</b>: OpenAI busca en tu Vector Store y <b>Claude redacta</b> la respuesta clínica (necesita clave de Claude). <b>rápido</b> = barato/ágil; <b>concienzudo</b> = más calidad y coste.</div></div>
+    <div class="field"><label>Fuente de documentos al CREAR protocolos</label>
+      <div class="seg" id="cfgAuthSrc">
+        <button type="button" data-src="sb" class="${(c.authoringSource||'sb')==='sb'?'on':''}">🧠 Segundo cerebro</button>
+        <button type="button" data-src="rag" class="${c.authoringSource==='rag'?'on':''}">📇 RAG propio (local)</button>
+      </div>
+      <div class="dx-meta" style="margin-top:5px;font-size:11px;line-height:1.5">Al crear/actualizar un protocolo, de dónde saca tus documentos: <b>Segundo cerebro</b> (Vector Store — OpenAI busca los pasajes) o el <b>RAG local</b> (BM25/embeddings del navegador). En ambos casos la web la busca y el protocolo lo redacta <b>Opus</b>. (Provisional; el RAG local se retirará.)</div></div>
     <div class="field"><label>Inventario del segundo cerebro <span class="dx-meta">(lo que hay indexado, según sources.json)</span></label>
       <button class="btn" id="cfgSbInvRefresh">↻ Cargar / refrescar inventario</button>
       <span class="dx-meta" id="cfgSbInvStats" style="margin-left:8px"></span>
@@ -2407,6 +2414,8 @@ function openSettings(){
       ov.querySelectorAll('#prefSeg button').forEach(x=>x.classList.toggle('on', x.dataset.pref===pref));
     });
   });
+  let authSrc = c.authoringSource||'sb';   // fuente de documentos al crear protocolos
+  ov.querySelectorAll('#cfgAuthSrc button').forEach(b=>b.addEventListener('click', ()=>{ authSrc=b.dataset.src; ov.querySelectorAll('#cfgAuthSrc button').forEach(x=>x.classList.toggle('on', x.dataset.src===authSrc)); }));
 
   // Biblioteca ReadCube: estado actual + importar (pegar o archivo) + vaciar
   (function(){
@@ -2511,6 +2520,7 @@ function openSettings(){
       secondBrainRepo: (ov.querySelector('#cfgSbRepo')?ov.querySelector('#cfgSbRepo').value.trim():(prev.secondBrainRepo||'')),
       chatMode: (ov.querySelector('#cfgChatMode')?ov.querySelector('#cfgChatMode').value.trim():(prev.chatMode||'openai-fast')),
       preferProvider: pref,
+      authoringSource: authSrc,
       models,
       gh_owner: ov.querySelector('#cfgOwner').value.trim(),
       gh_repo: ov.querySelector('#cfgRepo').value.trim(),
@@ -3628,7 +3638,28 @@ async function ragRetrieveLocal(query, k){
   const hits=all.filter(c=>c.s>0).sort((a,b)=>b.s-a.s).slice(0, k||6);
   return {hits, sinTexto};
 }
+/* Recupera pasajes relevantes del SEGUNDO CEREBRO (Vector Store OpenAI, file_search) para inyectarlos en la
+   autoría de protocolos. La búsqueda la hace OpenAI; la redacción del protocolo la hace Opus (task:'author'). */
+async function sbRetrieveContext(query){
+  const c=loadCfg(); const ids=secondBrainStores();
+  if(!ids.length || !c.openaiKey || !String(query||'').trim()) return '';
+  try{
+    const body={ model:'gpt-4o-mini', instructions:'Eres un buscador documental. No redactes; solo se usan los pasajes recuperados por file_search.', input:String(query),
+      tools:[{type:'file_search', vector_store_ids:ids, max_num_results:12, ranking_options:{score_threshold:0.4}}], include:['file_search_call.results'], max_output_tokens:16 };
+    const r=await fetch('https://api.openai.com/v1/responses', { method:'POST', headers:{Authorization:'Bearer '+c.openaiKey,'Content-Type':'application/json'}, body:JSON.stringify(body) });
+    if(!r.ok) return '';
+    const d=await r.json(); const parts=[]; const seen=new Set();
+    for(const o of (d.output||[])) if(o.type==='file_search_call') for(const rr of (o.results||[])){
+      const t=typeof rr.text==='string'?rr.text:(Array.isArray(rr.content)?rr.content.map(x=>x&&x.text||'').join(' '):''); if(!t) continue;
+      const key=(rr.filename||'')+'|'+t.slice(0,40); if(seen.has(key)) continue; seen.add(key);
+      parts.push('--- '+(rr.filename||'documento')+' ---\n'+t);
+    }
+    const ctx=parts.join('\n\n'); return ctx.length>14000?ctx.slice(0,14000):ctx;
+  }catch(e){ return ''; }
+}
 async function ragContext(maxDocs, query){
+  // Fuente de documentos para la IA: SEGUNDO CEREBRO (Vector Store) por defecto, o RAG local (selector en Ajustes).
+  if(query && loadCfg().authoringSource!=='rag'){ const sb=await sbRetrieveContext(query); if(sb) return sb; }
   const list=await ragDocList(); if(!list.length) return '';
   // Recuperación HÍBRIDA: BM25 (por palabras, siempre) + semántica (por significado, si hay índice semántico).
   if(query){ try{
