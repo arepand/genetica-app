@@ -498,8 +498,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.14.1';
+const APP_VERSION='2.15.0';
 const CHANGELOG=[
+  {v:'2.15.0', d:'2026-07-11', c:['El chat «Consultar» ahora GUARDA tus conversaciones (para siempre, salvo que las borres): panel lateral a la izquierda con todas tus conversaciones, botón «＋ Nueva conversación» y la conversación activa ocupando la mayor parte de la pantalla, como un chatbot al uso. Cada conversación recibe un TÍTULO automático (por IA) tras la primera pregunta/respuesta, y puedes borrarlas una a una (✕). Se guardan en tu navegador (localStorage), no salen a ningún sitio.']},
   {v:'2.14.1', d:'2026-07-11', c:['Arreglo: «Editar con IA» del editor de protocolos daba «OpenAI 400 · Model incompatible request argument supplied: temperature». Causa: la tarea de autoría usaba por defecto un modelo *-search-preview de OpenAI y se le enviaba el parámetro «temperature», que ese modelo (y los nuevos gpt-5/o-series) rechazan. Ahora: en tareas sin búsqueda se usa el modelo base (no el *-search) y se omite «temperature» (con max_completion_tokens) en los modelos nuevos. Recordatorio: el JSON editado se aplica solo a la vista previa; para conservarlo pulsa «Guardar y commitear» al final del editor.']},
   {v:'2.14.0', d:'2026-07-11', c:['Chat «Consultar»: cada fuente citada trae ahora «🔍 ver el texto exacto en que se basa» — despliega el pasaje LITERAL recuperado del documento y su apartado, para localizar la afirmación manualmente.','Inventario del segundo cerebro: nuevo filtro «⚠ Duplicados» que detecta documentos repetidos (mismo DOI/PMID/ISBN/título) y los agrupa con enlace a Drive para que los revises y borres tú (Ariadna no borra de tu Drive).','El apartado de herencia/asesoramiento de los protocolos considera también la CNRHA / Ley 14/2006 (regulación estatal de reproducción asistida que rige lo que el SERGAS autoriza).','Contexto temporal: al responder o crear protocolos, si una guía/ley ha sido sustituida por otra más reciente, se prioriza la vigente y se avisa de lo derogado.','El pipeline identifica LEYES/normas (tipo «legislación») y guarda el enlace al boletín oficial (BOE/DOGA/EUR-Lex) sin inventarlo.']},
   {v:'2.13.0', d:'2026-07-11', c:['Los protocolos tienen ahora un apartado final «Herencia y asesoramiento genético»: patrón de herencia, riesgo de recurrencia, puntos de consejo genético, opciones reproductivas (DGP/prenatal…) y —en especial— las circunstancias y criterios de acceso propios del SERGAS (Galicia), que la IA extrae de tus guías SERGAS del segundo cerebro (y si no tiene la norma concreta, lo dice en vez de inventarla). Se genera al crear protocolos nuevos y se añade a los existentes al actualizarlos.']},
@@ -3935,7 +3936,7 @@ async function askRepo(q){
       const input=(h?('Conversación previa (contexto):\n'+h+'\n\n'):'')+'PREGUNTA: '+q;
       try{ await loadSbSources(); await loadSbFigures(); }catch(e){}   // mapa fichero→referencia + figuras por NBK
       const {text, sources, passages}=await askRepoStore(input, ids);
-      pend.pending=false; pend.text=text||'No encuentro esa información en tu documentación.'; pend.sources=sources; pend.passages=passages||[]; renderChatMsgs(); return;
+      pend.pending=false; pend.text=text||'No encuentro esa información en tu documentación.'; pend.sources=sources; pend.passages=passages||[]; renderChatMsgs(); maybeTitleConvo(); return;
     }
     // Respaldo (sin store): buscador LOCAL (BM25 + semántico) sobre lo indexado en Ariadna.
     const retrievalQuery = prevUser ? (prevUser.text+' \n '+q) : q;   // combina la pregunta anterior + la actual → recupera bien los seguimientos
@@ -3947,7 +3948,7 @@ async function askRepo(q){
     const resp=await callLLM({system:CHAT_SYSTEM, user, webSearch:false, maxTokens:1200, task:'chat'});
     pend.pending=false; pend.text=(resp||'').trim()||'(sin respuesta)';
     pend.sources=[...new Set(hits.map(h=>h.doc).filter(Boolean))];
-    renderChatMsgs();
+    renderChatMsgs(); maybeTitleConvo();
   }catch(e){ pend.pending=false; pend.text='Error al consultar: '+e.message; renderChatMsgs(); }
 }
 function chatSourceHtml(name){
@@ -3994,22 +3995,58 @@ function renderChatMsgs(){
   el.scrollTop=el.scrollHeight;
   try{ persistConvos(); }catch(e){}   // guarda la conversación activa tras cada cambio
 }
+/* Título visible de una conversación: el que puso la IA, o la 1ª pregunta, o «Nueva conversación». */
+function convoTitle(c){ const t=(c.title||'').trim(); if(t) return t; const u=c.msgs.find(m=>m.role==='user'&&m.text); return u?u.text.slice(0,44):'Nueva conversación'; }
+/* Panel lateral: lista de conversaciones guardadas (activa resaltada), con borrar por conversación. */
+function renderConvoList(){
+  const el=document.getElementById('convoList'); if(!el) return;
+  const list=loadConvos();
+  if(!list.length){ el.innerHTML='<div class="dx-meta" style="padding:8px;opacity:.6;font-size:11.5px">Aún no hay conversaciones.</div>'; return; }
+  el.innerHTML=list.map(c=>{
+    const act=c.id===_activeId;
+    const wtxt=new Date(c.updated||c.created).toLocaleDateString('es-ES',{day:'numeric',month:'short'});
+    const n=c.msgs.filter(m=>m.role==='user').length;
+    return `<div class="convo-item" data-id="${c.id}" style="display:flex;align-items:center;gap:4px;padding:7px 8px;border-radius:8px;cursor:pointer;margin-bottom:3px;border:1px solid ${act?'var(--accent)':'transparent'};background:${act?'var(--panel2)':'transparent'}">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12.5px;font-weight:${act?600:500};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(convoTitle(c))}</div>
+        <div class="dx-meta" style="font-size:10.5px;opacity:.6">${wtxt} · ${n} pregunta${n===1?'':'s'}</div>
+      </div>
+      <button class="convo-del" data-id="${c.id}" title="Borrar esta conversación" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;line-height:1;padding:3px 4px;flex-shrink:0">✕</button>
+    </div>`;
+  }).join('');
+}
 function renderConsultar(){
   const box=document.getElementById('consultarView'); if(!box) return;
+  activeConvo();   // asegura que _chatMsgs apunta a la conversación activa (crea una si no hay ninguna)
   box.innerHTML=`
-    <div class="lib-head"><h2>💬 Consultar tu documentación</h2><button class="btn ghost" id="chatClear" style="padding:3px 10px;font-size:12px">Limpiar</button></div>
-    <div class="sec-note" style="max-width:900px;margin:0 auto">Respondo <b>solo</b> con la información de tu documentación${secondBrainStores().length?' — conectado a tu <b>segundo cerebro</b> (Vector Store de OpenAI: GeneReviews + tus documentos)':' indexada en Ariadna (búsqueda local; configura el Vector Store en ⚙ Ajustes para el segundo cerebro)'}, citando de qué documento sale. Si algo no está, te lo digo — <b>no uso conocimiento externo</b>. Consume IA.</div>
-    <div id="chatMsgs" style="max-width:900px;margin:12px auto;min-height:180px"></div>
-    <div style="max-width:900px;margin:0 auto;display:flex;gap:8px;position:sticky;bottom:0;padding:10px 0;background:var(--bg)">
-      <textarea id="chatInput" rows="2" placeholder="Escribe tu pregunta y pulsa Enter (Shift+Enter = salto de línea). Puedes repreguntar y seguir la conversación." style="flex:1;box-sizing:border-box;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);color:var(--ink);font-size:13.5px;resize:vertical"></textarea>
-      <button class="btn primary" id="chatSend">Preguntar</button>
+    <div style="display:flex;gap:16px;align-items:stretch;max-width:1180px;margin:0 auto">
+      <aside style="width:240px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid var(--line);padding-right:12px">
+        <button class="btn primary" id="convoNew" style="width:100%;margin-bottom:10px">＋ Nueva conversación</button>
+        <div id="convoList" style="overflow-y:auto;flex:1"></div>
+      </aside>
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+        <div class="lib-head"><h2 style="margin:0">💬 Consultar tu documentación</h2></div>
+        <div class="sec-note">Respondo <b>solo</b> con la información de tu documentación${secondBrainStores().length?' — conectado a tu <b>segundo cerebro</b> (Vector Store de OpenAI: GeneReviews + tus documentos)':' indexada en Ariadna (búsqueda local; configura el Vector Store en ⚙ Ajustes para el segundo cerebro)'}, citando de qué documento sale. Si algo no está, te lo digo — <b>no uso conocimiento externo</b>. Tus conversaciones se guardan (puedes borrarlas). Consume IA.</div>
+        <div id="chatMsgs" style="flex:1;min-height:200px;margin:12px 0"></div>
+        <div style="display:flex;gap:8px;position:sticky;bottom:0;padding:10px 0;background:var(--bg)">
+          <textarea id="chatInput" rows="2" placeholder="Escribe tu pregunta y pulsa Enter (Shift+Enter = salto de línea). Puedes repreguntar y seguir la conversación." style="flex:1;box-sizing:border-box;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);color:var(--ink);font-size:13.5px;resize:vertical"></textarea>
+          <button class="btn primary" id="chatSend">Preguntar</button>
+        </div>
+      </div>
     </div>`;
+  renderConvoList();
   renderChatMsgs();
   const inp=box.querySelector('#chatInput'), send=box.querySelector('#chatSend');
   const go=()=>{ const q=inp.value; inp.value=''; askRepo(q); };
   if(send) send.addEventListener('click', go);
   if(inp) inp.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); go(); } });   // Enter envía · Shift+Enter salta de línea
-  const clr=box.querySelector('#chatClear'); if(clr) clr.addEventListener('click', ()=>{ _chatMsgs=[]; renderChatMsgs(); });
+  // Nueva conversación: si la activa ya está vacía, no crea otra (evita duplicados vacíos).
+  const nb=box.querySelector('#convoNew'); if(nb) nb.addEventListener('click', ()=>{ if(activeConvo().msgs.length) newConvo(); renderConvoList(); renderChatMsgs(); if(inp) inp.focus(); });
+  const cl=box.querySelector('#convoList'); if(cl) cl.addEventListener('click', e=>{
+    const del=e.target.closest('.convo-del');
+    if(del){ e.stopPropagation(); if(confirm('¿Borrar esta conversación? No se puede deshacer.')){ deleteConvo(del.dataset.id); renderConvoList(); renderChatMsgs(); } return; }
+    const it=e.target.closest('.convo-item'); if(it){ setActiveConvo(it.dataset.id); renderConvoList(); renderChatMsgs(); }
+  });
   // «➕ a mi biblioteca» en las fuentes citadas → añade la referencia al repositorio (igual que el resto).
   const cm=box.querySelector('#chatMsgs');
   if(cm) cm.addEventListener('click', e=>{ const a=e.target.closest && e.target.closest('.chat-add'); if(!a) return; e.preventDefault();
