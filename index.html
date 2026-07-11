@@ -498,8 +498,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.13.0';
+const APP_VERSION='2.14.0';
 const CHANGELOG=[
+  {v:'2.14.0', d:'2026-07-11', c:['Chat «Consultar»: cada fuente citada trae ahora «🔍 ver el texto exacto en que se basa» — despliega el pasaje LITERAL recuperado del documento y su apartado, para localizar la afirmación manualmente.','Inventario del segundo cerebro: nuevo filtro «⚠ Duplicados» que detecta documentos repetidos (mismo DOI/PMID/ISBN/título) y los agrupa con enlace a Drive para que los revises y borres tú (Ariadna no borra de tu Drive).','El apartado de herencia/asesoramiento de los protocolos considera también la CNRHA / Ley 14/2006 (regulación estatal de reproducción asistida que rige lo que el SERGAS autoriza).','Contexto temporal: al responder o crear protocolos, si una guía/ley ha sido sustituida por otra más reciente, se prioriza la vigente y se avisa de lo derogado.','El pipeline identifica LEYES/normas (tipo «legislación») y guarda el enlace al boletín oficial (BOE/DOGA/EUR-Lex) sin inventarlo.']},
   {v:'2.13.0', d:'2026-07-11', c:['Los protocolos tienen ahora un apartado final «Herencia y asesoramiento genético»: patrón de herencia, riesgo de recurrencia, puntos de consejo genético, opciones reproductivas (DGP/prenatal…) y —en especial— las circunstancias y criterios de acceso propios del SERGAS (Galicia), que la IA extrae de tus guías SERGAS del segundo cerebro (y si no tiene la norma concreta, lo dice en vez de inventarla). Se genera al crear protocolos nuevos y se añade a los existentes al actualizarlos.']},
   {v:'2.12.0', d:'2026-07-11', c:['La CREACIÓN/actualización de protocolos ahora se apoya en tu SEGUNDO CEREBRO (Vector Store) en vez del RAG local: OpenAI recupera por file_search los pasajes relevantes de tus documentos y GeneReviews, la web la busca y el protocolo lo redacta Opus (búsqueda cerebro = OpenAI · web + redacción = Opus). Nuevo selector en ⚙ Ajustes → 🧠 Segundo cerebro → «Fuente de documentos al crear protocolos» (Segundo cerebro / RAG propio local; provisional, el RAG local se retirará).']},
   {v:'2.11.0', d:'2026-07-11', c:['Inventario del segundo cerebro mejorado: cada entrada se muestra ahora como CUALQUIER referencia de Ariadna — chips clicables PMID/DOI, badges 📖 GeneReviews / 📗 Papers y el icono de Google Drive para abrir el documento; con filtro por tipo (Todo / GeneReviews / Documentos) y buscador (incluye ISBN).','En las fuentes del chat «Consultar», los documentos propios muestran el icono de Drive (en vez del texto «abrir en Drive») y sus chips PMID/DOI, igual que el resto.','⚙ Ajustes y el panel de Estado son ahora bastante más anchos (se leen mejor).']},
@@ -2343,6 +2344,7 @@ function openSettings(){
         <button type="button" data-t="all" class="on">Todo</button>
         <button type="button" data-t="gr">📖 GeneReviews</button>
         <button type="button" data-t="pdf">📄 Documentos</button>
+        <button type="button" data-t="dup">⚠ Duplicados</button>
       </div>
       <input id="cfgSbInvSearch" type="text" placeholder="Buscar (enfermedad, NBK, DOI, PMID, ISBN, documento)…" autocomplete="off" style="width:100%;box-sizing:border-box;margin-top:6px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink);font-size:12px">
       <div id="cfgSbInvList" style="max-height:280px;overflow:auto;margin-top:6px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;background:var(--panel2)"></div>
@@ -2402,7 +2404,7 @@ function openSettings(){
   // Inventario del segundo cerebro (recuento + filtro por tipo + buscador, desde sources.json)
   const invStats=ov.querySelector('#cfgSbInvStats'), invSearch=ov.querySelector('#cfgSbInvSearch'), invList=ov.querySelector('#cfgSbInvList'), invRefresh=ov.querySelector('#cfgSbInvRefresh');
   let invType='all';
-  const renderInvList=()=>{ if(invList) invList.innerHTML=sbInvRows(invSearch?invSearch.value:'', invType); };
+  const renderInvList=()=>{ if(invList) invList.innerHTML = invType==='dup' ? sbDupRowsHtml() : sbInvRows(invSearch?invSearch.value:'', invType); };
   function renderInv(){ if(invStats){ const cc=sbInvCounts(); invStats.innerHTML= cc.total? ('📖 <b>'+cc.gr+'</b> GeneReviews · 📄 <b>'+cc.pdf+'</b> documentos'+(cc.otro?' · '+cc.otro+' otros':'')) : 'Sin cargar'; } renderInvList(); }
   ov.querySelectorAll('#cfgSbInvType button').forEach(b=>b.addEventListener('click', ()=>{ invType=b.dataset.t; ov.querySelectorAll('#cfgSbInvType button').forEach(x=>x.classList.toggle('on', x===b)); renderInvList(); }));
   if(invRefresh) invRefresh.addEventListener('click', async ()=>{ if(invStats) invStats.textContent='Cargando…'; try{ localStorage.removeItem('fh_sb_sources'); _sbSources=null; await loadSbSources(); }catch(e){} renderInv(); });
@@ -3255,11 +3257,11 @@ const FICHA_SYSTEM_PROMPT = `Eres genetista clínico experto en fenotipado HPO. 
     "riesgo_recurrencia": "riesgo para descendencia y familiares en riesgo según la herencia (penetrancia, expresividad variable, anticipación si procede)",
     "asesoramiento": "puntos clave del consejo genético: estudio de familiares/portadores, implicaciones para la descendencia, límites del estudio, apoyo psicológico si procede",
     "opciones_reproductivas": ["diagnóstico prenatal (invasivo/no invasivo)", "DGP/PGT-M", "donación de gametos", "adopción", "…según proceda"],
-    "sergas": "circunstancias y criterios PROPIOS DEL SERGAS (Servizo Galego de Saúde, Galicia): indicaciones y ACCESO a estudio de portadores, diagnóstico prenatal y DGP/PGT según sus guías/carteira de servizos y criterios de financiación — usa los documentos SERGAS del repositorio/segundo cerebro si están; si no dispones de la norma SERGAS concreta, dilo explícitamente en vez de inventarla",
+    "sergas": "circunstancias y criterios de ACCESO en el ámbito público: (a) SERGAS (Servizo Galego de Saúde, Galicia) — indicaciones y financiación de estudio de portadores, diagnóstico prenatal y DGP/PGT según sus guías/carteira de servizos; (b) la regulación estatal de la CNRHA (Comisión Nacional de Reproducción Humana Asistida) y la Ley 14/2006 de reproducción humana asistida, que también aplica al SERGAS y condiciona qué DGP/técnicas están autorizadas. Usa los documentos SERGAS/legislación de mi repositorio/segundo cerebro; si no dispones de la norma concreta, dilo explícitamente en vez de inventarla",
     "fuentes": [{"titulo":"...","url":"https://...","anio":"AAAA","doi":"(opcional)","pmid":"(opcional)","nbk":"(opcional)"}]
   }
 }
-Reglas: usa códigos HPO REALES y vigentes (formato HP:0000000, 7 dígitos). **CADA código HPO DEBE corresponder EXACTAMENTE al concepto que quieres expresar**: el nombre oficial del término en HPO tiene que coincidir con la "nombre" que pones; NUNCA uses un código que signifique otra cosa (p. ej. NO pongas un código de "ascitis" para "hernia umbilical"). En la duda, prefiere el término HPO más específico cuyo nombre oficial encaje con el concepto; los códigos se VERIFICAN contra JAX y los que no correspondan se rechazan o corrigen. Ordena dominios y preguntas por lógica clínica, NUNCA alfabético; sé exhaustivo según los criterios diagnósticos vigentes (busca en la web las guías/criterios actuales y cítalos en "fuentes"); en "poblacion" decide: si los criterios diagnósticos, los genes o el manejo difieren de forma RELEVANTE entre paciente pediátrico y adulto, genera la variante ("pediatrica" o "adulta") y comparte el mismo "grupo" entre ambas variantes (indica que conviene crear también la complementaria); si no difieren, usa "unica"; en "estudio_genetico" indica con apoyo de guías CUÁNDO está indicado el estudio, en qué circunstancias y QUÉ tipo de estudio (panel dirigido/exoma/genoma…) en primera línea y el escalado si es negativo; "logica" es "and" si exige mayores Y menores, "or" si basta uno de los dos umbrales; en cada entidad, SOLO si el criterio diagnóstico depende del sexo o de la edad, añade "sexo" ("Femenino"/"Masculino") y/o "edad_min_anios"/"edad_max_anios" (en años; usa fracciones para meses, p. ej. 0.5 = 6 meses) — OMÍTELOS si el criterio no depende de edad/sexo; la app ya conoce edad y sexo del paciente y marcará la entidad como "no aplica" fuera de rango; activa modulos.beighton o modulos.antropometria solo si son clínicamente pertinentes; RELLENA SIEMPRE "herencia_asesoramiento" (patrón de herencia, riesgo de recurrencia, puntos de consejo genético, opciones reproductivas y —MUY IMPORTANTE— las circunstancias y criterios de acceso propios del SERGAS/Galicia; para lo del SERGAS apóyate en los documentos SERGAS de mi repositorio/segundo cerebro y, si no tienes la norma concreta, dilo en vez de inventarla). ${SOURCE_PRIORITY} Devuelve SOLO el JSON.`;
+Reglas: usa códigos HPO REALES y vigentes (formato HP:0000000, 7 dígitos). **CADA código HPO DEBE corresponder EXACTAMENTE al concepto que quieres expresar**: el nombre oficial del término en HPO tiene que coincidir con la "nombre" que pones; NUNCA uses un código que signifique otra cosa (p. ej. NO pongas un código de "ascitis" para "hernia umbilical"). En la duda, prefiere el término HPO más específico cuyo nombre oficial encaje con el concepto; los códigos se VERIFICAN contra JAX y los que no correspondan se rechazan o corrigen. Ordena dominios y preguntas por lógica clínica, NUNCA alfabético; sé exhaustivo según los criterios diagnósticos vigentes (busca en la web las guías/criterios actuales y cítalos en "fuentes"); en "poblacion" decide: si los criterios diagnósticos, los genes o el manejo difieren de forma RELEVANTE entre paciente pediátrico y adulto, genera la variante ("pediatrica" o "adulta") y comparte el mismo "grupo" entre ambas variantes (indica que conviene crear también la complementaria); si no difieren, usa "unica"; en "estudio_genetico" indica con apoyo de guías CUÁNDO está indicado el estudio, en qué circunstancias y QUÉ tipo de estudio (panel dirigido/exoma/genoma…) en primera línea y el escalado si es negativo; "logica" es "and" si exige mayores Y menores, "or" si basta uno de los dos umbrales; en cada entidad, SOLO si el criterio diagnóstico depende del sexo o de la edad, añade "sexo" ("Femenino"/"Masculino") y/o "edad_min_anios"/"edad_max_anios" (en años; usa fracciones para meses, p. ej. 0.5 = 6 meses) — OMÍTELOS si el criterio no depende de edad/sexo; la app ya conoce edad y sexo del paciente y marcará la entidad como "no aplica" fuera de rango; activa modulos.beighton o modulos.antropometria solo si son clínicamente pertinentes; RELLENA SIEMPRE "herencia_asesoramiento" (patrón de herencia, riesgo de recurrencia, puntos de consejo genético, opciones reproductivas y —MUY IMPORTANTE— las circunstancias y criterios de acceso en el ámbito público: SERGAS/Galicia Y la regulación estatal de la CNRHA / Ley 14/2006 de reproducción humana asistida, que también rige lo que el SERGAS puede autorizar; apóyate en los documentos SERGAS/legislación de mi repositorio/segundo cerebro y, si no tienes la norma concreta, dilo en vez de inventarla). Ten en cuenta el CONTEXTO TEMPORAL: si una fuente/norma ha sido SUSTITUIDA o modificada por otra más reciente, usa la vigente e indícalo (no cites como vigente algo derogado). ${SOURCE_PRIORITY} Devuelve SOLO el JSON.`;
 
 function slugify(s){ return (normTxt(s).replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'').slice(0,40).replace(/^-+|-+$/g,'')) || 'ficha'; }
 function collectHpoIds(f){
@@ -3731,8 +3733,42 @@ function grFiguresHtml(nbk){
   const imgs=figs.map(f=>`<figure style="margin:6px 0"><img src="${escA(f.url)}" loading="lazy" style="max-width:100%;border:1px solid var(--line);border-radius:8px" alt="${escA(f.caption||'figura')}"><figcaption class="dx-meta" style="margin-top:2px">${escHtml(f.caption||'')}</figcaption></figure>`).join('');
   return `<details style="margin-top:4px"><summary class="tip-ai" style="display:inline">🖼 Ver figuras (${figs.length})</summary><div style="margin-top:4px">${imgs}</div></details>`;
 }
+/* Texto EXACTO recuperado del store para una fuente (los pasajes en que se basó la respuesta), plegable.
+   Permite localizar manualmente la afirmación en el documento (muestra el apartado y el texto literal). */
+function sbQuoteHtml(passages, key){
+  if(!passages || !passages.length || !key) return '';
+  const mine=passages.filter(p=>String(p.filename||'').split('__')[0]===key && String(p.text||'').trim());
+  if(!mine.length) return '';
+  const apartado=fn=>{ const parts=String(fn||'').replace(/\.(md|txt|pdf)$/i,'').split('__'); return parts.length>1?parts.slice(1).join(' · ').replace(/-/g,' '):''; };
+  const body=mine.map(p=>'<div style="margin:4px 0">'+(apartado(p.filename)?'<div class="dx-meta" style="font-size:10.5px">apartado: '+escHtml(apartado(p.filename))+'</div>':'')
+    +'<blockquote style="margin:2px 0;padding:4px 9px;border-left:2px solid var(--accent);font-size:11.5px;line-height:1.5;white-space:pre-wrap;color:var(--ink2)">'+escHtml(String(p.text).slice(0,1600))+'</blockquote></div>').join('');
+  return '<details style="margin-top:2px"><summary class="tip-ai" style="display:inline;font-size:11px">🔍 ver el texto exacto en que se basa</summary><div style="margin-top:2px">'+body+'</div></details>';
+}
 /* Inventario del segundo cerebro (a partir de sources.json que ya carga Ariadna): recuento + lista + buscador. */
 function sbInvCounts(){ const s=_sbSources||{}; let gr=0,pdf=0,otro=0; for(const v of Object.values(s)){ if(v.source==='GeneReviews') gr++; else if(v.source==='PDF') pdf++; else otro++; } return {gr,pdf,otro,total:Object.keys(s).length}; }
+/* Posibles DUPLICADOS: documentos distintos que comparten DOI, PMID, ISBN o título casi idéntico. Devuelve grupos. */
+function sbDupGroups(){
+  const s=_sbSources||{}; const byId=new Map();
+  for(const [k,v] of Object.entries(s)){ const ids=[];
+    if(v.doi) ids.push('doi:'+String(v.doi).toLowerCase().trim());
+    if(v.pmid) ids.push('pmid:'+String(v.pmid).trim());
+    if(v.isbn) ids.push('isbn:'+String(v.isbn).replace(/[^0-9xX]/gi,''));
+    if(v.nbk) ids.push('nbk:'+String(v.nbk).toUpperCase());
+    const nt=normTxt(v.titulo||''); if(nt.length>=10) ids.push('t:'+nt);
+    for(const id of ids){ if(!byId.has(id)) byId.set(id,new Map()); byId.get(id).set(k,v); }
+  }
+  const out=[], seen=new Set();
+  for(const m of byId.values()){ if(m.size>1){ const sig=[...m.keys()].sort().join('|'); if(seen.has(sig)) continue; seen.add(sig); out.push([...m.entries()]); } }
+  return out;
+}
+function sbDupRowsHtml(){
+  const groups=sbDupGroups();
+  if(!groups.length) return '<div class="dx-meta" style="padding:4px 0">✓ No se detectan duplicados (por DOI/PMID/ISBN/título).</div>';
+  return '<div class="dx-meta" style="padding:2px 0 6px">⚠ '+groups.length+' posible(s) duplicado(s). Revísalos y, si sobra alguno, bórralo TÚ en Google Drive (yo no borro de tu Drive); en el próximo refresco sale del store.</div>'
+    + groups.map(g=>'<div style="border:1px solid var(--line);border-radius:8px;padding:6px 9px;margin:4px 0">'
+      + g.map(([k,v])=>{ const f=sbFuente(k,v); return '<div style="padding:2px 0;font-size:12px">'+(f.url?('<a href="'+escA(f.url)+'" target="_blank" rel="noopener" style="color:var(--accent)">'+escHtml(f.titulo)+'</a>'):('<span>'+escHtml(f.titulo)+'</span>'))+refIdChipsHtml(f)+sbDriveIcon(f)+'</div>'; }).join('')
+      + '</div>').join('');
+}
 /* Una entrada de sources.json → fuente (para pintarla como cualquier referencia de Ariadna). */
 function sbFuente(k,v){
   if(v.source==='GeneReviews') return {titulo:grRefTitle(v.nbk, v.titulo), url:v.url||(v.nbk?('https://www.ncbi.nlm.nih.gov/books/'+String(v.nbk).toUpperCase()+'/'):''), nbk:v.nbk, gr_updated:v.updated, gr_initial:v.initial||'', _src:'GeneReviews'};
@@ -3805,7 +3841,7 @@ function chatSourceFuente(name){
   if(nbk) return {titulo:grRefTitle(nbk, ''), url:'https://www.ncbi.nlm.nih.gov/books/'+nbk.toUpperCase()+'/', nbk:nbk.toUpperCase(), _src:'GeneReviews'};
   return {titulo:String(name).replace(/\.(md|txt|pdf)$/i,'').replace(/__/g,' · ')};
 }
-const _CHAT_RULES=' REGLAS ESTRICTAS: (1) PROHIBIDO usar conocimiento general, externo o de memoria. (2) Si la respuesta no está en los pasajes, o tratan de OTRA enfermedad/gen/tema distinto al preguntado, responde EXACTAMENTE con la palabra NO_ENCONTRADO y nada más. (3) Nunca menciones un documento que no trate específicamente lo preguntado. Cuando SÍ esté en los pasajes: responde a NIVEL ESPECIALISTA (preciso, técnico, terminología y matices propios de un genetista clínico; SIN definiciones elementales). Si VARIAS fuentes tratan lo preguntado, INTEGRA TODAS en UNA sola respuesta coherente apoyándote en todas ellas (contrasta y combina). NO escribas una sección de «Fuentes» ni nombres de fichero: la app muestra por su cuenta TODAS las referencias utilizadas. Responde en español, con precisión, sin inventar.';
+const _CHAT_RULES=' REGLAS ESTRICTAS: (1) PROHIBIDO usar conocimiento general, externo o de memoria. (2) Si la respuesta no está en los pasajes, o tratan de OTRA enfermedad/gen/tema distinto al preguntado, responde EXACTAMENTE con la palabra NO_ENCONTRADO y nada más. (3) Nunca menciones un documento que no trate específicamente lo preguntado. Cuando SÍ esté en los pasajes: responde a NIVEL ESPECIALISTA (preciso, técnico, terminología y matices propios de un genetista clínico; SIN definiciones elementales). Si VARIAS fuentes tratan lo preguntado, INTEGRA TODAS en UNA sola respuesta coherente apoyándote en todas ellas (contrasta y combina). CONTEXTO TEMPORAL: fíjate en las FECHAS de las fuentes; si una guía/ley/documento ha sido SUSTITUIDA o actualizada por otra más reciente entre los pasajes, prioriza la vigente y AVISA de que la anterior quedó desfasada o derogada (no des como vigente algo superado). NO escribas una sección de «Fuentes» ni nombres de fichero: la app muestra por su cuenta TODAS las referencias utilizadas. Responde en español, con precisión, sin inventar.';
 const CHAT_SYSTEM_STORE='Eres un asistente documental para un GENETISTA CLÍNICO EXPERIMENTADO. Respondes SOLO con lo que aparezca en los PASAJES recuperados por file_search de SU documentación.'+_CHAT_RULES;
 const CHAT_SYSTEM_HYBRID='Eres un asistente documental para un GENETISTA CLÍNICO EXPERIMENTADO. A continuación te doy PASAJES recuperados de SU documentación; respondes SOLO con lo que aparezca en ellos.'+_CHAT_RULES;
 /* Redacta con Claude (síntesis) a partir de los pasajes que recuperó OpenAI. Modo híbrido. */
@@ -3855,7 +3891,7 @@ async function askRepoStore(input, ids){
   if(/^NO_ENCONTRADO/i.test(text) || !text) return notFound();
   // Muestra TODAS las fuentes citadas que además se recuperaron; si no hubo anotaciones, los documentos recuperados.
   const src=[...cites].filter(f=>retrieved.has(f));
-  return { text, sources: src.length ? src : [...retrieved].slice(0,8) };
+  return { text, sources: src.length ? src : [...retrieved].slice(0,8), passages };   // passages = texto EXACTO recuperado por fichero
 }
 async function askRepo(q){
   q=(q||'').trim(); if(!q) return;
@@ -3871,8 +3907,8 @@ async function askRepo(q){
       const h=histText();
       const input=(h?('Conversación previa (contexto):\n'+h+'\n\n'):'')+'PREGUNTA: '+q;
       try{ await loadSbSources(); await loadSbFigures(); }catch(e){}   // mapa fichero→referencia + figuras por NBK
-      const {text, sources}=await askRepoStore(input, ids);
-      pend.pending=false; pend.text=text||'No encuentro esa información en tu documentación.'; pend.sources=sources; renderChatMsgs(); return;
+      const {text, sources, passages}=await askRepoStore(input, ids);
+      pend.pending=false; pend.text=text||'No encuentro esa información en tu documentación.'; pend.sources=sources; pend.passages=passages||[]; renderChatMsgs(); return;
     }
     // Respaldo (sin store): buscador LOCAL (BM25 + semántico) sobre lo indexado en Ariadna.
     const retrievalQuery = prevUser ? (prevUser.text+' \n '+q) : q;   // combina la pregunta anterior + la actual → recupera bien los seguimientos
@@ -3908,10 +3944,10 @@ function renderChatMsgs(){
     let src='';
     if(m.sources && m.sources.length){
       const seen=new Set(), fuentes=[];
-      for(const nm of m.sources){ const k=String(nm).split('__')[0]; if(seen.has(k)) continue; seen.add(k); fuentes.push(chatSourceFuente(nm)); }
+      for(const nm of m.sources){ const k=String(nm).split('__')[0]; if(seen.has(k)) continue; seen.add(k); fuentes.push({f:chatSourceFuente(nm), key:k}); }
       const repoDocs=(cachedDocs()||{}).docs||[];
       src='<div class="dx-meta" style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px">📎 Fuentes:<div style="margin-top:3px">'
-        + fuentes.map(f=>{ const enc=encodeURIComponent(JSON.stringify(f));
+        + fuentes.map(({f,key})=>{ const enc=encodeURIComponent(JSON.stringify(f));
             const isPdf = f._src==='PDF';   // documento TUYO (de Drive): ya lo tienes → icono Drive + Papers, no «añadir»
             let act;
             if(isPdf){
@@ -3922,7 +3958,8 @@ function renderChatMsgs(){
                            : '<a class="tip-ai chat-add" data-fu="'+enc+'" title="Añadir esta referencia a tu repositorio bibliográfico">➕ a mi biblioteca</a>';
             }
             const figs=f.nbk?grFiguresHtml(f.nbk):'';   // figuras del capítulo GeneReviews (embebidas de NCBI)
-            return '<div style="margin:2px 0">'+(f.url?('<a href="'+escA(f.url)+'" target="_blank" rel="noopener" style="color:var(--accent)">'+escHtml(f.titulo)+'</a>'):('<span>'+escHtml(f.titulo)+'</span>'))+refIdChipsHtml(f)+bibRefHtml(f,{noAssign:true})+sbDriveIcon(f)+' '+act+figs+'</div>'; }).join('')
+            const quote=sbQuoteHtml(m.passages, key);   // texto EXACTO recuperado (localizar la afirmación)
+            return '<div style="margin:2px 0">'+(f.url?('<a href="'+escA(f.url)+'" target="_blank" rel="noopener" style="color:var(--accent)">'+escHtml(f.titulo)+'</a>'):('<span>'+escHtml(f.titulo)+'</span>'))+refIdChipsHtml(f)+bibRefHtml(f,{noAssign:true})+sbDriveIcon(f)+' '+act+figs+quote+'</div>'; }).join('')
         + '</div></div>';
     }
     return `<div style="background:${bg};border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0"><div class="dx-meta" style="font-weight:600;margin-bottom:4px">${who}</div><div style="font-size:13.5px;line-height:1.6">${body}</div>${src}</div>`;
