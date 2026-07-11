@@ -167,7 +167,7 @@
 
   /* Modal Ajustes */
   .overlay{position:fixed; inset:0; background:rgba(8,11,15,.72); z-index:200; display:flex; align-items:flex-start; justify-content:center; padding:34px 20px; overflow:auto;}
-  .modal{background:var(--panel); border:1px solid var(--line); border-radius:14px; max-width:600px; width:100%; padding:24px 26px; box-shadow:var(--shadow);}
+  .modal{background:var(--panel); border:1px solid var(--line); border-radius:14px; max-width:940px; width:100%; padding:24px 26px; box-shadow:var(--shadow);}
   .modal.modal-full{max-width:96vw !important; width:96vw;}
   .modal.modal-full #fichaJson{min-height:calc(96vh - 300px);}
   .modal.modal-full #fichaPreview,.modal.modal-full #formEditor{max-height:calc(96vh - 260px) !important;}
@@ -498,8 +498,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.10.0';
+const APP_VERSION='2.11.0';
 const CHANGELOG=[
+  {v:'2.11.0', d:'2026-07-11', c:['Inventario del segundo cerebro mejorado: cada entrada se muestra ahora como CUALQUIER referencia de Ariadna — chips clicables PMID/DOI, badges 📖 GeneReviews / 📗 Papers y el icono de Google Drive para abrir el documento; con filtro por tipo (Todo / GeneReviews / Documentos) y buscador (incluye ISBN).','En las fuentes del chat «Consultar», los documentos propios muestran el icono de Drive (en vez del texto «abrir en Drive») y sus chips PMID/DOI, igual que el resto.','⚙ Ajustes y el panel de Estado son ahora bastante más anchos (se leen mejor).']},
   {v:'2.10.0', d:'2026-07-11', c:['Nuevo INVENTARIO del segundo cerebro en ⚙ Ajustes → 🧠 Segundo cerebro: muestra cuántas GeneReviews y cuántos documentos hay indexados en tu Vector Store, con la lista (cada uno enlazado a su capítulo NCBI o a su documento en Drive) y un BUSCADOR (por enfermedad, NBK, DOI, PMID o nombre de documento). Se nutre del sources.json del repo del pipeline.']},
   {v:'2.9.1', d:'2026-07-11', c:['En las fuentes del chat «Consultar», cuando la referencia es uno de TUS documentos (un PDF de tu Drive) ya no ofrece «➕ a mi biblioteca» (porque ya lo tienes): muestra «📄 abrir en Drive» para abrir el documento + su badge de Papers/PMID/DOI si es artículo. El enlace de Drive lo aporta el pipeline (nuevo campo en sources.json).']},
   {v:'2.9.0', d:'2026-07-10', c:['Chat «Consultar» — respuestas con FORMATO: las TABLAS de GeneReviews (frecuencias, criterios…) ahora se ven como tabla de verdad, con negritas y listas, en vez de texto plano.','FIGURAS de GeneReviews: bajo cada fuente citada aparece «🖼 Ver figuras» que muestra las imágenes del capítulo (embebidas directamente de NCBI, sin almacenarlas). El pipeline genera figures.json con las URLs y pies. (Las figuras de tus PDFs propios quedan para más adelante.)']},
@@ -2146,7 +2147,7 @@ function renderStatus(){
   const dotS='display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;flex:none';
   row.innerHTML=`<span class="status-chip" id="statusBtn" style="cursor:pointer" title="Estado de servicios (pulsa para el detalle)"><span class="dot" style="background:${color}"></span>Estado</span>`
     +`<span class="status-chip" id="verChip" style="cursor:pointer;color:var(--ink3)" title="Versión y novedades">v${APP_VERSION}</span>`
-    +`<div id="statusDetail" style="display:none;position:absolute;top:calc(100% + 4px);right:0;z-index:60;background:#0a0f14;border:1px solid var(--accent2);border-radius:9px;padding:10px 12px;box-shadow:var(--shadow);min-width:230px">`
+    +`<div id="statusDetail" style="display:none;position:absolute;top:calc(100% + 4px);right:0;z-index:60;background:#0a0f14;border:1px solid var(--accent2);border-radius:9px;padding:10px 12px;box-shadow:var(--shadow);min-width:460px;max-width:92vw">`
     +services.map(s=>`<div style="font-size:12px;margin:4px 0;white-space:nowrap"><span style="${dotS};background:${s.on?'var(--ok)':'var(--danger)'}"></span>${s.k}: <span style="color:var(--ink3)">${s.txt}</span></div>`).join('')
     +`<div style="border-top:1px solid var(--line);margin-top:8px;padding-top:8px">`
     +`<label class="q-opt" style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" id="dbgToggle" ${AI_DEBUG?'checked':''}> 🐞 Debug IA <span class="dx-meta">(registra prompts, razonamiento y respuestas)</span></label>`
@@ -2329,8 +2330,13 @@ function openSettings(){
     <div class="field"><label>Inventario del segundo cerebro <span class="dx-meta">(lo que hay indexado, según sources.json)</span></label>
       <button class="btn" id="cfgSbInvRefresh">↻ Cargar / refrescar inventario</button>
       <span class="dx-meta" id="cfgSbInvStats" style="margin-left:8px"></span>
-      <input id="cfgSbInvSearch" type="text" placeholder="Buscar (enfermedad, NBK, DOI, PMID, documento)…" autocomplete="off" style="width:100%;box-sizing:border-box;margin-top:6px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink);font-size:12px">
-      <div id="cfgSbInvList" style="max-height:260px;overflow:auto;margin-top:6px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;background:var(--panel2)"></div>
+      <div class="seg" id="cfgSbInvType" style="margin-top:6px">
+        <button type="button" data-t="all" class="on">Todo</button>
+        <button type="button" data-t="gr">📖 GeneReviews</button>
+        <button type="button" data-t="pdf">📄 Documentos</button>
+      </div>
+      <input id="cfgSbInvSearch" type="text" placeholder="Buscar (enfermedad, NBK, DOI, PMID, ISBN, documento)…" autocomplete="off" style="width:100%;box-sizing:border-box;margin-top:6px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink);font-size:12px">
+      <div id="cfgSbInvList" style="max-height:280px;overflow:auto;margin-top:6px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;background:var(--panel2)"></div>
     </div>
     </div>
 
@@ -2384,11 +2390,14 @@ function openSettings(){
     ov.querySelectorAll('.cfg-pane').forEach(p=>p.classList.toggle('on', p.dataset.pane===t));
   }));
 
-  // Inventario del segundo cerebro (recuento + lista + buscador, desde sources.json)
+  // Inventario del segundo cerebro (recuento + filtro por tipo + buscador, desde sources.json)
   const invStats=ov.querySelector('#cfgSbInvStats'), invSearch=ov.querySelector('#cfgSbInvSearch'), invList=ov.querySelector('#cfgSbInvList'), invRefresh=ov.querySelector('#cfgSbInvRefresh');
-  function renderInv(){ if(invStats){ const cc=sbInvCounts(); invStats.innerHTML= cc.total? ('📖 <b>'+cc.gr+'</b> GeneReviews · 📄 <b>'+cc.pdf+'</b> documentos'+(cc.otro?' · '+cc.otro+' otros':'')) : 'Sin cargar'; } if(invList) invList.innerHTML=sbInvRows(invSearch?invSearch.value:''); }
+  let invType='all';
+  const renderInvList=()=>{ if(invList) invList.innerHTML=sbInvRows(invSearch?invSearch.value:'', invType); };
+  function renderInv(){ if(invStats){ const cc=sbInvCounts(); invStats.innerHTML= cc.total? ('📖 <b>'+cc.gr+'</b> GeneReviews · 📄 <b>'+cc.pdf+'</b> documentos'+(cc.otro?' · '+cc.otro+' otros':'')) : 'Sin cargar'; } renderInvList(); }
+  ov.querySelectorAll('#cfgSbInvType button').forEach(b=>b.addEventListener('click', ()=>{ invType=b.dataset.t; ov.querySelectorAll('#cfgSbInvType button').forEach(x=>x.classList.toggle('on', x===b)); renderInvList(); }));
   if(invRefresh) invRefresh.addEventListener('click', async ()=>{ if(invStats) invStats.textContent='Cargando…'; try{ localStorage.removeItem('fh_sb_sources'); _sbSources=null; await loadSbSources(); }catch(e){} renderInv(); });
-  if(invSearch) invSearch.addEventListener('input', ()=>{ if(invList) invList.innerHTML=sbInvRows(invSearch.value); });
+  if(invSearch) invSearch.addEventListener('input', renderInvList);
   loadSbSources().then(renderInv);   // pinta al abrir si ya hay sources cacheadas/configuradas
 
   let pref = c.preferProvider||'anthropic';
@@ -3683,17 +3692,31 @@ function grFiguresHtml(nbk){
 }
 /* Inventario del segundo cerebro (a partir de sources.json que ya carga Ariadna): recuento + lista + buscador. */
 function sbInvCounts(){ const s=_sbSources||{}; let gr=0,pdf=0,otro=0; for(const v of Object.values(s)){ if(v.source==='GeneReviews') gr++; else if(v.source==='PDF') pdf++; else otro++; } return {gr,pdf,otro,total:Object.keys(s).length}; }
-function sbInvRows(filter){
-  const s=_sbSources||{}; filter=String(filter||'').trim().toLowerCase();
+/* Una entrada de sources.json → fuente (para pintarla como cualquier referencia de Ariadna). */
+function sbFuente(k,v){
+  if(v.source==='GeneReviews') return {titulo:grRefTitle(v.nbk, v.titulo), url:v.url||(v.nbk?('https://www.ncbi.nlm.nih.gov/books/'+String(v.nbk).toUpperCase()+'/'):''), nbk:v.nbk, gr_updated:v.updated, gr_initial:v.initial||'', _src:'GeneReviews'};
+  return {titulo:v.titulo||k, url:v.url||'', doi:v.doi||'', pmid:v.pmid||'', isbn:v.isbn||'', _src:'PDF'};
+}
+/* Icono de Drive para abrir un documento del store: si bibRefHtml ya lo pinta (doc en tu repo local) no repite;
+   si es un PDF con enlace de Drive y no está en el repo local, lo añade. */
+function sbDriveIcon(f){
+  const d=matchDoc(f, (cachedDocs()||{}).docs||[]);
+  if(d && (d.driveId || d.enlace)) return '';   // bibRefHtml ya muestra el icono de Drive del repo
+  if(f._src==='PDF' && f.url) return ' <a class="drive-ico" href="'+escA(f.url)+'" target="_blank" rel="noopener" title="Abrir el documento en Google Drive">'+DRIVE_ICON+'</a>';
+  return '';
+}
+function sbInvRows(filter, type){
+  const s=_sbSources||{}; filter=String(filter||'').trim().toLowerCase(); type=type||'all';
   const rows=[];
   for(const [k,v] of Object.entries(s)){
-    const hay=(String(v.titulo||'')+' '+String(v.nbk||'')+' '+String(v.doi||'')+' '+String(v.pmid||'')+' '+k).toLowerCase();
-    if(filter && !hay.includes(filter)) continue;
     const isGr=v.source==='GeneReviews';
-    const link=v.url||(v.nbk?('https://www.ncbi.nlm.nih.gov/books/'+String(v.nbk).toUpperCase()+'/'):'');
-    const meta=isGr?String(v.nbk||''):(v.doi?('DOI '+v.doi):(v.pmid?('PMID '+v.pmid):''));
-    const label=isGr?grRefTitle(v.nbk, v.titulo):(v.titulo||k);
-    rows.push('<div style="padding:3px 0;border-bottom:1px solid var(--line);font-size:12px;line-height:1.4">'+(isGr?'📖':'📄')+' '+(link?('<a href="'+escA(link)+'" target="_blank" rel="noopener" style="color:var(--accent)">'+escHtml(label)+'</a>'):('<span>'+escHtml(label)+'</span>'))+(meta?(' <span class="dx-meta">· '+escHtml(meta)+'</span>'):'')+'</div>');
+    if(type==='gr' && !isGr) continue; if(type==='pdf' && isGr) continue;
+    const hay=(String(v.titulo||'')+' '+String(v.nbk||'')+' '+String(v.doi||'')+' '+String(v.pmid||'')+' '+String(v.isbn||'')+' '+k).toLowerCase();
+    if(filter && !hay.includes(filter)) continue;
+    const f=sbFuente(k,v);
+    rows.push('<div style="padding:4px 0;border-bottom:1px solid var(--line);font-size:12px;line-height:1.55">'
+      +(f.url?('<a href="'+escA(f.url)+'" target="_blank" rel="noopener" style="color:var(--accent)">'+escHtml(f.titulo)+'</a>'):('<span>'+escHtml(f.titulo)+'</span>'))
+      +refIdChipsHtml(f)+bibRefHtml(f,{noAssign:true})+sbDriveIcon(f)+'</div>');
     if(rows.length>=400){ rows.push('<div class="dx-meta" style="padding:4px 0">… afina la búsqueda para ver más</div>'); break; }
   }
   return rows.length?rows.join(''):('<div class="dx-meta" style="padding:4px 0">'+(Object.keys(s).length?('Sin resultados'+(filter?' para «'+escHtml(filter)+'»':'')):'Pulsa «↻ Cargar inventario» (necesita el repo de referencias + token en Ajustes).')+'</div>');
@@ -3848,18 +3871,17 @@ function renderChatMsgs(){
       const repoDocs=(cachedDocs()||{}).docs||[];
       src='<div class="dx-meta" style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px">📎 Fuentes:<div style="margin-top:3px">'
         + fuentes.map(f=>{ const enc=encodeURIComponent(JSON.stringify(f));
-            const isPdf = f._src==='PDF';   // documento TUYO (de Drive): ya lo tienes → abrir en Drive + Papers, no «añadir»
+            const isPdf = f._src==='PDF';   // documento TUYO (de Drive): ya lo tienes → icono Drive + Papers, no «añadir»
             let act;
             if(isPdf){
-              act = (f.url?('<a class="tip-ai" href="'+escA(f.url)+'" target="_blank" rel="noopener" title="Abrir el documento en Google Drive">📄 abrir en Drive</a>'):'')
-                  + '<span class="dx-meta" style="color:var(--ok);margin-left:6px" title="Es un documento de tu Drive, ya en tu biblioteca">✓ en tu biblioteca</span>';
+              act = '<span class="dx-meta" style="color:var(--ok);margin-left:6px" title="Documento de tu Drive, ya en tu biblioteca">✓ en tu biblioteca</span>';
             } else {
               const inRepo=!!matchDoc(f, repoDocs);   // ya en tu biblioteca (por NBK/PMID/DOI/URL/alias) → no ofrecer «añadir»
               act = inRepo ? '<span class="dx-meta" style="color:var(--ok)" title="Ya está en tu biblioteca">✓ en tu biblioteca</span>'
                            : '<a class="tip-ai chat-add" data-fu="'+enc+'" title="Añadir esta referencia a tu repositorio bibliográfico">➕ a mi biblioteca</a>';
             }
             const figs=f.nbk?grFiguresHtml(f.nbk):'';   // figuras del capítulo GeneReviews (embebidas de NCBI)
-            return '<div style="margin:2px 0">'+(f.url?('<a href="'+escA(f.url)+'" target="_blank" rel="noopener" style="color:var(--accent)">'+escHtml(f.titulo)+'</a>'):('<span>'+escHtml(f.titulo)+'</span>'))+bibRefHtml(f,{noAssign:true})+' '+act+figs+'</div>'; }).join('')
+            return '<div style="margin:2px 0">'+(f.url?('<a href="'+escA(f.url)+'" target="_blank" rel="noopener" style="color:var(--accent)">'+escHtml(f.titulo)+'</a>'):('<span>'+escHtml(f.titulo)+'</span>'))+refIdChipsHtml(f)+bibRefHtml(f,{noAssign:true})+sbDriveIcon(f)+' '+act+figs+'</div>'; }).join('')
         + '</div></div>';
     }
     return `<div style="background:${bg};border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0"><div class="dx-meta" style="font-weight:600;margin-bottom:4px">${who}</div><div style="font-size:13.5px;line-height:1.6">${body}</div>${src}</div>`;
