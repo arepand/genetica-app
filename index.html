@@ -498,8 +498,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.9.1';
+const APP_VERSION='2.10.0';
 const CHANGELOG=[
+  {v:'2.10.0', d:'2026-07-11', c:['Nuevo INVENTARIO del segundo cerebro en ⚙ Ajustes → 🧠 Segundo cerebro: muestra cuántas GeneReviews y cuántos documentos hay indexados en tu Vector Store, con la lista (cada uno enlazado a su capítulo NCBI o a su documento en Drive) y un BUSCADOR (por enfermedad, NBK, DOI, PMID o nombre de documento). Se nutre del sources.json del repo del pipeline.']},
   {v:'2.9.1', d:'2026-07-11', c:['En las fuentes del chat «Consultar», cuando la referencia es uno de TUS documentos (un PDF de tu Drive) ya no ofrece «➕ a mi biblioteca» (porque ya lo tienes): muestra «📄 abrir en Drive» para abrir el documento + su badge de Papers/PMID/DOI si es artículo. El enlace de Drive lo aporta el pipeline (nuevo campo en sources.json).']},
   {v:'2.9.0', d:'2026-07-10', c:['Chat «Consultar» — respuestas con FORMATO: las TABLAS de GeneReviews (frecuencias, criterios…) ahora se ven como tabla de verdad, con negritas y listas, en vez de texto plano.','FIGURAS de GeneReviews: bajo cada fuente citada aparece «🖼 Ver figuras» que muestra las imágenes del capítulo (embebidas directamente de NCBI, sin almacenarlas). El pipeline genera figures.json con las URLs y pies. (Las figuras de tus PDFs propios quedan para más adelante.)']},
   {v:'2.8.0', d:'2026-07-10', c:['⚙ Ajustes reorganizados en PESTAÑAS (antes era una lista larga): 🤖 IA (claves, proveedor, modelos por tarea) · 🧠 Segundo cerebro (Vector Store, repo de referencias, modelo del chat) · 📦 GitHub · 📁 Drive · 📗 ReadCube. Más fácil de encontrar cada cosa; no cambia ninguna funcionalidad.']},
@@ -2325,6 +2326,12 @@ function openSettings(){
         ${chatModeOptionsHtml(c.chatMode||'openai-fast')}
       </select>
       <div class="dx-meta" style="margin-top:5px;font-size:11px;line-height:1.5"><b>OpenAI</b>: busca y redacta OpenAI. <b>Híbrido</b>: OpenAI busca en tu Vector Store y <b>Claude redacta</b> la respuesta clínica (necesita clave de Claude). <b>rápido</b> = barato/ágil; <b>concienzudo</b> = más calidad y coste.</div></div>
+    <div class="field"><label>Inventario del segundo cerebro <span class="dx-meta">(lo que hay indexado, según sources.json)</span></label>
+      <button class="btn" id="cfgSbInvRefresh">↻ Cargar / refrescar inventario</button>
+      <span class="dx-meta" id="cfgSbInvStats" style="margin-left:8px"></span>
+      <input id="cfgSbInvSearch" type="text" placeholder="Buscar (enfermedad, NBK, DOI, PMID, documento)…" autocomplete="off" style="width:100%;box-sizing:border-box;margin-top:6px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink);font-size:12px">
+      <div id="cfgSbInvList" style="max-height:260px;overflow:auto;margin-top:6px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;background:var(--panel2)"></div>
+    </div>
     </div>
 
     <div class="cfg-pane" data-pane="gh">
@@ -2376,6 +2383,13 @@ function openSettings(){
     ov.querySelectorAll('.cfg-tabs button').forEach(x=>x.classList.toggle('on', x===b));
     ov.querySelectorAll('.cfg-pane').forEach(p=>p.classList.toggle('on', p.dataset.pane===t));
   }));
+
+  // Inventario del segundo cerebro (recuento + lista + buscador, desde sources.json)
+  const invStats=ov.querySelector('#cfgSbInvStats'), invSearch=ov.querySelector('#cfgSbInvSearch'), invList=ov.querySelector('#cfgSbInvList'), invRefresh=ov.querySelector('#cfgSbInvRefresh');
+  function renderInv(){ if(invStats){ const cc=sbInvCounts(); invStats.innerHTML= cc.total? ('📖 <b>'+cc.gr+'</b> GeneReviews · 📄 <b>'+cc.pdf+'</b> documentos'+(cc.otro?' · '+cc.otro+' otros':'')) : 'Sin cargar'; } if(invList) invList.innerHTML=sbInvRows(invSearch?invSearch.value:''); }
+  if(invRefresh) invRefresh.addEventListener('click', async ()=>{ if(invStats) invStats.textContent='Cargando…'; try{ localStorage.removeItem('fh_sb_sources'); _sbSources=null; await loadSbSources(); }catch(e){} renderInv(); });
+  if(invSearch) invSearch.addEventListener('input', ()=>{ if(invList) invList.innerHTML=sbInvRows(invSearch.value); });
+  loadSbSources().then(renderInv);   // pinta al abrir si ya hay sources cacheadas/configuradas
 
   let pref = c.preferProvider||'anthropic';
   ov.querySelectorAll('#prefSeg button').forEach(b=>{
@@ -3666,6 +3680,23 @@ function grFiguresHtml(nbk){
   const figs=(_sbFigures||{})[String(nbk||'').toUpperCase()]; if(!figs||!figs.length) return '';
   const imgs=figs.map(f=>`<figure style="margin:6px 0"><img src="${escA(f.url)}" loading="lazy" style="max-width:100%;border:1px solid var(--line);border-radius:8px" alt="${escA(f.caption||'figura')}"><figcaption class="dx-meta" style="margin-top:2px">${escHtml(f.caption||'')}</figcaption></figure>`).join('');
   return `<details style="margin-top:4px"><summary class="tip-ai" style="display:inline">🖼 Ver figuras (${figs.length})</summary><div style="margin-top:4px">${imgs}</div></details>`;
+}
+/* Inventario del segundo cerebro (a partir de sources.json que ya carga Ariadna): recuento + lista + buscador. */
+function sbInvCounts(){ const s=_sbSources||{}; let gr=0,pdf=0,otro=0; for(const v of Object.values(s)){ if(v.source==='GeneReviews') gr++; else if(v.source==='PDF') pdf++; else otro++; } return {gr,pdf,otro,total:Object.keys(s).length}; }
+function sbInvRows(filter){
+  const s=_sbSources||{}; filter=String(filter||'').trim().toLowerCase();
+  const rows=[];
+  for(const [k,v] of Object.entries(s)){
+    const hay=(String(v.titulo||'')+' '+String(v.nbk||'')+' '+String(v.doi||'')+' '+String(v.pmid||'')+' '+k).toLowerCase();
+    if(filter && !hay.includes(filter)) continue;
+    const isGr=v.source==='GeneReviews';
+    const link=v.url||(v.nbk?('https://www.ncbi.nlm.nih.gov/books/'+String(v.nbk).toUpperCase()+'/'):'');
+    const meta=isGr?String(v.nbk||''):(v.doi?('DOI '+v.doi):(v.pmid?('PMID '+v.pmid):''));
+    const label=isGr?grRefTitle(v.nbk, v.titulo):(v.titulo||k);
+    rows.push('<div style="padding:3px 0;border-bottom:1px solid var(--line);font-size:12px;line-height:1.4">'+(isGr?'📖':'📄')+' '+(link?('<a href="'+escA(link)+'" target="_blank" rel="noopener" style="color:var(--accent)">'+escHtml(label)+'</a>'):('<span>'+escHtml(label)+'</span>'))+(meta?(' <span class="dx-meta">· '+escHtml(meta)+'</span>'):'')+'</div>');
+    if(rows.length>=400){ rows.push('<div class="dx-meta" style="padding:4px 0">… afina la búsqueda para ver más</div>'); break; }
+  }
+  return rows.length?rows.join(''):('<div class="dx-meta" style="padding:4px 0">'+(Object.keys(s).length?('Sin resultados'+(filter?' para «'+escHtml(filter)+'»':'')):'Pulsa «↻ Cargar inventario» (necesita el repo de referencias + token en Ajustes).')+'</div>');
 }
 /* Título visible de una GeneReviews: «NBKxxxx — Enfermedad» (NBK + título); si no hay enfermedad, solo el NBK. */
 function grRefTitle(nbk, disease){
