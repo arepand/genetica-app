@@ -498,8 +498,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.12.0';
+const APP_VERSION='2.13.0';
 const CHANGELOG=[
+  {v:'2.13.0', d:'2026-07-11', c:['Los protocolos tienen ahora un apartado final «Herencia y asesoramiento genético»: patrón de herencia, riesgo de recurrencia, puntos de consejo genético, opciones reproductivas (DGP/prenatal…) y —en especial— las circunstancias y criterios de acceso propios del SERGAS (Galicia), que la IA extrae de tus guías SERGAS del segundo cerebro (y si no tiene la norma concreta, lo dice en vez de inventarla). Se genera al crear protocolos nuevos y se añade a los existentes al actualizarlos.']},
   {v:'2.12.0', d:'2026-07-11', c:['La CREACIÓN/actualización de protocolos ahora se apoya en tu SEGUNDO CEREBRO (Vector Store) en vez del RAG local: OpenAI recupera por file_search los pasajes relevantes de tus documentos y GeneReviews, la web la busca y el protocolo lo redacta Opus (búsqueda cerebro = OpenAI · web + redacción = Opus). Nuevo selector en ⚙ Ajustes → 🧠 Segundo cerebro → «Fuente de documentos al crear protocolos» (Segundo cerebro / RAG propio local; provisional, el RAG local se retirará).']},
   {v:'2.11.0', d:'2026-07-11', c:['Inventario del segundo cerebro mejorado: cada entrada se muestra ahora como CUALQUIER referencia de Ariadna — chips clicables PMID/DOI, badges 📖 GeneReviews / 📗 Papers y el icono de Google Drive para abrir el documento; con filtro por tipo (Todo / GeneReviews / Documentos) y buscador (incluye ISBN).','En las fuentes del chat «Consultar», los documentos propios muestran el icono de Drive (en vez del texto «abrir en Drive») y sus chips PMID/DOI, igual que el resto.','⚙ Ajustes y el panel de Estado son ahora bastante más anchos (se leen mejor).']},
   {v:'2.10.0', d:'2026-07-11', c:['Nuevo INVENTARIO del segundo cerebro en ⚙ Ajustes → 🧠 Segundo cerebro: muestra cuántas GeneReviews y cuántos documentos hay indexados en tu Vector Store, con la lista (cada uno enlazado a su capítulo NCBI o a su documento en Drive) y un BUSCADOR (por enfermedad, NBK, DOI, PMID o nombre de documento). Se nutre del sources.json del repo del pipeline.']},
@@ -1539,6 +1540,7 @@ async function fichaRefSet(){
       const f=await getFicha(fi.id);
       ((f&&f.fuentes)||[]).forEach(add);
       ((f&&f.estudio_genetico&&f.estudio_genetico.fuentes)||[]).forEach(add);
+      ((f&&f.herencia_asesoramiento&&f.herencia_asesoramiento.fuentes)||[]).forEach(add);
     }
   }catch(e){}
   // También las referencias de los síndromes PRENATALES (cuentan como bibliografía citada).
@@ -3247,9 +3249,17 @@ const FICHA_SYSTEM_PROMPT = `Eres genetista clínico experto en fenotipado HPO. 
     "detalle": "qué estudio en primera línea y por qué; qué hacer si es negativo (escalado)",
     "indicaciones": ["circunstancia clínica concreta en que se indica el estudio", "..."],
     "fuentes": [{"titulo":"...","url":"https://...","anio":"AAAA","doi":"10.xxxx (opcional)","pmid":"(opcional)","pmcid":"(opcional)"}]
+  },
+  "herencia_asesoramiento": {
+    "herencia": "patrón de herencia (AD | AR | ligada al X recesiva/dominante | mitocondrial | multifactorial | de novo | mosaicismo | imprinting…); si hay varios subtipos con herencias distintas, indícalo",
+    "riesgo_recurrencia": "riesgo para descendencia y familiares en riesgo según la herencia (penetrancia, expresividad variable, anticipación si procede)",
+    "asesoramiento": "puntos clave del consejo genético: estudio de familiares/portadores, implicaciones para la descendencia, límites del estudio, apoyo psicológico si procede",
+    "opciones_reproductivas": ["diagnóstico prenatal (invasivo/no invasivo)", "DGP/PGT-M", "donación de gametos", "adopción", "…según proceda"],
+    "sergas": "circunstancias y criterios PROPIOS DEL SERGAS (Servizo Galego de Saúde, Galicia): indicaciones y ACCESO a estudio de portadores, diagnóstico prenatal y DGP/PGT según sus guías/carteira de servizos y criterios de financiación — usa los documentos SERGAS del repositorio/segundo cerebro si están; si no dispones de la norma SERGAS concreta, dilo explícitamente en vez de inventarla",
+    "fuentes": [{"titulo":"...","url":"https://...","anio":"AAAA","doi":"(opcional)","pmid":"(opcional)","nbk":"(opcional)"}]
   }
 }
-Reglas: usa códigos HPO REALES y vigentes (formato HP:0000000, 7 dígitos). **CADA código HPO DEBE corresponder EXACTAMENTE al concepto que quieres expresar**: el nombre oficial del término en HPO tiene que coincidir con la "nombre" que pones; NUNCA uses un código que signifique otra cosa (p. ej. NO pongas un código de "ascitis" para "hernia umbilical"). En la duda, prefiere el término HPO más específico cuyo nombre oficial encaje con el concepto; los códigos se VERIFICAN contra JAX y los que no correspondan se rechazan o corrigen. Ordena dominios y preguntas por lógica clínica, NUNCA alfabético; sé exhaustivo según los criterios diagnósticos vigentes (busca en la web las guías/criterios actuales y cítalos en "fuentes"); en "poblacion" decide: si los criterios diagnósticos, los genes o el manejo difieren de forma RELEVANTE entre paciente pediátrico y adulto, genera la variante ("pediatrica" o "adulta") y comparte el mismo "grupo" entre ambas variantes (indica que conviene crear también la complementaria); si no difieren, usa "unica"; en "estudio_genetico" indica con apoyo de guías CUÁNDO está indicado el estudio, en qué circunstancias y QUÉ tipo de estudio (panel dirigido/exoma/genoma…) en primera línea y el escalado si es negativo; "logica" es "and" si exige mayores Y menores, "or" si basta uno de los dos umbrales; en cada entidad, SOLO si el criterio diagnóstico depende del sexo o de la edad, añade "sexo" ("Femenino"/"Masculino") y/o "edad_min_anios"/"edad_max_anios" (en años; usa fracciones para meses, p. ej. 0.5 = 6 meses) — OMÍTELOS si el criterio no depende de edad/sexo; la app ya conoce edad y sexo del paciente y marcará la entidad como "no aplica" fuera de rango; activa modulos.beighton o modulos.antropometria solo si son clínicamente pertinentes. ${SOURCE_PRIORITY} Devuelve SOLO el JSON.`;
+Reglas: usa códigos HPO REALES y vigentes (formato HP:0000000, 7 dígitos). **CADA código HPO DEBE corresponder EXACTAMENTE al concepto que quieres expresar**: el nombre oficial del término en HPO tiene que coincidir con la "nombre" que pones; NUNCA uses un código que signifique otra cosa (p. ej. NO pongas un código de "ascitis" para "hernia umbilical"). En la duda, prefiere el término HPO más específico cuyo nombre oficial encaje con el concepto; los códigos se VERIFICAN contra JAX y los que no correspondan se rechazan o corrigen. Ordena dominios y preguntas por lógica clínica, NUNCA alfabético; sé exhaustivo según los criterios diagnósticos vigentes (busca en la web las guías/criterios actuales y cítalos en "fuentes"); en "poblacion" decide: si los criterios diagnósticos, los genes o el manejo difieren de forma RELEVANTE entre paciente pediátrico y adulto, genera la variante ("pediatrica" o "adulta") y comparte el mismo "grupo" entre ambas variantes (indica que conviene crear también la complementaria); si no difieren, usa "unica"; en "estudio_genetico" indica con apoyo de guías CUÁNDO está indicado el estudio, en qué circunstancias y QUÉ tipo de estudio (panel dirigido/exoma/genoma…) en primera línea y el escalado si es negativo; "logica" es "and" si exige mayores Y menores, "or" si basta uno de los dos umbrales; en cada entidad, SOLO si el criterio diagnóstico depende del sexo o de la edad, añade "sexo" ("Femenino"/"Masculino") y/o "edad_min_anios"/"edad_max_anios" (en años; usa fracciones para meses, p. ej. 0.5 = 6 meses) — OMÍTELOS si el criterio no depende de edad/sexo; la app ya conoce edad y sexo del paciente y marcará la entidad como "no aplica" fuera de rango; activa modulos.beighton o modulos.antropometria solo si son clínicamente pertinentes; RELLENA SIEMPRE "herencia_asesoramiento" (patrón de herencia, riesgo de recurrencia, puntos de consejo genético, opciones reproductivas y —MUY IMPORTANTE— las circunstancias y criterios de acceso propios del SERGAS/Galicia; para lo del SERGAS apóyate en los documentos SERGAS de mi repositorio/segundo cerebro y, si no tienes la norma concreta, dilo en vez de inventarla). ${SOURCE_PRIORITY} Devuelve SOLO el JSON.`;
 
 function slugify(s){ return (normTxt(s).replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'').slice(0,40).replace(/^-+|-+$/g,'')) || 'ficha'; }
 function collectHpoIds(f){
@@ -4332,6 +4342,14 @@ function fichaPreviewHtml(f){
   }).join('');
   const eg=f.estudio_genetico;
   const egHtml=eg&&typeof eg==='object' ? `<div class="dx-meta">${eg.indicado===false?'No indicado de rutina. ':''}${g(eg.tipo||'')}${eg.detalle?'. '+g(eg.detalle):''}${(eg.indicaciones||[]).length?'<br>Indicaciones: '+g((eg.indicaciones||[]).join('; ')):''}</div>` : '';
+  const ha=f.herencia_asesoramiento;
+  const haHtml=ha&&typeof ha==='object' ? `<div class="dx-meta" style="line-height:1.55">`
+    +(ha.herencia?`<b>Herencia:</b> ${g(ha.herencia)}<br>`:'')
+    +(ha.riesgo_recurrencia?`<b>Riesgo de recurrencia:</b> ${g(ha.riesgo_recurrencia)}<br>`:'')
+    +(ha.asesoramiento?`<b>Consejo genético:</b> ${g(ha.asesoramiento)}<br>`:'')
+    +((ha.opciones_reproductivas||[]).length?`<b>Opciones reproductivas:</b> ${g((ha.opciones_reproductivas||[]).join('; '))}<br>`:'')
+    +(ha.sergas?`<b>SERGAS (Galicia):</b> ${g(ha.sergas)}`:'')
+    +`</div>` : '';
   return `<div style="font-size:12.5px;line-height:1.5">
     <div style="font-size:15px;font-weight:600">${g(f.nombre_es||f.id||'—')}</div>
     ${(f.sinonimos||[]).length?`<div class="dx-meta">${g((f.sinonimos||[]).join(', '))}</div>`:''}
@@ -4340,6 +4358,7 @@ function fichaPreviewHtml(f){
     ${ent?`<div class="cart-group-title" style="margin-top:8px">Diferencial y criterios</div>${ent}`:''}
     ${(f.panel_genes||[]).length?`<div class="cart-group-title" style="margin-top:8px">Panel génico (${(f.panel_genes||[]).length})</div><div>${g((f.panel_genes||[]).join(' · '))}</div>`:''}
     ${egHtml?`<div class="cart-group-title" style="margin-top:8px">Estudio genético</div>${egHtml}`:''}
+    ${haHtml?`<div class="cart-group-title" style="margin-top:8px">Herencia y asesoramiento genético</div>${haHtml}`:''}
   </div>`;
 }
 
@@ -4818,7 +4837,7 @@ function openFichaReview(f, opts){
     if(!anyProvider()){ eout.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
     eout.className=''; eout.textContent='Editando con IA…';
     try{
-      const system='Eres genetista clínico. Recibes una FICHA JSON y una INSTRUCCIÓN de modificación del clínico. Devuelve la FICHA COMPLETA ya modificada según la instrucción, MANTENIENDO EXACTAMENTE el mismo esquema JSON (id, nombre_es, sinonimos, poblacion, grupo, version, fuentes, modulos, dominios, entidades, panel_genes, estudio_genetico). No cambies nada que la instrucción no pida. CADA código HPO DEBE corresponder EXACTAMENTE al concepto (nombre oficial del término); los códigos se VERIFICAN contra JAX, no los inventes. Devuelve SOLO JSON {"ficha": <ficha completa>, "cambios": "resumen breve en español"}.';
+      const system='Eres genetista clínico. Recibes una FICHA JSON y una INSTRUCCIÓN de modificación del clínico. Devuelve la FICHA COMPLETA ya modificada según la instrucción, MANTENIENDO EXACTAMENTE el mismo esquema JSON (id, nombre_es, sinonimos, poblacion, grupo, version, fuentes, modulos, dominios, entidades, panel_genes, estudio_genetico, herencia_asesoramiento). No cambies nada que la instrucción no pida. CADA código HPO DEBE corresponder EXACTAMENTE al concepto (nombre oficial del término); los códigos se VERIFICAN contra JAX, no los inventes. Devuelve SOLO JSON {"ficha": <ficha completa>, "cambios": "resumen breve en español"}.';
       const user=JSON.stringify({ ficha: cur, instruccion: instr });
       const resp=await callLLM({ system, user, webSearch:false, maxTokens:16000, task:'author' });
       const j=extractJSON(resp); const nueva=j&&(j.ficha||j);
@@ -4860,7 +4879,7 @@ function openFichaReview(f, opts){
     // "kind" (no una referencia directa al array) porque la búsqueda tarda varios segundos: el usuario puede
     // seguir editando mientras tanto, así que el resultado se aplicará sobre una lectura FRESCA de ta.value,
     // no sobre esta foto inicial (si no, al terminar se pisaría cualquier cambio hecho durante la espera).
-    const kinds=[['fuentes', j.fuentes], ['eg', j.estudio_genetico&&j.estudio_genetico.fuentes]];
+    const kinds=[['fuentes', j.fuentes], ['eg', j.estudio_genetico&&j.estudio_genetico.fuentes], ['ha', j.herencia_asesoramiento&&j.herencia_asesoramiento.fuentes]];
     const targets=[];   // {kind, idx, titulo, url, isGr}
     kinds.forEach(([kind,list])=>{ if(Array.isArray(list)) list.forEach((f,idx)=>{ if(!f||!f.titulo) return;
       const isGr=!!geneReviewsInfo(f);
@@ -4885,7 +4904,7 @@ function openFichaReview(f, opts){
       results.forEach((r,i)=>{
         const idx1 = (Number.isFinite(+r.index) && +r.index>=1) ? (+r.index-1) : i;
         const t=targets[idx1]; if(!t) return;
-        const list = t.kind==='eg' ? (jj.estudio_genetico && jj.estudio_genetico.fuentes) : jj.fuentes;
+        const list = t.kind==='eg' ? (jj.estudio_genetico && jj.estudio_genetico.fuentes) : t.kind==='ha' ? (jj.herencia_asesoramiento && jj.herencia_asesoramiento.fuentes) : jj.fuentes;
         const f = list && list[t.idx]; if(!f) return;
         let hit=false;
         if(r.doi){ f.doi=String(r.doi).trim(); hit=true; }
@@ -4916,7 +4935,7 @@ function openFichaReview(f, opts){
     if(!ctx){ gout.innerHTML='<div class="err">Aporta una URL o un PDF de guía.</div>'; return; }
     gout.textContent='Integrando la guía y re-buscando el estado del arte… puede tardar.';
     try{
-      const system='Eres genetista clínico. Recibes (a) una FICHA JSON actual y (b) una GUÍA aportada por el clínico. Actualiza la ficha integrando la guía y, si hace falta, BUSCA EN LA WEB el estado del arte vigente para complementarla. Mantén EXACTAMENTE el mismo esquema JSON (mismos campos: id, nombre_es, sinonimos, poblacion, grupo, version, fuentes, modulos, dominios, entidades, panel_genes, estudio_genetico). No elimines contenido válido salvo que la guía lo contradiga; añade dominios/preguntas/criterios que falten. '+SOURCE_PRIORITY+' Devuelve SOLO JSON {"ficha": <ficha actualizada COMPLETA>, "cambios": "resumen en español de qué cambió y por qué"}.';
+      const system='Eres genetista clínico. Recibes (a) una FICHA JSON actual y (b) una GUÍA aportada por el clínico. Actualiza la ficha integrando la guía y, si hace falta, BUSCA EN LA WEB el estado del arte vigente para complementarla. Mantén EXACTAMENTE el mismo esquema JSON (mismos campos: id, nombre_es, sinonimos, poblacion, grupo, version, fuentes, modulos, dominios, entidades, panel_genes, estudio_genetico, herencia_asesoramiento). Si la ficha no tiene "herencia_asesoramiento", AÑÁDELO (herencia, riesgo de recurrencia, consejo genético, opciones reproductivas y criterios SERGAS/Galicia). No elimines contenido válido salvo que la guía lo contradiga; añade dominios/preguntas/criterios que falten. '+SOURCE_PRIORITY+' Devuelve SOLO JSON {"ficha": <ficha actualizada COMPLETA>, "cambios": "resumen en español de qué cambió y por qué"}.';
       const user=JSON.stringify({ ficha_actual: cur, guia: ctx });
       const resp=await callLLM({ system, user, webSearch:true, maxTokens:8000, task:'author' });
       const j=extractJSON(resp);
@@ -4954,7 +4973,7 @@ function openFichaReview(f, opts){
         }
       }
       // Fase 2b: toda cita del protocolo entra en el repositorio (si no estaba) → repo = lista única. En segundo plano.
-      try{ const fs=(j.fuentes||[]).concat((j.estudio_genetico&&j.estudio_genetico.fuentes)||[]); ensureFuentesInRepo(fs); }catch(e){}
+      try{ const fs=(j.fuentes||[]).concat((j.estudio_genetico&&j.estudio_genetico.fuentes)||[]).concat((j.herencia_asesoramiento&&j.herencia_asesoramiento.fuentes)||[]); ensureFuentesInRepo(fs); }catch(e){}
       close();
       const savedMsg='Protocolo guardado'+(mode==='commit'?' y commiteado a GitHub':' (caché local · GitHub sin configurar)');
       if(opts.origin==='biblioteca'){
