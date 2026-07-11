@@ -498,8 +498,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.14.0';
+const APP_VERSION='2.14.1';
 const CHANGELOG=[
+  {v:'2.14.1', d:'2026-07-11', c:['Arreglo: «Editar con IA» del editor de protocolos daba «OpenAI 400 · Model incompatible request argument supplied: temperature». Causa: la tarea de autoría usaba por defecto un modelo *-search-preview de OpenAI y se le enviaba el parámetro «temperature», que ese modelo (y los nuevos gpt-5/o-series) rechazan. Ahora: en tareas sin búsqueda se usa el modelo base (no el *-search) y se omite «temperature» (con max_completion_tokens) en los modelos nuevos. Recordatorio: el JSON editado se aplica solo a la vista previa; para conservarlo pulsa «Guardar y commitear» al final del editor.']},
   {v:'2.14.0', d:'2026-07-11', c:['Chat «Consultar»: cada fuente citada trae ahora «🔍 ver el texto exacto en que se basa» — despliega el pasaje LITERAL recuperado del documento y su apartado, para localizar la afirmación manualmente.','Inventario del segundo cerebro: nuevo filtro «⚠ Duplicados» que detecta documentos repetidos (mismo DOI/PMID/ISBN/título) y los agrupa con enlace a Drive para que los revises y borres tú (Ariadna no borra de tu Drive).','El apartado de herencia/asesoramiento de los protocolos considera también la CNRHA / Ley 14/2006 (regulación estatal de reproducción asistida que rige lo que el SERGAS autoriza).','Contexto temporal: al responder o crear protocolos, si una guía/ley ha sido sustituida por otra más reciente, se prioriza la vigente y se avisa de lo derogado.','El pipeline identifica LEYES/normas (tipo «legislación») y guarda el enlace al boletín oficial (BOE/DOGA/EUR-Lex) sin inventarlo.']},
   {v:'2.13.0', d:'2026-07-11', c:['Los protocolos tienen ahora un apartado final «Herencia y asesoramiento genético»: patrón de herencia, riesgo de recurrencia, puntos de consejo genético, opciones reproductivas (DGP/prenatal…) y —en especial— las circunstancias y criterios de acceso propios del SERGAS (Galicia), que la IA extrae de tus guías SERGAS del segundo cerebro (y si no tiene la norma concreta, lo dice en vez de inventarla). Se genera al crear protocolos nuevos y se añade a los existentes al actualizarlos.']},
   {v:'2.12.0', d:'2026-07-11', c:['La CREACIÓN/actualización de protocolos ahora se apoya en tu SEGUNDO CEREBRO (Vector Store) en vez del RAG local: OpenAI recupera por file_search los pasajes relevantes de tus documentos y GeneReviews, la web la busca y el protocolo lo redacta Opus (búsqueda cerebro = OpenAI · web + redacción = Opus). Nuevo selector en ⚙ Ajustes → 🧠 Segundo cerebro → «Fuente de documentos al crear protocolos» (Segundo cerebro / RAG propio local; provisional, el RAG local se retirará).']},
@@ -2014,7 +2015,16 @@ async function _callProvider(provider, {system, user, webSearch, maxTokens, task
   if(provider==='openai'){
     let body;
     if(webSearch){ if(!/search/.test(model)) model=DEFAULT_MODELS.openai.search; body={model, messages:[{role:'system',content:system},{role:'user',content:user}], web_search_options:{}}; }
-    else { body={model, messages:[{role:'system',content:system},{role:'user',content:user}], temperature:0.2, max_tokens:maxTokens}; }
+    else {
+      // Tarea SIN búsqueda: no uses un modelo *-search-preview (rechaza params y es innecesario) → usa su base.
+      if(/search/.test(model)) model=model.replace(/-search-preview$/,'')||'gpt-4o';
+      // Los modelos nuevos (gpt-5/gpt-6, o-series, sol/terra/luna) solo aceptan temperature=1 y usan
+      // max_completion_tokens en vez de max_tokens; los clásicos (gpt-4o/4.1/3.5) aceptan temperature.
+      const isNew=/^(o[1-9]|gpt-[56])/i.test(model) || /(^|[-_])(sol|terra|luna)([-_]|$)/i.test(model);
+      body={model, messages:[{role:'system',content:system},{role:'user',content:user}]};
+      if(!isNew) body.temperature=0.2;
+      body[isNew?'max_completion_tokens':'max_tokens']=maxTokens;
+    }
     const r=await fetch('https://api.openai.com/v1/chat/completions', {
       method:'POST', headers:{Authorization:'Bearer '+c.openaiKey,'Content-Type':'application/json'}, body:JSON.stringify(body)
     });
@@ -3690,7 +3700,24 @@ async function ragContext(maxDocs, query){
    Consultar — chatbot que responde SOLO con la documentación indexada (RAG estricto)
    =========================================================================== */
 const CHAT_SYSTEM='Eres un asistente documental para un genetista clínico. Respondes ÚNICA y EXCLUSIVAMENTE con la información contenida en los EXTRACTOS de la propia documentación del clínico que se te proporcionan. REGLAS ESTRICTAS: (1) NO uses conocimiento externo, general ni previo; solo los extractos. (2) Si la respuesta NO está en los extractos, dilo con claridad: «No encuentro esa información en tu documentación» y, si procede, sugiere qué tipo de documento podría faltar; NO la completes con lo que "sabrías". (3) CITA de qué documento sale cada afirmación, por su título o número de extracto. (4) Si distintos documentos discrepan, indícalo. (5) Responde en español, con precisión clínica y de forma concreta. Es un apoyo documental; no sustituye el juicio clínico.';
-let _chatMsgs=[];
+/* Conversaciones del chat: se guardan en localStorage (para siempre, salvo que se borren). _chatMsgs apunta a
+   los mensajes de la conversación ACTIVA (misma referencia que su .msgs). */
+let _convos=null, _activeId=null, _chatMsgs=[];
+function loadConvos(){ if(!_convos){ try{ _convos=JSON.parse(localStorage.getItem('fh_convos'))||[]; }catch(e){ _convos=[]; } } return _convos; }
+function persistConvos(){ try{ safeLocalSet('fh_convos', JSON.stringify(loadConvos())); }catch(e){} }
+function newConvo(){ const c={id:'c'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), title:'', msgs:[], created:Date.now(), updated:Date.now()}; loadConvos().unshift(c); _activeId=c.id; _chatMsgs=c.msgs; persistConvos(); return c; }
+function activeConvo(){ const list=loadConvos(); let c=list.find(x=>x.id===_activeId); if(!c){ c=list[0]||newConvo(); _activeId=c.id; _chatMsgs=c.msgs; } return c; }
+function setActiveConvo(id){ const c=loadConvos().find(x=>x.id===id); if(c){ _activeId=c.id; _chatMsgs=c.msgs; } }
+function deleteConvo(id){ _convos=loadConvos().filter(x=>x.id!==id); if(_activeId===id){ _activeId=null; activeConvo(); } persistConvos(); }
+function touchConvo(){ const c=activeConvo(); c.updated=Date.now(); persistConvos(); }
+/* Título de la conversación por IA tras el primer intercambio (pregunta+respuesta). */
+async function maybeTitleConvo(){ const c=activeConvo(); if(c.title) return;
+  const done=c.msgs.filter(m=>!m.pending&&m.text); if(done.length<2) return;
+  const q=(c.msgs.find(m=>m.role==='user')||{}).text||''; const a=(c.msgs.find(m=>m.role==='assistant'&&!m.pending&&m.text)||{}).text||'';
+  try{ const t=await callLLM({system:'Devuelve SOLO un título muy corto (3-6 palabras, español, sin comillas ni punto final) que resuma el tema de esta consulta clínica.', user:'Pregunta: '+q+'\nRespuesta: '+a.slice(0,400), task:'assign', maxTokens:24});
+    c.title=String(t||'').replace(/["'.]/g,'').trim().slice(0,60); persistConvos(); try{ renderConvoList(); }catch(e){}
+  }catch(e){}
+}
 async function retrieveRepo(query, k){
   let lex=[]; try{ const r=await ragRetrieveLocal(query, k||10); lex=r.hits||[]; }catch(e){}
   let sem=null; try{ sem=await semRetrieve(query, k||10); }catch(e){}
@@ -3965,6 +3992,7 @@ function renderChatMsgs(){
     return `<div style="background:${bg};border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0"><div class="dx-meta" style="font-weight:600;margin-bottom:4px">${who}</div><div style="font-size:13.5px;line-height:1.6">${body}</div>${src}</div>`;
   }).join('');
   el.scrollTop=el.scrollHeight;
+  try{ persistConvos(); }catch(e){}   // guarda la conversación activa tras cada cambio
 }
 function renderConsultar(){
   const box=document.getElementById('consultarView'); if(!box) return;
