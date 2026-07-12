@@ -498,8 +498,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.17.2';
+const APP_VERSION='2.17.3';
 const CHANGELOG=[
+  {v:'2.17.3', d:'2026-07-12', c:['Reconciliación automática al indexar: cuando indexas un PDF de Drive (individual o con «Indexar pendientes») cuyo <b>DOI/PMID/PMCID/NBK</b> ya está en tu biblioteca —por ejemplo una cita de un protocolo que aún no tenía fichero—, ahora <b>se FUSIONA con esa referencia</b> en vez de crear un duplicado: hereda lo curado (cita, enlace ReadCube, alias, id) y queda marcado «✓ bibliografía» solo. Antes se creaba una entrada aparte y luego se borraba la referencia (perdiendo lo curado). La fusión es segura: solo por identificador fuerte, nunca por título parecido.']},
   {v:'2.17.2', d:'2026-07-12', c:['Documentos, claridad: los PDFs aún sin indexar tienen ahora su propia pestaña <b>⏳ Sin indexar</b> (antes se contaban dentro de «Otros», que quedaba inflado). Y el botón «Reindexar todos» pasa a llamarse <b>«↻ Reindexar indexados (N)»</b> — así se entiende que actúa sobre los ya indexados, no sobre los 119; ya no confunde ver «Reindexar indexados (41)» junto a «Indexar pendientes (78)» (41 indexados + 78 pendientes = 119).']},
   {v:'2.17.1', d:'2026-07-12', c:['Dos botones nuevos en la cabecera de «Documentos»: <b>✨ Indexar pendientes (N)</b> — indexa de golpe todos los PDFs de Drive aún sin indexar — y <b>↻ Reindexar todos (N)</b> — vuelve a leer y re-analizar todos los ya indexados (actualiza cita/resumen/DOI/PMID). Cada uno muestra su número entre paréntesis y pide confirmación (analiza cada documento con IA, así que puede tardar y consumir IA). Se mantiene «↻ Re-indexar incompletos» para el caso barato/puntual.']},
   {v:'2.17.0', d:'2026-07-12', c:['La pestaña «Documentos» tiene ahora <b>filtro por tipo</b> (como el inventario del segundo cerebro): pestañas <b>Todo · 📖 GeneReviews · 📄 Artículos · 📋 Guías/protocolos · 🤝 Consensos · ⚖ Legislación · 📚 Libros · 🗄 Bases de datos · ▫ Otros</b>, cada una con su conteo, y un <b>buscador</b> (título, tipo, autor, DOI, PMID, NBK). Solo aparecen las pestañas que tienen documentos. La categoría se deduce del tipo que la IA asigna al indexar (+ heurísticas: NBK→GeneReviews, boletín/BOE/DOGA/EUR-Lex→Legislación, DOI/PMID→Artículos). Se añadió «legislación» a los tipos que reconoce la IA, para que las normas nuevas se clasifiquen solas.']},
@@ -1572,10 +1573,33 @@ async function registrarDoc(doc){
   if(!idx.docs) idx.docs=[];
   if(!doc.id) doc.id = slugify(doc.titulo||doc.url||'doc')+'-'+Math.random().toString(36).slice(2,6);
   const i=idx.docs.findIndex(d=>(doc.url && normUrl(d.url)===normUrl(doc.url)) || d.id===doc.id);
-  if(i>=0) idx.docs[i]=Object.assign({}, idx.docs[i], doc); else idx.docs.push(doc);
+  if(i>=0){ idx.docs[i]=Object.assign({}, idx.docs[i], doc); }   // mismo documento (re-index/edición) → sobrescribe
+  else {
+    // ¿Es el MISMO documento que una referencia YA existente, por identificador fuerte (DOI/PMID/PMCID/NBK)?
+    // p. ej. una cita de protocolo sin fichero. → FUSIONA en vez de duplicar: hereda lo curado (cita/ReadCube/
+    // alias/id) y solo pisa con los valores NO vacíos del recién indexado. Así queda marcado «bibliografía» solo.
+    const j=idx.docs.findIndex(d=>docSharesId(d, doc));
+    if(j>=0){
+      const prev=idx.docs[j], merged=Object.assign({}, prev);
+      for(const k in doc){ const v=doc[k]; if(v!==''&&v!=null&&!(Array.isArray(v)&&!v.length)) merged[k]=v; }
+      merged.id=prev.id;                                          // conserva el id original (no rompe alias/enlaces)
+      if(merged.driveId||merged.enlace) merged.externo=false;     // ya tiene fichero → deja de ser referencia «externa»
+      idx.docs[j]=merged;
+    } else idx.docs.push(doc);
+  }
   await ghPutFile('docs/index.json', idx, 'docs: '+(doc.titulo||doc.id), sha);
   cacheDocs(idx);
   return idx;
+}
+/* ¿Dos entradas son el MISMO documento por un IDENTIFICADOR FUERTE (DOI/PMID/PMCID/NBK)? — sin título ni URL,
+   para fusionar con seguridad al indexar (evita falsos positivos por títulos iguales). */
+function docSharesId(a, b){
+  if(!a||!b) return false;
+  const ad=normDoi(a.doi||doiFromUrl(a.url)), bd=normDoi(b.doi||doiFromUrl(b.url)); if(ad&&bd&&ad===bd) return true;
+  const ap=String(a.pmid||pmidFromUrl(a.url)||'').trim(), bp=String(b.pmid||pmidFromUrl(b.url)||'').trim(); if(ap&&bp&&ap===bp) return true;
+  const ac=String(a.pmcid||'').toUpperCase().trim(), bc=String(b.pmcid||'').toUpperCase().trim(); if(ac&&bc&&ac===bc) return true;
+  const an=String(a.nbk||(geneReviewsInfo(a)||{}).nbk||'').toUpperCase(), bn=String(b.nbk||(geneReviewsInfo(b)||{}).nbk||'').toUpperCase(); if(an&&bn&&an===bn) return true;
+  return false;
 }
 /* ¿El documento del índice corresponde a esta referencia? (por doi/pmid/pmcid, url o título). */
 function docMatchesFuente(d, f){
