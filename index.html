@@ -498,8 +498,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.17.1';
+const APP_VERSION='2.17.2';
 const CHANGELOG=[
+  {v:'2.17.2', d:'2026-07-12', c:['Documentos, claridad: los PDFs aún sin indexar tienen ahora su propia pestaña <b>⏳ Sin indexar</b> (antes se contaban dentro de «Otros», que quedaba inflado). Y el botón «Reindexar todos» pasa a llamarse <b>«↻ Reindexar indexados (N)»</b> — así se entiende que actúa sobre los ya indexados, no sobre los 119; ya no confunde ver «Reindexar indexados (41)» junto a «Indexar pendientes (78)» (41 indexados + 78 pendientes = 119).']},
   {v:'2.17.1', d:'2026-07-12', c:['Dos botones nuevos en la cabecera de «Documentos»: <b>✨ Indexar pendientes (N)</b> — indexa de golpe todos los PDFs de Drive aún sin indexar — y <b>↻ Reindexar todos (N)</b> — vuelve a leer y re-analizar todos los ya indexados (actualiza cita/resumen/DOI/PMID). Cada uno muestra su número entre paréntesis y pide confirmación (analiza cada documento con IA, así que puede tardar y consumir IA). Se mantiene «↻ Re-indexar incompletos» para el caso barato/puntual.']},
   {v:'2.17.0', d:'2026-07-12', c:['La pestaña «Documentos» tiene ahora <b>filtro por tipo</b> (como el inventario del segundo cerebro): pestañas <b>Todo · 📖 GeneReviews · 📄 Artículos · 📋 Guías/protocolos · 🤝 Consensos · ⚖ Legislación · 📚 Libros · 🗄 Bases de datos · ▫ Otros</b>, cada una con su conteo, y un <b>buscador</b> (título, tipo, autor, DOI, PMID, NBK). Solo aparecen las pestañas que tienen documentos. La categoría se deduce del tipo que la IA asigna al indexar (+ heurísticas: NBK→GeneReviews, boletín/BOE/DOGA/EUR-Lex→Legislación, DOI/PMID→Artículos). Se añadió «legislación» a los tipos que reconoce la IA, para que las normas nuevas se clasifiquen solas.']},
   {v:'2.16.1', d:'2026-07-12', c:['Limpieza de etiquetas en las tarjetas del repositorio documental: se quita «✓ indexado» (redundante — el botón ya distingue «Indexar (IA)» de «Editar/Quitar del índice») y el vestigio «texto completo: Nk letras · N pág» (medía el texto para el RAG local, ya retirado). Se CONSERVAN los avisos útiles de PDF problemático (⚠ escaneado / sin medir / documento enorme) porque un PDF sin texto tampoco sirve para el segundo cerebro. Quedan las etiquetas que identifican el documento: PMID/DOI, GeneReviews, Papers, «unido a bibliografía» y el nombre de archivo.']},
@@ -3939,12 +3940,13 @@ const DOC_CATS=[
   {k:'legislacion', label:'⚖ Legislación'},
   {k:'libros',      label:'📚 Libros'},
   {k:'bases',       label:'🗄 Bases de datos'},
-  {k:'otros',       label:'▫ Otros'}
+  {k:'otros',       label:'▫ Otros'},
+  {k:'sinindexar',  label:'⏳ Sin indexar'}
 ];
 /* Categoría de un documento a partir de su `tipo` (que asigna la IA al indexar) + heurísticas (NBK, boletín oficial,
    DOI/PMID). Un PDF aún sin indexar (sin reg) → «otros» hasta que se analice. */
 function docCategoria(reg){
-  if(!reg) return 'otros';
+  if(!reg) return 'sinindexar';   // PDF de Drive aún sin indexar (sin `tipo`) → pestaña propia, no «Otros»
   if(reg.genereviews || reg.nbk || /genereview/i.test(reg.tipo||'') || (typeof geneReviewsInfo==='function' && geneReviewsInfo(reg))) return 'genereviews';
   const t=accLower(reg.tipo||''); const url=accLower(reg.url||reg.enlace||'');
   if(reg.boletin || /legisl|\bley\b|decreto|\borden\b|reglamento|directiva|bolet[íi]n/.test(t) || /boe\.es|xunta\.gal|eur-?lex\.europa|dogaweb|diariooficial/.test(url)) return 'legislacion';
@@ -3984,7 +3986,7 @@ async function renderDriveList(files){
   }
   const shown=files.filter(f=>(_docCat==='all'||docCategoria(regOf(f))===_docCat) && docMatchesSearch(f, regOf(f), q));
   const filtrando=(_docCat!=='all'||q);
-  const head=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} PDF(s) · ${nIdx} indexado(s) (en el contexto de la IA)${filtrando?` · <b>mostrando ${shown.length}</b>`:''} · <span class="dx-meta">flag: unido a bibliografía = citado por un protocolo</span>${pendCount?` · <button class="btn" id="docIndexPend" style="padding:2px 9px;font-size:11px" title="Indexa con IA todos los PDFs de Drive que aún NO están indexados (analiza nombre/resumen + busca DOI/PMID). Puede tardar y consume IA.">✨ Indexar pendientes (${pendCount})</button>`:''}${nIdx?` · <button class="btn" id="docReindexTodos" style="padding:2px 9px;font-size:11px" title="Vuelve a leer y re-analizar TODOS los documentos ya indexados (actualiza cita/resumen/identificadores). Puede tardar bastante y consume IA.">↻ Reindexar todos (${nIdx})</button>`:''}${reidxPend?` · <button class="btn" id="docReidxAll" style="padding:2px 9px;font-size:11px" title="Vuelve a leer el PDF ENTERO solo de los documentos indexados en una versión anterior (para completar los que quedaron recortados a las primeras páginas).">↻ Re-indexar incompletos (${reidxPend})</button>`:''}</div>`;
+  const head=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} PDF(s) · ${nIdx} indexado(s) (en el contexto de la IA)${filtrando?` · <b>mostrando ${shown.length}</b>`:''} · <span class="dx-meta">flag: unido a bibliografía = citado por un protocolo</span>${pendCount?` · <button class="btn" id="docIndexPend" style="padding:2px 9px;font-size:11px" title="Indexa con IA todos los PDFs de Drive que aún NO están indexados (analiza nombre/resumen + busca DOI/PMID). Puede tardar y consume IA.">✨ Indexar pendientes (${pendCount})</button>`:''}${nIdx?` · <button class="btn" id="docReindexTodos" style="padding:2px 9px;font-size:11px" title="Vuelve a leer y re-analizar TODOS los documentos ya indexados (actualiza cita/resumen/identificadores). Puede tardar bastante y consume IA.">↻ Reindexar indexados (${nIdx})</button>`:''}${reidxPend?` · <button class="btn" id="docReidxAll" style="padding:2px 9px;font-size:11px" title="Vuelve a leer el PDF ENTERO solo de los documentos indexados en una versión anterior (para completar los que quedaron recortados a las primeras páginas).">↻ Re-indexar incompletos (${reidxPend})</button>`:''}</div>`;
   // Cablea los botones de la cabecera (operan sobre TODOS los ficheros, no solo los filtrados). Se llama en ambas ramas.
   const wireHead=()=>{
     const reidxAllBtn=list.querySelector('#docReidxAll');
