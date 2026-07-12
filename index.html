@@ -498,8 +498,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.17.3';
+const APP_VERSION='2.18.0';
 const CHANGELOG=[
+  {v:'2.18.0', d:'2026-07-12', c:['Nuevo botón <b>«🔗 Reconciliar pendientes (N)»</b> en «Documentos»: reconcilia tus PDFs sin indexar con la biblioteca <b>SIN gastar IA</b>. Para cada pendiente saca un identificador barato — el <b>NBK del nombre del fichero</b> (Bookshelf_NBKxxxx.pdf) y, si no, el <b>DOI/PMID de la 1ª página</b> del PDF (descarga la 1ª página, sin IA ni pisar la caché de texto) — y, si coincide con una de tus «Referencias sin PDF» (citas de protocolos), <b>enlaza el PDF a esa referencia</b> automáticamente (queda «✓ bibliografía»). Así resuelves los duplicados gratis y solo gastas IA («Indexar pendientes») en los realmente nuevos. No crea entradas para los que no casen.']},
   {v:'2.17.3', d:'2026-07-12', c:['Reconciliación automática al indexar: cuando indexas un PDF de Drive (individual o con «Indexar pendientes») cuyo <b>DOI/PMID/PMCID/NBK</b> ya está en tu biblioteca —por ejemplo una cita de un protocolo que aún no tenía fichero—, ahora <b>se FUSIONA con esa referencia</b> en vez de crear un duplicado: hereda lo curado (cita, enlace ReadCube, alias, id) y queda marcado «✓ bibliografía» solo. Antes se creaba una entrada aparte y luego se borraba la referencia (perdiendo lo curado). La fusión es segura: solo por identificador fuerte, nunca por título parecido.']},
   {v:'2.17.2', d:'2026-07-12', c:['Documentos, claridad: los PDFs aún sin indexar tienen ahora su propia pestaña <b>⏳ Sin indexar</b> (antes se contaban dentro de «Otros», que quedaba inflado). Y el botón «Reindexar todos» pasa a llamarse <b>«↻ Reindexar indexados (N)»</b> — así se entiende que actúa sobre los ya indexados, no sobre los 119; ya no confunde ver «Reindexar indexados (41)» junto a «Indexar pendientes (78)» (41 indexados + 78 pendientes = 119).']},
   {v:'2.17.1', d:'2026-07-12', c:['Dos botones nuevos en la cabecera de «Documentos»: <b>✨ Indexar pendientes (N)</b> — indexa de golpe todos los PDFs de Drive aún sin indexar — y <b>↻ Reindexar todos (N)</b> — vuelve a leer y re-analizar todos los ya indexados (actualiza cita/resumen/DOI/PMID). Cada uno muestra su número entre paréntesis y pide confirmación (analiza cada documento con IA, así que puede tardar y consumir IA). Se mantiene «↻ Re-indexar incompletos» para el caso barato/puntual.']},
@@ -3517,13 +3518,14 @@ async function driveListPdfs(folderId, recursive){
 async function driveDownloadText(fileId, mt, opts){
   opts=opts||{};
   const key='fh_doctext_'+fileId;
-  if(!opts.force){ try{ const c=JSON.parse(localStorage.getItem(key)); if(c && c.mt===mt && c.text) return c.text; }catch(e){} }   // opts.force → re-extrae (p. ej. para completar un libro ya indexado truncado)
+  // opts.noCache → NO lee ni escribe la caché de texto (p. ej. lectura parcial de 1ª página para reconciliar; no pisa el texto completo).
+  if(!opts.force && !opts.noCache){ try{ const c=JSON.parse(localStorage.getItem(key)); if(c && c.mt===mt && c.text) return c.text; }catch(e){} }   // opts.force → re-extrae (p. ej. para completar un libro ya indexado truncado)
   if(!_driveToken) throw new Error('Conecta con Google Drive primero.');
   const r=await fetch('https://www.googleapis.com/drive/v3/files/'+fileId+'?alt=media', {headers:{Authorization:'Bearer '+_driveToken}});
   if(!r.ok) throw new Error('Drive download '+r.status);
   // Repositorio/RAG: texto COMPLETO del documento (libros incluidos), no solo las primeras páginas.
   const text=await extractPdfTextFromBuffer(await r.arrayBuffer(), Object.assign({maxPages:5000, maxChars:5000000}, opts||{}));
-  try{ localStorage.setItem(key, JSON.stringify({mt, text})); }catch(e){}   // si no cabe en localStorage, se sirve desde GitHub (docs/text)
+  if(!opts.noCache){ try{ localStorage.setItem(key, JSON.stringify({mt, text})); }catch(e){} }   // si no cabe en localStorage, se sirve desde GitHub (docs/text)
   return text;
 }
 /* NOTA: el RAG local (BM25 + embeddings int8 «índice semántico») se RETIRÓ. La recuperación documental para la
@@ -4010,7 +4012,7 @@ async function renderDriveList(files){
   }
   const shown=files.filter(f=>(_docCat==='all'||docCategoria(regOf(f))===_docCat) && docMatchesSearch(f, regOf(f), q));
   const filtrando=(_docCat!=='all'||q);
-  const head=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} PDF(s) · ${nIdx} indexado(s) (en el contexto de la IA)${filtrando?` · <b>mostrando ${shown.length}</b>`:''} · <span class="dx-meta">flag: unido a bibliografía = citado por un protocolo</span>${pendCount?` · <button class="btn" id="docIndexPend" style="padding:2px 9px;font-size:11px" title="Indexa con IA todos los PDFs de Drive que aún NO están indexados (analiza nombre/resumen + busca DOI/PMID). Puede tardar y consume IA.">✨ Indexar pendientes (${pendCount})</button>`:''}${nIdx?` · <button class="btn" id="docReindexTodos" style="padding:2px 9px;font-size:11px" title="Vuelve a leer y re-analizar TODOS los documentos ya indexados (actualiza cita/resumen/identificadores). Puede tardar bastante y consume IA.">↻ Reindexar indexados (${nIdx})</button>`:''}${reidxPend?` · <button class="btn" id="docReidxAll" style="padding:2px 9px;font-size:11px" title="Vuelve a leer el PDF ENTERO solo de los documentos indexados en una versión anterior (para completar los que quedaron recortados a las primeras páginas).">↻ Re-indexar incompletos (${reidxPend})</button>`:''}</div>`;
+  const head=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} PDF(s) · ${nIdx} indexado(s) (en el contexto de la IA)${filtrando?` · <b>mostrando ${shown.length}</b>`:''} · <span class="dx-meta">flag: unido a bibliografía = citado por un protocolo</span>${pendCount?` · <button class="btn" id="docReconcile" style="padding:2px 9px;font-size:11px" title="SIN IA: para cada PDF sin indexar saca el identificador del nombre o de la 1ª página y, si ya está en tus referencias/biblioteca, lo enlaza (queda «bibliografía»). Gratis; descarga la 1ª página de algunos.">🔗 Reconciliar pendientes (${pendCount})</button>`:''}${pendCount?` · <button class="btn" id="docIndexPend" style="padding:2px 9px;font-size:11px" title="Indexa con IA todos los PDFs de Drive que aún NO están indexados (analiza nombre/resumen + busca DOI/PMID). Puede tardar y consume IA.">✨ Indexar pendientes (${pendCount})</button>`:''}${nIdx?` · <button class="btn" id="docReindexTodos" style="padding:2px 9px;font-size:11px" title="Vuelve a leer y re-analizar TODOS los documentos ya indexados (actualiza cita/resumen/identificadores). Puede tardar bastante y consume IA.">↻ Reindexar indexados (${nIdx})</button>`:''}${reidxPend?` · <button class="btn" id="docReidxAll" style="padding:2px 9px;font-size:11px" title="Vuelve a leer el PDF ENTERO solo de los documentos indexados en una versión anterior (para completar los que quedaron recortados a las primeras páginas).">↻ Re-indexar incompletos (${reidxPend})</button>`:''}</div>`;
   // Cablea los botones de la cabecera (operan sobre TODOS los ficheros, no solo los filtrados). Se llama en ambas ramas.
   const wireHead=()=>{
     const reidxAllBtn=list.querySelector('#docReidxAll');
@@ -4036,6 +4038,16 @@ async function renderDriveList(files){
     };
     runLote('docIndexPend', f=>!regOf(f), '✨ Indexar pendientes');
     runLote('docReindexTodos', f=>!!regOf(f), '↻ Reindexar todos');
+    // Reconciliar pendientes SIN IA (identificador del nombre / 1ª página → enlaza con la biblioteca).
+    const rc=list.querySelector('#docReconcile');
+    if(rc) rc.addEventListener('click', async ()=>{
+      if(!driveTokenValid()){ showToast('Conecta con Drive primero (el acceso caduca a la hora)'); return; }
+      if(!confirm('Reconciliar pendientes con tu biblioteca SIN IA: leo el nombre y la 1ª página de cada PDF sin indexar y enlazo los que ya estén en tus referencias. No gasta IA (descarga la 1ª página de algunos). ¿Continuar?')) return;
+      rc.disabled=true;
+      try{ const {linked, pend}=await reconcilePendientes(files, (d,t)=>showToast('🔗 Reconciliando '+d+'/'+t+'…'));
+        _fichaRefSet=null; showToast(linked?('Enlazados '+linked+' de '+pend+' pendientes con tu biblioteca'):('Ninguno de los '+pend+' pendientes coincide con tus referencias (sin IA)')); renderDriveList(files);
+      }catch(e){ rc.disabled=false; showToast('Error: '+e.message); }
+    });
   };
   if(!shown.length){ list.innerHTML=head+'<div class="placeholder">Sin documentos en esta categoría/búsqueda.</div>'; wireHead(); renderExternalRefs(); return; }
   list.innerHTML=head+`<div class="lib-grid">`+shown.map((f,i)=>{
@@ -4210,6 +4222,40 @@ function editarDocMeta(f, reg, onDone){
       close(); showToast('Documento actualizado'); if(onDone) onDone();
     }catch(e){ out.className='test-out bad'; out.textContent='Error: '+e.message; }
   });
+}
+/* Pre-paso SIN IA: reconcilia los PDFs pendientes (sin indexar) contra la biblioteca. Para cada pendiente saca un
+   identificador BARATO — NBK/DOI del NOMBRE del fichero y, si no, DOI/PMID/NBK de la 1ª PÁGINA del PDF (descarga sin IA,
+   sin tocar la caché de texto completo) — y, si coincide (identificador fuerte) con una referencia YA existente SIN
+   fichero (una cita de protocolo), enlaza el PDF a ella: registrarDoc la FUSIONA (hereda cita/ReadCube/alias/id) y queda
+   marcada «bibliografía». NO crea entradas para los que no casen (siguen pendientes para «Indexar pendientes»). */
+async function reconcilePendientes(files, onProgress){
+  const idx=await getDocsIndex(); const docs=idx.docs||[];
+  const regOf=(f)=> docs.find(d=>d.driveId===f.id) || matchDoc({url:f.webViewLink, titulo:f.name}, docs);
+  const pend=(files||[]).filter(f=>!regOf(f));
+  let linked=0, done=0;
+  for(const f of pend){
+    done++; if(onProgress){ try{ onProgress(done, pend.length); }catch(_){ } }
+    let nbk=((String(f.name||'').match(/(NBK\d{3,7})/i))||[])[1]||'';                            // 1) del NOMBRE (gratis; «Bookshelf_NBKxxxx.pdf»)
+    let doi=((String(f.name||'').match(/10\.\d{4,9}\/[^\s"'<>,;)\]}_]+/))||[])[0]||'';
+    let pmid='';
+    if(!nbk && !doi){                                                                            // 2) 1ª página (descarga, sin IA)
+      try{ const head=((await driveDownloadText(f.id, f.modifiedTime, {maxPages:1, noCache:true}))||'').slice(0,4000);
+        doi=((head.match(/10\.\d{4,9}\/[^\s"'<>,;)\]}]+/)||[])[0]||'').replace(/[).,;]+$/,'');
+        pmid=((head.match(/pmid[:\s]*?(\d{4,9})/i))||[])[1]||'';
+        nbk=((head.match(/\bNBK\d{3,7}\b/i))||[])[0]||'';
+      }catch(e){}
+    }
+    if(!doi && !pmid && !nbk) continue;                                                          // nada aprovechable sin IA
+    const lite={ doi, pmid, nbk, url:f.webViewLink };
+    const ref=docs.find(d=>!(d.driveId||d.enlace) && docSharesId(d, lite));                      // solo referencias SIN fichero
+    if(!ref) continue;
+    await registrarDoc({ titulo: ref.cita||ref.titulo||f.name, cita: ref.cita||ref.titulo||'', tipo: ref.tipo||'',
+      doi:doi||ref.doi||'', pmid:pmid||ref.pmid||'', pmcid:ref.pmcid||'', nbk:(nbk||ref.nbk||'').toUpperCase(),
+      url:f.webViewLink||('drive:'+f.id), enlace:f.webViewLink||('https://drive.google.com/file/d/'+f.id),
+      driveId:f.id, mt:f.modifiedTime||'', iaAnalizado:false });
+    linked++;
+  }
+  return {linked, pend:pend.length};
 }
 async function indexarDriveDoc(f, opts){
   opts=opts||{};
