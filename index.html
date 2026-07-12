@@ -498,8 +498,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.16.1';
+const APP_VERSION='2.17.0';
 const CHANGELOG=[
+  {v:'2.17.0', d:'2026-07-12', c:['La pestaña «Documentos» tiene ahora <b>filtro por tipo</b> (como el inventario del segundo cerebro): pestañas <b>Todo · 📖 GeneReviews · 📄 Artículos · 📋 Guías/protocolos · 🤝 Consensos · ⚖ Legislación · 📚 Libros · 🗄 Bases de datos · ▫ Otros</b>, cada una con su conteo, y un <b>buscador</b> (título, tipo, autor, DOI, PMID, NBK). Solo aparecen las pestañas que tienen documentos. La categoría se deduce del tipo que la IA asigna al indexar (+ heurísticas: NBK→GeneReviews, boletín/BOE/DOGA/EUR-Lex→Legislación, DOI/PMID→Artículos). Se añadió «legislación» a los tipos que reconoce la IA, para que las normas nuevas se clasifiquen solas.']},
   {v:'2.16.1', d:'2026-07-12', c:['Limpieza de etiquetas en las tarjetas del repositorio documental: se quita «✓ indexado» (redundante — el botón ya distingue «Indexar (IA)» de «Editar/Quitar del índice») y el vestigio «texto completo: Nk letras · N pág» (medía el texto para el RAG local, ya retirado). Se CONSERVAN los avisos útiles de PDF problemático (⚠ escaneado / sin medir / documento enorme) porque un PDF sin texto tampoco sirve para el segundo cerebro. Quedan las etiquetas que identifican el documento: PMID/DOI, GeneReviews, Papers, «unido a bibliografía» y el nombre de archivo.']},
   {v:'2.16.0', d:'2026-07-12', c:['Jubilado el <b>RAG local</b>: la recuperación de tus documentos ahora es 100 % del <b>segundo cerebro</b> (Vector Store de OpenAI). Se ha retirado todo el código muerto de búsqueda local — BM25 (por palabras) y el índice semántico por embeddings int8 — junto con el selector «Fuente de documentos» de Ajustes (ya no hay elección: siempre segundo cerebro), el buscador local de la pestaña «Documentos» (para consultar usa el chat «💬 Consultar») y los botones «🧠 Indexar semántico». La autoría de protocolos y el seguimiento por gen tiran del Vector Store; el chat «Consultar» requiere ahora tener configurado el segundo cerebro (si no, te lo indica). Menos código, misma o mejor calidad de recuperación (búsqueda por significado de OpenAI). La indexación de PDFs (nombre/resumen/DOI/PMID) y la biblioteca siguen igual.']},
   {v:'2.15.0', d:'2026-07-11', c:['El chat «Consultar» ahora GUARDA tus conversaciones (para siempre, salvo que las borres): panel lateral a la izquierda con todas tus conversaciones, botón «＋ Nueva conversación» y la conversación activa ocupando la mayor parte de la pantalla, como un chatbot al uso. Cada conversación recibe un TÍTULO automático (por IA) tras la primera pregunta/respuesta, y puedes borrarlas una a una (✕). Se guardan en tu navegador (localStorage), no salen a ningún sitio.']},
@@ -3895,8 +3896,12 @@ function renderDocumentos(){
       ${driveTokenValid()?`<button class="btn ghost" id="docSbToken" title="Copia una línea con tu token de Drive para el script de descarga del «segundo cerebro» (secondbrain/download-drive.mjs). El token caduca en ~1h.">⬇ Token 2º cerebro</button>`:''}
     </div>
     <div class="sec-note">Al <b>indexar</b> un documento, la IA lo analiza (nombre + resumen) y le busca DOI/PMID. Para <b>consultar</b> tu documentación por significado, usa el chat «💬 Consultar» (tu <b>segundo cerebro</b>). <b>unido a bibliografía</b> = citado por algún protocolo.</div>
+    <input id="docSearch" type="text" placeholder="🔎 Filtrar por título, tipo, autor, DOI, PMID, NBK…" autocomplete="off" style="width:100%;box-sizing:border-box;margin:2px 0 8px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
+    <div id="docTypeFilter" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px"></div>
     <div id="docList">${_driveFilesCache.length?'':'<div class="placeholder">'+(driveTokenValid()?'Cargando tus PDFs…':'Pulsa "Conectar" para listar tus PDFs.')+'</div>'}</div>
     <div id="docExternos" style="margin-top:16px"></div>`;
+  (function(){ const ds=document.getElementById('docSearch'); if(!ds) return; let t=null;
+    ds.addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(()=>{ if(_driveFilesCache.length) renderDriveList(_driveFilesCache); }, 160); }); })();
   document.getElementById('docConnect').addEventListener('click', cargarDriveDocs);
   document.getElementById('docRefresh').addEventListener('click', cargarDriveDocs);
   document.getElementById('docToAjustes').addEventListener('click', openSettings);
@@ -3922,6 +3927,38 @@ function cargarDriveDocs(){
   // IMPORTANTE: abrir el popup SÍNCRONAMENTE dentro del clic (Safari bloquea popups tras await)
   if(driveTokenValid()) _onDriveToken(); else tc.requestAccessToken();
 }
+/* Filtro por tipo de documento del repositorio (pestañas + buscador), al estilo del inventario del 2º cerebro. */
+let _docCat='all';
+const DOC_CATS=[
+  {k:'all',         label:'Todo'},
+  {k:'genereviews', label:'📖 GeneReviews'},
+  {k:'articulos',   label:'📄 Artículos'},
+  {k:'guias',       label:'📋 Guías/protocolos'},
+  {k:'consensos',   label:'🤝 Consensos'},
+  {k:'legislacion', label:'⚖ Legislación'},
+  {k:'libros',      label:'📚 Libros'},
+  {k:'bases',       label:'🗄 Bases de datos'},
+  {k:'otros',       label:'▫ Otros'}
+];
+/* Categoría de un documento a partir de su `tipo` (que asigna la IA al indexar) + heurísticas (NBK, boletín oficial,
+   DOI/PMID). Un PDF aún sin indexar (sin reg) → «otros» hasta que se analice. */
+function docCategoria(reg){
+  if(!reg) return 'otros';
+  if(reg.genereviews || reg.nbk || /genereview/i.test(reg.tipo||'') || (typeof geneReviewsInfo==='function' && geneReviewsInfo(reg))) return 'genereviews';
+  const t=accLower(reg.tipo||''); const url=accLower(reg.url||reg.enlace||'');
+  if(reg.boletin || /legisl|\bley\b|decreto|\borden\b|reglamento|directiva|bolet[íi]n/.test(t) || /boe\.es|xunta\.gal|eur-?lex\.europa|dogaweb|diariooficial/.test(url)) return 'legislacion';
+  if(/consenso|consensus/.test(t)) return 'consensos';
+  if(/gu[íi]a|protocolo|recomendaci|estrategia|guideline|practice/.test(t)) return 'guias';
+  if(/libro|cap[íi]tulo|manual|textbook|\bbook\b/.test(t)) return 'libros';
+  if(/base de datos|database|recurso|panel/.test(t)) return 'bases';
+  if(/art[íi]culo|revisi[óo]n|review|original|\bpaper\b/.test(t) || reg.pmid || reg.doi || reg.pmcid) return 'articulos';
+  return 'otros';
+}
+function docMatchesSearch(f, reg, q){
+  if(!q) return true;
+  const hay=accLower([f&&f.name, reg&&reg.cita, reg&&reg.titulo, reg&&reg.nombreIA, reg&&reg.descripcion, reg&&reg.tipo, reg&&reg.doi, reg&&reg.pmid, reg&&reg.pmcid, reg&&reg.nbk, reg&&reg.anio].filter(Boolean).join(' '));
+  return hay.includes(q);
+}
 async function renderDriveList(files){
   const list=document.getElementById('docList'); if(!list) return;
   if(!files.length){ list.innerHTML='<div class="placeholder">No se encontraron PDFs en Drive (o en esa carpeta).</div>'; return; }
@@ -3934,8 +3971,20 @@ async function renderDriveList(files){
   const flag=(on,label,title)=> `<span class="dx-meta hastip" style="color:${on?'var(--ok)':'var(--ink3)'}">${on?'✓':'–'} ${label}<span class="tooltip">${escHtml(title)}</span></span>`;
   const nIdx=files.filter(f=>!!regOf(f)).length;
   const reidxPend=files.filter(f=>{ const r=regOf(f); return r && r.textLen===undefined; }).length;   // indexados en versión anterior (texto sin medir → posiblemente truncado)
-  list.innerHTML=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} PDF(s) · ${nIdx} indexado(s) (en el contexto de la IA) · <span class="dx-meta">flag: unido a bibliografía = citado por un protocolo</span>${reidxPend?` · <button class="btn" id="docReidxAll" style="padding:2px 9px;font-size:11px" title="Vuelve a leer el PDF ENTERO de todos los documentos indexados en una versión anterior (para completar los que quedaron recortados a las primeras páginas).">↻ Re-indexar incompletos (${reidxPend})</button>`:''}</div>
-    <div class="lib-grid">`+files.map((f,i)=>{
+  // Filtro por tipo (pestañas) + buscador de texto. Las pestañas se pintan en #docTypeFilter (persistente) con su conteo.
+  const q=accLower((document.getElementById('docSearch')||{}).value||'');
+  const counts={}; DOC_CATS.forEach(c=>counts[c.k]=0);
+  files.forEach(f=>{ counts.all++; const c=docCategoria(regOf(f)); if(counts[c]!==undefined) counts[c]++; });
+  const fb=document.getElementById('docTypeFilter');
+  if(fb){ if(_docCat!=='all' && !counts[_docCat]) _docCat='all';   // la categoría activa se quedó vacía → vuelve a Todo
+    fb.innerHTML=DOC_CATS.filter(c=>c.k==='all'||counts[c.k]>0).map(c=>`<button class="btn${_docCat===c.k?' primary':''}" data-doccat="${c.k}" style="padding:3px 10px;font-size:12px">${c.label} <span class="dx-meta">(${counts[c.k]})</span></button>`).join('');
+    fb.querySelectorAll('[data-doccat]').forEach(b=>b.addEventListener('click', ()=>{ _docCat=b.dataset.doccat; renderDriveList(files); }));
+  }
+  const shown=files.filter(f=>(_docCat==='all'||docCategoria(regOf(f))===_docCat) && docMatchesSearch(f, regOf(f), q));
+  const filtrando=(_docCat!=='all'||q);
+  const head=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} PDF(s) · ${nIdx} indexado(s) (en el contexto de la IA)${filtrando?` · <b>mostrando ${shown.length}</b>`:''} · <span class="dx-meta">flag: unido a bibliografía = citado por un protocolo</span>${reidxPend?` · <button class="btn" id="docReidxAll" style="padding:2px 9px;font-size:11px" title="Vuelve a leer el PDF ENTERO de todos los documentos indexados en una versión anterior (para completar los que quedaron recortados a las primeras páginas).">↻ Re-indexar incompletos (${reidxPend})</button>`:''}</div>`;
+  if(!shown.length){ list.innerHTML=head+'<div class="placeholder">Sin documentos en esta categoría/búsqueda.</div>'; const rb=list.querySelector('#docReidxAll'); if(rb) rb.addEventListener('click', ()=>renderDriveList(files)); renderExternalRefs(); return; }
+  list.innerHTML=head+`<div class="lib-grid">`+shown.map((f,i)=>{
     const reg=regOf(f);
     const indexado=!!reg;
     const enBib=!!(reg && docUsedInFicha(reg, refset));
@@ -3969,7 +4018,7 @@ async function renderDriveList(files){
       </div>
     </div>`;
   }).join('')+'</div>';
-  const idx=async(i,reanalyze)=>{ const f=files[i]; const reg=regOf(f);
+  const idx=async(i,reanalyze)=>{ const f=shown[i]; const reg=regOf(f);   // i indexa sobre la lista MOSTRADA (filtrada)
     if(reg && !reanalyze) return;
     showToast('Indexando con IA…');
     try{ await indexarDriveDoc(f); _fichaRefSet=null; showToast('Indexado'); renderDriveList(files); }
@@ -3986,7 +4035,7 @@ async function renderDriveList(files){
       try{ await indexarDriveDoc(f); done++; }catch(e){ err++; } }
     _fichaRefSet=null; showToast('Re-indexado: '+done+' completo(s)'+(err?(' · '+err+' con error'):'')); renderDriveList(files);
   });
-  list.querySelectorAll('[data-editmeta]').forEach(b=>b.addEventListener('click', ()=>editarDocMeta(files[+b.dataset.editmeta], regOf(files[+b.dataset.editmeta]), ()=>renderDriveList(files))));
+  list.querySelectorAll('[data-editmeta]').forEach(b=>b.addEventListener('click', ()=>editarDocMeta(shown[+b.dataset.editmeta], regOf(shown[+b.dataset.editmeta]), ()=>renderDriveList(files))));
   list.querySelectorAll('[data-unreg]').forEach(b=>b.addEventListener('click', async ()=>{
     try{ await desregistrarDoc(b.dataset.unreg); showToast('Quitado del índice'); renderDriveList(files); }
     catch(e){ showToast('Error: '+e.message); }
@@ -7339,7 +7388,7 @@ async function renderFichaView(f){
 /* La IA identifica el documento (por título/URL/DOI, con búsqueda web) → nombre + descripción + tipo.
    Es el "análisis una sola vez": el resultado se guarda en docs/index.json (GitHub). */
 async function analizarDocIA(fuente, pdfText){
-  const sys='Eres documentalista clínico-genético. Identifica el documento bibliográfico. '+(pdfText?'Te doy un EXTRACTO del texto real del PDF: úsalo como FUENTE PRINCIPAL (el nombre del fichero puede inducir a error, NO te fíes de él). ':'Usa el título/URL/DOI y búsqueda web; NO inventes. ')+'Si es un artículo científico, incluye además su "doi" (10.xxxx, sin el prefijo https://doi.org/), "pmid" (solo dígitos) y "pmcid" (PMCxxxxxxx) SIEMPRE que puedas identificarlos con seguridad (déjalos en "" si no); NO los inventes. Si es un capítulo de GeneReviews (NCBI Bookshelf), pon "genereviews":true, su "nbk" (formato NBKxxxxx), "gr_updated" (la fecha exacta de «Last Update»/«Last Revision», tal cual aparece, p. ej. "September 29, 2022") y "gr_initial" (la fecha exacta de «Initial Posting»/inclusión, p. ej. "January 3, 2001"); si no hay «Last Update», deja "gr_updated" vacío pero rellena SIEMPRE "gr_initial"; para GeneReviews DEJA "pmid" VACÍO (no lo adivines: se obtiene de forma automática y verificada a partir del NBK). Devuelve SOLO JSON {"cita":"cita bibliográfica COMPLETA estilo Vancouver (Autores. Título. Revista Año;vol(núm):págs.; para libro/GeneReviews: Autores. Título. GeneReviews®. Año); déjala en "" si no puedes construirla con seguridad","nombre":"nombre CORTO y claro en español (NO es la cita), sin comillas","descripcion":"1-2 frases: QUÉ es y para qué sirve","tipo":"guía clínica|revisión|artículo original|consenso|libro|base de datos|GeneReviews|otro","anio":"AAAA","doi":"","pmid":"","pmcid":"","genereviews":false,"nbk":"","gr_updated":"","gr_initial":""}.';
+  const sys='Eres documentalista clínico-genético. Identifica el documento bibliográfico. '+(pdfText?'Te doy un EXTRACTO del texto real del PDF: úsalo como FUENTE PRINCIPAL (el nombre del fichero puede inducir a error, NO te fíes de él). ':'Usa el título/URL/DOI y búsqueda web; NO inventes. ')+'Si es un artículo científico, incluye además su "doi" (10.xxxx, sin el prefijo https://doi.org/), "pmid" (solo dígitos) y "pmcid" (PMCxxxxxxx) SIEMPRE que puedas identificarlos con seguridad (déjalos en "" si no); NO los inventes. Si es un capítulo de GeneReviews (NCBI Bookshelf), pon "genereviews":true, su "nbk" (formato NBKxxxxx), "gr_updated" (la fecha exacta de «Last Update»/«Last Revision», tal cual aparece, p. ej. "September 29, 2022") y "gr_initial" (la fecha exacta de «Initial Posting»/inclusión, p. ej. "January 3, 2001"); si no hay «Last Update», deja "gr_updated" vacío pero rellena SIEMPRE "gr_initial"; para GeneReviews DEJA "pmid" VACÍO (no lo adivines: se obtiene de forma automática y verificada a partir del NBK). Devuelve SOLO JSON {"cita":"cita bibliográfica COMPLETA estilo Vancouver (Autores. Título. Revista Año;vol(núm):págs.; para libro/GeneReviews: Autores. Título. GeneReviews®. Año); déjala en "" si no puedes construirla con seguridad","nombre":"nombre CORTO y claro en español (NO es la cita), sin comillas","descripcion":"1-2 frases: QUÉ es y para qué sirve","tipo":"guía clínica|revisión|artículo original|consenso|libro|base de datos|legislación|GeneReviews|otro","anio":"AAAA","doi":"","pmid":"","pmcid":"","genereviews":false,"nbk":"","gr_updated":"","gr_initial":""}.';
   const user='Documento: '+JSON.stringify({titulo:fuente.titulo||'', url:fuente.url||'', doi:fuente.doi||''})+(pdfText?('\n\nEXTRACTO DEL PDF (texto real, prioritario):\n'+pdfText.slice(0,6000)):'');
   // Con texto del PDF, identificar el documento es una tarea sencilla → modelo BARATO (assign). Sin texto, hace falta búsqueda web (eval).
   const resp=await callLLM({system:sys, user, webSearch:!pdfText, maxTokens:700, task: pdfText ? 'assign' : 'eval'});
