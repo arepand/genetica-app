@@ -498,8 +498,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.18.0';
+const APP_VERSION='2.19.0';
 const CHANGELOG=[
+  {v:'2.19.0', d:'2026-07-12', c:['Duplicados en «Documentos»: si tienes en Drive <b>dos ficheros distintos del mismo artículo</b> (mismo DOI/PMID/PMCID/NBK), Ariadna ya no los indexa con metadatos divergentes. Al indexar comprueba si el identificador ya está en la biblioteca: si coincide con una <b>referencia sin fichero</b> (cita de protocolo) la enlaza (como antes); si coincide con <b>otro PDF</b>, NO los fusiona (son dos ficheros y Ariadna no borra de tu Drive) sino que les <b>unifica los metadatos</b> (misma cita/tipo/año) y los marca con badge <b>⚠ duplicado</b>. Nueva pestaña <b>⚠ Duplicados</b> que los agrupa para que revises cuál conservar y borres el sobrante en tu Drive.']},
   {v:'2.18.0', d:'2026-07-12', c:['Nuevo botón <b>«🔗 Reconciliar pendientes (N)»</b> en «Documentos»: reconcilia tus PDFs sin indexar con la biblioteca <b>SIN gastar IA</b>. Para cada pendiente saca un identificador barato — el <b>NBK del nombre del fichero</b> (Bookshelf_NBKxxxx.pdf) y, si no, el <b>DOI/PMID de la 1ª página</b> del PDF (descarga la 1ª página, sin IA ni pisar la caché de texto) — y, si coincide con una de tus «Referencias sin PDF» (citas de protocolos), <b>enlaza el PDF a esa referencia</b> automáticamente (queda «✓ bibliografía»). Así resuelves los duplicados gratis y solo gastas IA («Indexar pendientes») en los realmente nuevos. No crea entradas para los que no casen.']},
   {v:'2.17.3', d:'2026-07-12', c:['Reconciliación automática al indexar: cuando indexas un PDF de Drive (individual o con «Indexar pendientes») cuyo <b>DOI/PMID/PMCID/NBK</b> ya está en tu biblioteca —por ejemplo una cita de un protocolo que aún no tenía fichero—, ahora <b>se FUSIONA con esa referencia</b> en vez de crear un duplicado: hereda lo curado (cita, enlace ReadCube, alias, id) y queda marcado «✓ bibliografía» solo. Antes se creaba una entrada aparte y luego se borraba la referencia (perdiendo lo curado). La fusión es segura: solo por identificador fuerte, nunca por título parecido.']},
   {v:'2.17.2', d:'2026-07-12', c:['Documentos, claridad: los PDFs aún sin indexar tienen ahora su propia pestaña <b>⏳ Sin indexar</b> (antes se contaban dentro de «Otros», que quedaba inflado). Y el botón «Reindexar todos» pasa a llamarse <b>«↻ Reindexar indexados (N)»</b> — así se entiende que actúa sobre los ya indexados, no sobre los 119; ya no confunde ver «Reindexar indexados (41)» junto a «Indexar pendientes (78)» (41 indexados + 78 pendientes = 119).']},
@@ -1576,10 +1577,10 @@ async function registrarDoc(doc){
   const i=idx.docs.findIndex(d=>(doc.url && normUrl(d.url)===normUrl(doc.url)) || d.id===doc.id);
   if(i>=0){ idx.docs[i]=Object.assign({}, idx.docs[i], doc); }   // mismo documento (re-index/edición) → sobrescribe
   else {
-    // ¿Es el MISMO documento que una referencia YA existente, por identificador fuerte (DOI/PMID/PMCID/NBK)?
-    // p. ej. una cita de protocolo sin fichero. → FUSIONA en vez de duplicar: hereda lo curado (cita/ReadCube/
-    // alias/id) y solo pisa con los valores NO vacíos del recién indexado. Así queda marcado «bibliografía» solo.
-    const j=idx.docs.findIndex(d=>docSharesId(d, doc));
+    // ¿Es el MISMO documento que una referencia YA existente SIN FICHERO (p. ej. una cita de protocolo), por
+    // identificador fuerte (DOI/PMID/PMCID/NBK)? → FUSIONA (hereda lo curado; queda «bibliografía»). OJO: solo con
+    // referencias sin fichero — si el que coincide es OTRO PDF, son dos ficheros de Drive (duplicado), NO se fusiona.
+    const j=idx.docs.findIndex(d=>!(d.driveId||d.enlace) && docSharesId(d, doc));
     if(j>=0){
       const prev=idx.docs[j], merged=Object.assign({}, prev);
       for(const k in doc){ const v=doc[k]; if(v!==''&&v!=null&&!(Array.isArray(v)&&!v.length)) merged[k]=v; }
@@ -1601,6 +1602,15 @@ function docSharesId(a, b){
   const ac=String(a.pmcid||'').toUpperCase().trim(), bc=String(b.pmcid||'').toUpperCase().trim(); if(ac&&bc&&ac===bc) return true;
   const an=String(a.nbk||(geneReviewsInfo(a)||{}).nbk||'').toUpperCase(), bn=String(b.nbk||(geneReviewsInfo(b)||{}).nbk||'').toUpperCase(); if(an&&bn&&an===bn) return true;
   return false;
+}
+/* Clave del IDENTIFICADOR FUERTE de un documento (para agrupar duplicados). '' si no tiene ninguno. */
+function docStrongId(d){
+  if(!d) return '';
+  const doi=normDoi(d.doi||doiFromUrl(d.url)); if(doi) return 'doi:'+doi;
+  const pmid=String(d.pmid||pmidFromUrl(d.url)||'').trim(); if(pmid) return 'pmid:'+pmid;
+  const pmcid=String(d.pmcid||'').toUpperCase().trim(); if(pmcid) return 'pmcid:'+pmcid;
+  const nbk=String(d.nbk||(geneReviewsInfo(d)||{}).nbk||'').toUpperCase(); if(nbk) return 'nbk:'+nbk;
+  return '';
 }
 /* ¿El documento del índice corresponde a esta referencia? (por doi/pmid/pmcid, url o título). */
 function docMatchesFuente(d, f){
@@ -3967,6 +3977,7 @@ const DOC_CATS=[
   {k:'libros',      label:'📚 Libros'},
   {k:'bases',       label:'🗄 Bases de datos'},
   {k:'otros',       label:'▫ Otros'},
+  {k:'duplicados',  label:'⚠ Duplicados'},
   {k:'sinindexar',  label:'⏳ Sin indexar'}
 ];
 /* Categoría de un documento a partir de su `tipo` (que asigna la IA al indexar) + heurísticas (NBK, boletín oficial,
@@ -3997,6 +4008,10 @@ async function renderDriveList(files){
   const docs=docsIdx.docs||[];
   const refset=await fichaRefSet();
   const regOf=(f)=> docs.find(d=>d.driveId===f.id) || matchDoc({url:f.webViewLink, titulo:f.name}, docs);
+  // DUPLICADOS: entradas CON fichero que comparten identificador fuerte (DOI/PMID/PMCID/NBK). ≥2 con la misma clave = duplicado.
+  const byStrong={}; docs.forEach(d=>{ if(!(d.driveId||d.enlace)) return; const k=docStrongId(d); if(k) (byStrong[k]=byStrong[k]||[]).push(d); });
+  const dupKeys=new Set(Object.keys(byStrong).filter(k=>byStrong[k].length>1));
+  const isDup=(reg)=>{ const k=reg&&docStrongId(reg); return !!k && dupKeys.has(k); };
   const flag=(on,label,title)=> `<span class="dx-meta hastip" style="color:${on?'var(--ok)':'var(--ink3)'}">${on?'✓':'–'} ${label}<span class="tooltip">${escHtml(title)}</span></span>`;
   const nIdx=files.filter(f=>!!regOf(f)).length;
   const pendCount=files.length-nIdx;   // PDFs de Drive aún sin indexar
@@ -4004,13 +4019,13 @@ async function renderDriveList(files){
   // Filtro por tipo (pestañas) + buscador de texto. Las pestañas se pintan en #docTypeFilter (persistente) con su conteo.
   const q=accLower((document.getElementById('docSearch')||{}).value||'');
   const counts={}; DOC_CATS.forEach(c=>counts[c.k]=0);
-  files.forEach(f=>{ counts.all++; const c=docCategoria(regOf(f)); if(counts[c]!==undefined) counts[c]++; });
+  files.forEach(f=>{ counts.all++; const reg=regOf(f); const c=docCategoria(reg); if(counts[c]!==undefined) counts[c]++; if(isDup(reg)) counts.duplicados++; });
   const fb=document.getElementById('docTypeFilter');
   if(fb){ if(_docCat!=='all' && !counts[_docCat]) _docCat='all';   // la categoría activa se quedó vacía → vuelve a Todo
     fb.innerHTML=DOC_CATS.filter(c=>c.k==='all'||counts[c.k]>0).map(c=>`<button class="btn${_docCat===c.k?' primary':''}" data-doccat="${c.k}" style="padding:3px 10px;font-size:12px">${c.label} <span class="dx-meta">(${counts[c.k]})</span></button>`).join('');
     fb.querySelectorAll('[data-doccat]').forEach(b=>b.addEventListener('click', ()=>{ _docCat=b.dataset.doccat; renderDriveList(files); }));
   }
-  const shown=files.filter(f=>(_docCat==='all'||docCategoria(regOf(f))===_docCat) && docMatchesSearch(f, regOf(f), q));
+  const shown=files.filter(f=>{ const reg=regOf(f); const catOk = _docCat==='duplicados' ? isDup(reg) : (_docCat==='all'||docCategoria(reg)===_docCat); return catOk && docMatchesSearch(f, reg, q); });
   const filtrando=(_docCat!=='all'||q);
   const head=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} PDF(s) · ${nIdx} indexado(s) (en el contexto de la IA)${filtrando?` · <b>mostrando ${shown.length}</b>`:''} · <span class="dx-meta">flag: unido a bibliografía = citado por un protocolo</span>${pendCount?` · <button class="btn" id="docReconcile" style="padding:2px 9px;font-size:11px" title="SIN IA: para cada PDF sin indexar saca el identificador del nombre o de la 1ª página y, si ya está en tus referencias/biblioteca, lo enlaza (queda «bibliografía»). Gratis; descarga la 1ª página de algunos.">🔗 Reconciliar pendientes (${pendCount})</button>`:''}${pendCount?` · <button class="btn" id="docIndexPend" style="padding:2px 9px;font-size:11px" title="Indexa con IA todos los PDFs de Drive que aún NO están indexados (analiza nombre/resumen + busca DOI/PMID). Puede tardar y consume IA.">✨ Indexar pendientes (${pendCount})</button>`:''}${nIdx?` · <button class="btn" id="docReindexTodos" style="padding:2px 9px;font-size:11px" title="Vuelve a leer y re-analizar TODOS los documentos ya indexados (actualiza cita/resumen/identificadores). Puede tardar bastante y consume IA.">↻ Reindexar indexados (${nIdx})</button>`:''}${reidxPend?` · <button class="btn" id="docReidxAll" style="padding:2px 9px;font-size:11px" title="Vuelve a leer el PDF ENTERO solo de los documentos indexados en una versión anterior (para completar los que quedaron recortados a las primeras páginas).">↻ Re-indexar incompletos (${reidxPend})</button>`:''}</div>`;
   // Cablea los botones de la cabecera (operan sobre TODOS los ficheros, no solo los filtrados). Se llama en ambas ramas.
@@ -4064,6 +4079,8 @@ async function renderDriveList(files){
     // Los identificadores (PMID/DOI/PMCID) y GeneReviews van arriba; el icono de Drive y el badge de Papers van JUNTOS abajo (Drive primero).
     const badges=reg ? (refIdChipsHtml(reg)+geneReviewsBadgeHtml(reg)) : '';
     const papersBadge = reg ? readcubeLibBadgeHtml(reg) : '';
+    const esDup=isDup(reg); const nDup=esDup?(byStrong[docStrongId(reg)]||[]).length:0;
+    const dupBadge = esDup ? `<span class="dx-meta hastip" style="color:#e0a53f;font-weight:600">⚠ duplicado<span class="tooltip">Hay ${nDup} documentos en Drive con el mismo identificador (${escHtml(docStrongId(reg).replace(':',' '))}). Son el MISMO documento — revisa cuál conservar y borra el/los sobrante(s) en tu Google Drive (Ariadna no borra de tu Drive). Metadatos unificados.</span></span>` : '';
     // Indicador de indexado COMPLETO: cuánto texto se extrajo. Avisa si está incompleto (versión antigua) o vacío (escaneado).
     let idxInfo='', needReidx=false;
     if(reg){
@@ -4077,7 +4094,7 @@ async function renderDriveList(files){
       <div class="nm">${escHtml(cita)}${descTip}</div>
       ${mostrarArchivo?`<div class="meta" title="Nombre del archivo en Google Drive">📄 ${escHtml(f.name)}</div>`:''}
       ${badges?`<div style="margin:2px 0 4px">${badges}</div>`:''}
-      <div class="meta">${(f.modifiedTime||'').slice(0,10)} · ${flag(enBib,'bibliografía','¿Citado por alguna referencia/protocolo?')}${idxInfo?' · '+idxInfo:''}</div>
+      <div class="meta">${(f.modifiedTime||'').slice(0,10)} · ${flag(enBib,'bibliografía','¿Citado por alguna referencia/protocolo?')}${dupBadge?' · '+dupBadge:''}${idxInfo?' · '+idxInfo:''}</div>
       <div class="acts">
         ${f.webViewLink?`<a class="drive-ico" href="${f.webViewLink}" target="_blank" rel="noopener" title="Abrir en Google Drive">${DRIVE_ICON}</a>`:''}${papersBadge}
         ${indexado ? `${needReidx?`<button class="btn" data-reindex="${i}" title="Vuelve a leer el PDF ENTERO y re-analizarlo (completa libros o documentos indexados en una versión anterior)">↻ Re-indexar</button>`:''}<button class="btn" data-editmeta="${i}" title="Editar el nombre y la descripción a mano, o regenerarlos con IA leyendo el PDF">✏ Editar</button><button class="btn ghost" data-unreg="${reg.id}" title="Quitar del índice (deja de estar indexado: la IA ya no lo tiene en cuenta ni se puede citar; el PDF NO se borra de tu Drive)">Quitar del índice</button>` : `<button class="btn primary" data-index="${i}" title="La IA lo analiza una vez y queda en el contexto para crear protocolos">✨ Indexar (IA)</button>`}
@@ -4281,6 +4298,13 @@ async function indexarDriveDoc(f, opts){
     doi, pmid, pmcid, nbk, gr_updated:String((j&&j.gr_updated)||'').trim(), gr_initial:String((j&&j.gr_initial)||'').trim(),
     textLen:(pdfText||'').length, pages:pTot||0, truncado:((pdfText||'').length>=5000000),   // indicador de indexado completo (cuánto texto se extrajo; truncado si topó el límite de 5M)
     url:f.webViewLink||('drive:'+f.id), enlace:f.webViewLink||('https://drive.google.com/file/d/'+f.id), driveId:f.id, mt:f.modifiedTime||'', iaAnalizado:!!j };
+  // DUPLICADO: si YA existe OTRO PDF (otro fichero de Drive) con el mismo identificador fuerte, hereda sus metadatos
+  // (cita/nombre/tipo/año/descripción) para que ambos muestren LO MISMO. No se fusionan (son dos ficheros distintos);
+  // la pestaña «⚠ Duplicados» y el badge los señalan para que borres el sobrante en tu Drive.
+  try{ const dup=((cachedDocs()||{}).docs||[]).find(d=>d.driveId && d.driveId!==f.id && docSharesId(d, doc));
+    if(dup){ doc.cita=dup.cita||doc.cita; doc.titulo=dup.cita||dup.titulo||doc.titulo; doc.nombreIA=dup.nombreIA||doc.nombreIA;
+      doc.descripcion=dup.descripcion||doc.descripcion; doc.tipo=dup.tipo||doc.tipo; doc.anio=dup.anio||doc.anio; }
+  }catch(e){}
   await registrarDoc(doc);
   return doc;
 }
