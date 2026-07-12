@@ -498,8 +498,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.15.0';
+const APP_VERSION='2.16.0';
 const CHANGELOG=[
+  {v:'2.16.0', d:'2026-07-12', c:['Jubilado el <b>RAG local</b>: la recuperación de tus documentos ahora es 100 % del <b>segundo cerebro</b> (Vector Store de OpenAI). Se ha retirado todo el código muerto de búsqueda local — BM25 (por palabras) y el índice semántico por embeddings int8 — junto con el selector «Fuente de documentos» de Ajustes (ya no hay elección: siempre segundo cerebro), el buscador local de la pestaña «Documentos» (para consultar usa el chat «💬 Consultar») y los botones «🧠 Indexar semántico». La autoría de protocolos y el seguimiento por gen tiran del Vector Store; el chat «Consultar» requiere ahora tener configurado el segundo cerebro (si no, te lo indica). Menos código, misma o mejor calidad de recuperación (búsqueda por significado de OpenAI). La indexación de PDFs (nombre/resumen/DOI/PMID) y la biblioteca siguen igual.']},
   {v:'2.15.0', d:'2026-07-11', c:['El chat «Consultar» ahora GUARDA tus conversaciones (para siempre, salvo que las borres): panel lateral a la izquierda con todas tus conversaciones, botón «＋ Nueva conversación» y la conversación activa ocupando la mayor parte de la pantalla, como un chatbot al uso. Cada conversación recibe un TÍTULO automático (por IA) tras la primera pregunta/respuesta, y puedes borrarlas una a una (✕). Se guardan en tu navegador (localStorage), no salen a ningún sitio.']},
   {v:'2.14.1', d:'2026-07-11', c:['Arreglo: «Editar con IA» del editor de protocolos daba «OpenAI 400 · Model incompatible request argument supplied: temperature». Causa: la tarea de autoría usaba por defecto un modelo *-search-preview de OpenAI y se le enviaba el parámetro «temperature», que ese modelo (y los nuevos gpt-5/o-series) rechazan. Ahora: en tareas sin búsqueda se usa el modelo base (no el *-search) y se omite «temperature» (con max_completion_tokens) en los modelos nuevos. Recordatorio: el JSON editado se aplica solo a la vista previa; para conservarlo pulsa «Guardar y commitear» al final del editor.']},
   {v:'2.14.0', d:'2026-07-11', c:['Chat «Consultar»: cada fuente citada trae ahora «🔍 ver el texto exacto en que se basa» — despliega el pasaje LITERAL recuperado del documento y su apartado, para localizar la afirmación manualmente.','Inventario del segundo cerebro: nuevo filtro «⚠ Duplicados» que detecta documentos repetidos (mismo DOI/PMID/ISBN/título) y los agrupa con enlace a Drive para que los revises y borres tú (Ariadna no borra de tu Drive).','El apartado de herencia/asesoramiento de los protocolos considera también la CNRHA / Ley 14/2006 (regulación estatal de reproducción asistida que rige lo que el SERGAS autoriza).','Contexto temporal: al responder o crear protocolos, si una guía/ley ha sido sustituida por otra más reciente, se prioriza la vigente y se avisa de lo derogado.','El pipeline identifica LEYES/normas (tipo «legislación») y guarda el enlace al boletín oficial (BOE/DOGA/EUR-Lex) sin inventarlo.']},
@@ -1221,7 +1222,7 @@ function resetPatient(){
 /* ---- Config en localStorage ---- */
 const CFG_KEY='fh_cfg';
 const CFG_DEFAULTS={ anthropicKey:'', openaiKey:'', preferProvider:'anthropic', models:{}, gh_owner:'', gh_repo:'', gh_branch:'main', gh_pat:'',
-  driveClientId:'672017094614-goqdjb7159poff6jieh7rgjtop06askb.apps.googleusercontent.com', driveFolder:'', driveSubfolders:false, secondBrainStore:'', secondBrainRepo:'', chatMode:'openai-fast', authoringSource:'sb' };
+  driveClientId:'672017094614-goqdjb7159poff6jieh7rgjtop06askb.apps.googleusercontent.com', driveFolder:'', driveSubfolders:false, secondBrainStore:'', secondBrainRepo:'', chatMode:'openai-fast' };
 /* Modelo del chat «Consultar»: 4 modos curados que ELIGEN SOLOS el mejor modelo disponible (de los descubiertos
    en tu cuenta; si no, un default estable). 'oa'=OpenAI, 'cl'=Claude; '-fast'=rápido/barato, '-deep'=concienzudo. */
 const CHAT_MODEL_PREFS={ 'oa-fast':['gpt-5-mini','gpt-4.1-mini','gpt-4o-mini'], 'oa-deep':['gpt-5','gpt-4.1','gpt-4o'], 'cl-fast':['claude-haiku-4-5'], 'cl-deep':['claude-opus-4-8'] };
@@ -1296,8 +1297,7 @@ function modelRouting(){
   return {
     mode: c.preferProvider || 'anthropic',
     provider: avail[0]||null, fallback: avail[1]||null,
-    ops: ops.map(o=>{ const p=pickModel(o.task); return {label:o.label, model:p?prettyModel(p.provider, p.model):'—', provider:p?p.provider:null}; }),
-    embeddings: c.openaiKey ? 'OpenAI text-embedding-3-small' : null
+    ops: ops.map(o=>{ const p=pickModel(o.task); return {label:o.label, model:p?prettyModel(p.provider, p.model):'—', provider:p?p.provider:null}; })
   };
 }
 /* Descubrimiento de modelos disponibles (para el selector auto-actualizable) */
@@ -2153,7 +2153,7 @@ function renderStatus(){
   const ghOk = ghConfigured();
   const services=[
     {k:'Claude (Anthropic)', on:!!c.anthropicKey, txt:c.anthropicKey?'configurado':'sin clave'},
-    {k:'OpenAI', on:!!c.openaiKey, txt:c.openaiKey?'configurado (embeddings/RAG)':'sin clave'},
+    {k:'OpenAI', on:!!c.openaiKey, txt:c.openaiKey?'configurado (chat/segundo cerebro)':'sin clave'},
     {k:'babelon (HPO español)', on:babelonReady, txt:babelonReady?'cargado':'cargando…'},
     {k:'GitHub', on:ghOk, txt:ghOk?'conectado':'sin configurar'},
   ];
@@ -2179,7 +2179,7 @@ function renderStatus(){
         return `<div style="border-top:1px solid var(--line);margin-top:8px;padding-top:8px"><div style="font-size:12px;margin-bottom:4px">🔀 Modelo por operación <span class="dx-meta">· modo: ${escHtml(modeLbl)}</span></div>`
         +(rt.provider
           ? rt.ops.map(o=>`<div style="font-size:11.5px;display:flex;justify-content:space-between;gap:10px;padding:2px 0"><span>${escHtml(o.label)}</span><span class="dx-meta" style="text-align:right">${escHtml(o.model)}</span></div>`).join('')
-            +`<div style="font-size:11.5px;display:flex;justify-content:space-between;gap:10px;padding:2px 0"><span>Embeddings (RAG semántico)</span><span class="dx-meta" style="text-align:right">${rt.embeddings?escHtml(rt.embeddings):'— (requiere OpenAI)'}</span></div>`
+            +`<div style="font-size:11.5px;display:flex;justify-content:space-between;gap:10px;padding:2px 0"><span>Chat «Consultar» / documentos de protocolos</span><span class="dx-meta" style="text-align:right">Segundo cerebro (Vector Store OpenAI)</span></div>`
             +(rt.fallback?`<div class="dx-meta" style="margin-top:3px">Si falla ${rt.provider==='anthropic'?'Claude':'OpenAI'}, reintenta con ${rt.fallback==='anthropic'?'Claude':'OpenAI'} automáticamente.</div>`:'<div class="dx-meta" style="margin-top:3px">Añade la otra clave para tener respaldo automático.</div>')
           : `<div class="dx-meta">Sin proveedor de IA configurado.</div>`)
         +`</div>`; })()
@@ -2318,7 +2318,7 @@ function openSettings(){
         <button data-pref="openai" class="${c.preferProvider==='openai'?'on':''}">OpenAI primero</button>
         <button data-pref="auto" class="${c.preferProvider==='auto'?'on':''}">Automático</button>
       </div>
-      <div class="dx-meta" style="margin-top:5px;font-size:11px;line-height:1.5"><b>Automático</b>: la autoría de protocolos y las búsquedas/verificaciones las hace <b>Claude</b> (calidad clínica); la lectura/identificación de documentos, el modelo más barato de <b>OpenAI</b> (gpt-4o-mini). Los embeddings del RAG semántico son siempre OpenAI. En los tres modos, si un proveedor falla se reintenta con el otro (failover). Puedes auditar el enrutado en «Estado → 🔀 Modelo por operación».</div>
+      <div class="dx-meta" style="margin-top:5px;font-size:11px;line-height:1.5"><b>Automático</b>: la autoría de protocolos y las búsquedas/verificaciones las hace <b>Claude</b> (calidad clínica); la lectura/identificación de documentos, el modelo más barato de <b>OpenAI</b> (gpt-4o-mini). La búsqueda en tu segundo cerebro (Vector Store) la hace OpenAI. En los tres modos, si un proveedor falla se reintenta con el otro (failover). Puedes auditar el enrutado en «Estado → 🔀 Modelo por operación».</div>
     </div>
     <details style="margin-top:6px">
       <summary style="cursor:pointer; font-size:12px; color:var(--ink2)">Modelos por tarea (avanzado) — auto-actualizable</summary>
@@ -2342,12 +2342,8 @@ function openSettings(){
         ${chatModeOptionsHtml(c.chatMode||'openai-fast')}
       </select>
       <div class="dx-meta" style="margin-top:5px;font-size:11px;line-height:1.5"><b>OpenAI</b>: busca y redacta OpenAI. <b>Híbrido</b>: OpenAI busca en tu Vector Store y <b>Claude redacta</b> la respuesta clínica (necesita clave de Claude). <b>rápido</b> = barato/ágil; <b>concienzudo</b> = más calidad y coste.</div></div>
-    <div class="field"><label>Fuente de documentos al CREAR protocolos</label>
-      <div class="seg" id="cfgAuthSrc">
-        <button type="button" data-src="sb" class="${(c.authoringSource||'sb')==='sb'?'on':''}">🧠 Segundo cerebro</button>
-        <button type="button" data-src="rag" class="${c.authoringSource==='rag'?'on':''}">📇 RAG propio (local)</button>
-      </div>
-      <div class="dx-meta" style="margin-top:5px;font-size:11px;line-height:1.5">Al crear/actualizar un protocolo, de dónde saca tus documentos: <b>Segundo cerebro</b> (Vector Store — OpenAI busca los pasajes) o el <b>RAG local</b> (BM25/embeddings del navegador). En ambos casos la web la busca y el protocolo lo redacta <b>Opus</b>. (Provisional; el RAG local se retirará.)</div></div>
+    <div class="field"><label>Documentos al CREAR protocolos</label>
+      <div class="dx-meta" style="margin-top:2px;font-size:11px;line-height:1.5">Al crear/actualizar un protocolo, tus documentos + GeneReviews salen del <b>segundo cerebro</b> (Vector Store — OpenAI busca los pasajes por significado). La web la busca y el protocolo lo redacta <b>Opus</b>.</div></div>
     <div class="field"><label>Inventario del segundo cerebro <span class="dx-meta">(lo que hay indexado, según sources.json)</span></label>
       <button class="btn" id="cfgSbInvRefresh">↻ Cargar / refrescar inventario</button>
       <span class="dx-meta" id="cfgSbInvStats" style="margin-left:8px"></span>
@@ -2429,9 +2425,6 @@ function openSettings(){
       ov.querySelectorAll('#prefSeg button').forEach(x=>x.classList.toggle('on', x.dataset.pref===pref));
     });
   });
-  let authSrc = c.authoringSource||'sb';   // fuente de documentos al crear protocolos
-  ov.querySelectorAll('#cfgAuthSrc button').forEach(b=>b.addEventListener('click', ()=>{ authSrc=b.dataset.src; ov.querySelectorAll('#cfgAuthSrc button').forEach(x=>x.classList.toggle('on', x.dataset.src===authSrc)); }));
-
   // Biblioteca ReadCube: estado actual + importar (pegar o archivo) + vaciar
   (function(){
     const state=ov.querySelector('#rcLibState'), out=ov.querySelector('#cfgRcOut');
@@ -2535,7 +2528,6 @@ function openSettings(){
       secondBrainRepo: (ov.querySelector('#cfgSbRepo')?ov.querySelector('#cfgSbRepo').value.trim():(prev.secondBrainRepo||'')),
       chatMode: (ov.querySelector('#cfgChatMode')?ov.querySelector('#cfgChatMode').value.trim():(prev.chatMode||'openai-fast')),
       preferProvider: pref,
-      authoringSource: authSrc,
       models,
       gh_owner: ov.querySelector('#cfgOwner').value.trim(),
       gh_repo: ov.querySelector('#cfgRepo').value.trim(),
@@ -3456,8 +3448,6 @@ let _driveTokenClient=null;
 let _onDriveToken=null;
 let _driveFilesCache=(()=>{ try{ return JSON.parse(localStorage.getItem('fh_drive_files'))||[]; }catch(e){ return []; } })();
 function saveDriveFiles(files){ _driveFilesCache=files||[]; try{ localStorage.setItem('fh_drive_files', JSON.stringify(_driveFilesCache)); }catch(e){} }
-let ragDocs=(()=>{ try{ return JSON.parse(localStorage.getItem('fh_rag'))||{}; }catch(e){ return {}; } })();  // fileId -> {name, mt}
-function saveRag(){ try{ localStorage.setItem('fh_rag', JSON.stringify(ragDocs)); }catch(e){} }
 function driveClientId(){ return loadCfg().driveClientId || ''; }
 /* Crea (una vez) el token client. El callback ejecuta lo que haya en _onDriveToken. */
 function ensureDriveTokenClient(){
@@ -3508,158 +3498,14 @@ async function driveDownloadText(fileId, mt, opts){
   try{ localStorage.setItem(key, JSON.stringify({mt, text})); }catch(e){}   // si no cabe en localStorage, se sirve desde GitHub (docs/text)
   return text;
 }
-/* Texto de los documentos marcados para RAG (usa caché; no requiere reconexión si ya indexado). */
-/* ---------- RAG VECTORIAL (embeddings + recuperación por similitud) ----------
-   Embeddings vía OpenAI (text-embedding-3-small). Si no hay clave OpenAI, se cae al modo "stuffing". */
-const EMBED_MODEL='text-embedding-3-small';
-function chunkText(text, size, overlap, max){ size=size||1100; overlap=overlap||150; max=max||60; const t=(text||'').replace(/\s+/g,' ').trim(); const out=[];
-  for(let i=0;i<t.length && out.length<max;i+=(size-overlap)){ out.push(t.slice(i,i+size)); } return out; }
-function cosine(a,b){ let d=0,na=0,nb=0; for(let i=0;i<a.length;i++){ d+=a[i]*b[i]; na+=a[i]*a[i]; nb+=b[i]*b[i]; } return d/((Math.sqrt(na)*Math.sqrt(nb))||1); }
-const EMB_DIMS=512, EMB_CHUNK=2000, EMB_OVERLAP=200, EMB_MAXCHUNKS=4000, EMB_BATCH=64;
-async function embedTexts(texts, dims){
-  const c=loadCfg(); if(!c.openaiKey) return null;   // Anthropic no ofrece API de embeddings; se requiere OpenAI
-  const body={model:EMBED_MODEL, input:texts}; if(dims) body.dimensions=dims;
-  const r=await fetch('https://api.openai.com/v1/embeddings',{ method:'POST', headers:{Authorization:'Bearer '+c.openaiKey,'Content-Type':'application/json'}, body:JSON.stringify(body) });
-  if(!r.ok) throw new Error('embeddings '+r.status+' '+await r.text());
-  const d=await r.json(); return (d.data||[]).map(x=>x.embedding);
-}
-function cosineSafe(a,b){ const n=Math.min(a.length,b.length); let d=0,na=0,nb=0; for(let i=0;i<n;i++){ d+=a[i]*b[i]; na+=a[i]*a[i]; nb+=b[i]*b[i]; } return d/((Math.sqrt(na)*Math.sqrt(nb))||1); }
-// Cuantización a int8 (escala por-vector = máx |v|). El coseno es invariante a esa escala → no hace falta guardarla. ~1 byte/dim.
-function packInt8Vec(v){ let m=0; for(let i=0;i<v.length;i++){ const a=Math.abs(v[i]); if(a>m) m=a; } m=m||1;
-  const b=new Int8Array(v.length); for(let i=0;i<v.length;i++){ b[i]=Math.max(-127,Math.min(127,Math.round(v[i]/m*127))); }
-  const u=new Uint8Array(b.buffer); let s=''; for(let i=0;i<u.length;i++) s+=String.fromCharCode(u[i]); return btoa(s); }
-function unpackInt8Vec(b64){ const s=atob(b64); const u=new Uint8Array(s.length); for(let i=0;i<s.length;i++) u[i]=s.charCodeAt(i); return new Int8Array(u.buffer); }
-/* Construye el ÍNDICE SEMÁNTICO (embeddings) de un documento, por LOTES, y lo guarda una vez en tu GitHub privado
-   (docs/emb/{id}.json, vectores int8 compactos). Se reutiliza siempre; onProgress(hechos,total) para el avance. */
-async function buildDocEmbeddings(id, name, mt, onProgress){
-  if(!loadCfg().openaiKey) throw new Error('Necesitas una clave de OpenAI en ⚙ Ajustes para el índice semántico (embeddings).');
-  let text=null; try{ text=await driveDownloadText(id, mt); }catch(e){}
-  if(!text) throw new Error('No hay texto que indexar (conecta Drive y re-indexa el documento primero).');
-  const chunks=chunkText(text, EMB_CHUNK, EMB_OVERLAP, EMB_MAXCHUNKS);
-  const out=[];
-  for(let i=0;i<chunks.length;i+=EMB_BATCH){ const batch=chunks.slice(i,i+EMB_BATCH);
-    const vecs=await embedTexts(batch, EMB_DIMS); if(!vecs||!vecs.length) throw new Error('La API de embeddings no devolvió datos.');
-    batch.forEach((t,j)=>{ if(vecs[j]) out.push({t, q:packInt8Vec(vecs[j])}); });
-    if(onProgress){ try{ onProgress(Math.min(i+EMB_BATCH,chunks.length), chunks.length); }catch(_){ } }
-  }
-  const rec={v:1, model:EMBED_MODEL, dims:EMB_DIMS, mt:mt||'', n:out.length, chunks:out};
-  try{ localStorage.setItem('fh_emb_'+id, JSON.stringify(rec)); }catch(e){}
-  if(ghConfigured()){ let sha=null; try{ const ci=await ghGetFile('docs/emb/'+id+'.json'); sha=ci.sha; }catch(e){} await ghPutFile('docs/emb/'+id+'.json', rec, 'rag: índice semántico '+(name||id), sha); }
-  _embMemCache.delete(id+':'+(mt||''));
-  return rec;
-}
-const _embMemCache=new Map();
-/* Carga el índice semántico de un documento (localStorage o GitHub), decodifica los vectores una vez y lo cachea. */
-async function getDocEmb(id, mt){
-  const key=id+':'+(mt||'');
-  if(_embMemCache.has(key)) return _embMemCache.get(key);
-  let rec=null; try{ rec=JSON.parse(localStorage.getItem('fh_emb_'+id)); }catch(e){}
-  if((!rec || rec.mt!==mt || !rec.chunks) && ghConfigured()){ try{ const r=await ghGetFile('docs/emb/'+id+'.json'); if(r.json && r.json.chunks){ rec=r.json; try{ localStorage.setItem('fh_emb_'+id, JSON.stringify(rec)); }catch(e){} } }catch(e){} }
-  if(!rec || !rec.chunks || rec.mt!==mt){ _embMemCache.set(key, null); return null; }   // sin índice o desfasado (el PDF cambió)
-  rec._vecs=rec.chunks.map(c=>unpackInt8Vec(c.q));
-  _embMemCache.set(key, rec);
-  return rec;
-}
-/* Corpus RAG = TODOS los documentos indexados del repositorio (docs/index.json con driveId).
-   Ya no hay flag «RAG»: indexar un documento lo incorpora automáticamente al contexto. Incluye por
-   compatibilidad los que estuvieran marcados a mano en el esquema antiguo (ragDocs). */
-async function ragDocList(){
-  const out=[]; const seen=new Set();
-  try{ const docs=(await getDocsIndex()).docs||[];
-    docs.forEach(d=>{ if(d.driveId && !seen.has(d.driveId)){ seen.add(d.driveId); out.push({id:d.driveId, name:d.titulo||d.nombre||d.driveId, mt:d.mt||''}); } });
-  }catch(e){}
-  Object.keys(ragDocs||{}).forEach(id=>{ if(!seen.has(id)){ seen.add(id); out.push({id, name:(ragDocs[id]&&ragDocs[id].name)||id, mt:(ragDocs[id]&&ragDocs[id].mt)||''}); } });
-  return out;
-}
-/* Recuperación SEMÁNTICA (por significado): compara el embedding de la consulta con los vectores del índice semántico.
-   Devuelve null si no hay clave OpenAI o ningún documento tiene índice semántico construido. */
-async function semRetrieve(query, k){
-  if(!loadCfg().openaiKey) return null;
-  const list=await ragDocList(); if(!list.length) return null;
-  const recs=[];
-  for(const {id,name,mt} of list){ const rec=await getDocEmb(id, mt); if(rec&&rec._vecs&&rec._vecs.length) recs.push({name, rec}); }
-  if(!recs.length) return null;
-  let qv=null; try{ qv=(await embedTexts([query], EMB_DIMS))?.[0]; }catch(e){ return null; }
-  if(!qv) return null;
-  const scored=[];
-  recs.forEach(({name,rec})=>rec.chunks.forEach((ch,idx)=>scored.push({doc:name, t:ch.t, s:cosineSafe(qv, rec._vecs[idx])})));
-  scored.sort((a,b)=>b.s-a.s);
-  return scored.slice(0, k||6);
-}
-/* Fusiona listas de fragmentos (semántica + léxica BM25) por rango recíproco, sin duplicados. */
-function mergeRag(lists, k){
-  const map=new Map();
-  (lists||[]).forEach(arr=>{ (arr||[]).forEach((h,i)=>{ const key=(h.doc||'')+'|'+String(h.t||'').slice(0,80); const prev=map.get(key)||{h, score:0}; prev.score+=1/(i+1); map.set(key, prev); }); });
-  return [...map.values()].sort((a,b)=>b.score-a.score).slice(0, k||8).map(x=>x.h);
-}
-async function buscarDocsRAG(query){
-  const out=document.getElementById('docSearchOut'); if(!out) return;
-  query=(query||'').trim(); if(!query){ out.innerHTML=''; return; }
-  const list=await ragDocList(); const nDocs=list.length;
-  if(!nDocs){ out.innerHTML='<div class="study-flag">⚠ No tienes documentos indexados todavía. Ve a «Documentos», conéctate a Drive e <b>indexa</b> tus PDF: quedan incorporados automáticamente.</div>'; return; }
-  out.innerHTML='<div class="loading">Buscando en tus documentos…</div>';
-  // Búsqueda HÍBRIDA: por palabras (BM25, siempre) + por significado (semántica, si hay índice semántico).
-  let res; try{ res=await ragRetrieveLocal(query, 8); }
-  catch(e){ out.innerHTML='<div class="err">Error: '+escHtml(e.message)+'</div>'; return; }
-  const {hits:lex, sinTexto}=res;
-  let sem=null; try{ sem=await semRetrieve(query, 8); }catch(e){}
-  // ¿se esperaba semántica (hay clave OpenAI y algún documento con índice) pero no respondió? → avisar (las embeddings solo las hace OpenAI, no hay respaldo).
-  const anyEmb=((cachedDocs()||{}).docs||[]).some(d=>d.embN && d.embMt===d.mt);
-  const semFailed = !!loadCfg().openaiKey && anyEmb && !sem;
-  const keyOf=h=>(h.doc||'')+'|'+String(h.t||'').slice(0,80);
-  const semKeys=new Set((sem||[]).map(keyOf)), lexKeys=new Set((lex||[]).map(keyOf));
-  const hits=mergeRag([sem, lex], 8);
-  hits.forEach(h=>{ const k=keyOf(h); h._src = (semKeys.has(k)&&lexKeys.has(k))?'palabras + significado':(semKeys.has(k)?'significado':'palabras'); });
-  if(!hits.length){
-    if(sinTexto.length===nDocs){ out.innerHTML='<div class="study-flag">No pude leer el texto de tus documentos. Pulsa <b>Conectar</b> en «Documentos» (el acceso a Drive caduca a la hora) y vuelve a buscar — necesito extraer el texto del PDF una vez.</div>'; return; }
-    out.innerHTML='<div class="empty">Sin coincidencias para «'+escHtml(query)+'».'+(sinTexto.length?(' ('+sinTexto.length+' doc sin texto: conecta Drive)'):'')+'</div>'; return;
-  }
-  const modo = sem ? 'híbrida (palabras + significado)' : (semFailed ? 'por palabras · <span style="color:var(--danger)">⚠ el buscador semántico (OpenAI) no respondió — sin respaldo posible</span>' : 'por palabras (BM25)');
-  out.innerHTML='<div class="cart-group-title">Fragmentos más relevantes <span class="dx-meta">· búsqueda '+modo+' · (en '+(nDocs-sinTexto.length)+'/'+nDocs+' documento(s)'+(sinTexto.length?' · '+sinTexto.length+' sin texto':'')+')</span></div>'
-    + hits.map(h=>`<div class="study" style="margin:6px 0"><div class="dx-meta"><b>${escHtml(h.doc||'doc')}</b>${h._src?' · <span style="color:#9b8cff">'+escHtml(h._src)+'</span>':''}</div><div style="font-size:12.5px;line-height:1.5">${escHtml(h.t.slice(0,420))}…</div></div>`).join('');
-}
-/* ---- RAG LOCAL (BM25, sin API externa: funciona solo con Claude) ----
-   Trocea el texto de cada documento marcado RAG y rankea por relevancia léxica. */
-function ragTokens(s){ return accLower(s||'').replace(/[^a-z0-9ñ ]/g,' ').split(/\s+/).filter(t=>t.length>=3 && !NL_STOP.has(t)); }
-/* Guarda/recupera el TEXTO extraído del PDF en GitHub (docs/text/{id}.json) → indexado UNA vez, permanente y entre dispositivos. */
+/* NOTA: el RAG local (BM25 + embeddings int8 «índice semántico») se RETIRÓ. La recuperación documental para la
+   IA la hace ahora el SEGUNDO CEREBRO (Vector Store de OpenAI, file_search) — ver sbRetrieveContext más abajo.
+   Se conserva ghSaveDocText: el texto del PDF se sigue extrayendo/guardando una vez al indexar (lo usa la
+   identificación de DOI/PMID del documento). */
+/* Guarda el TEXTO extraído del PDF en GitHub (docs/text/{id}.json) → indexado UNA vez, permanente y entre dispositivos. */
 async function ghSaveDocText(id, text){
   if(!ghConfigured() || !text) return;
   try{ let sha=null; try{ const ci=await ghGetFile('docs/text/'+id+'.json'); sha=ci.sha; }catch(e){} await ghPutFile('docs/text/'+id+'.json', {text}, 'rag: texto '+id, sha); }catch(e){}
-}
-async function docChunkTexts(id, mt){
-  let text=null;
-  try{ const c=JSON.parse(localStorage.getItem('fh_doctext_'+id)); if(c&&c.text) text=c.text; }catch(e){}
-  if(!text && ghConfigured()){ try{ const r=await ghGetFile('docs/text/'+id+'.json'); if(r.json&&r.json.text){ text=r.json.text; try{ localStorage.setItem('fh_doctext_'+id, JSON.stringify({mt, text})); }catch(e){} } }catch(e){} }
-  if(!text){ try{ text=await driveDownloadText(id, mt); }catch(e){} if(text) ghSaveDocText(id, text); }   // primera vez: extrae de Drive y lo guarda
-  if(!text) return null;
-  return chunkText(text, 1100, 150, 6000);   // BM25 sobre el documento ENTERO (libros grandes incluidos), no solo las primeras páginas
-}
-/* Caché de tokenización por sesión: trocear+tokenizar un documento es lo caro; se hace UNA vez por (id,mt)
-   y se reutiliza en cada búsqueda. Se limpia al re-indexar (indexarDriveDoc). Límite blando de 40 documentos. */
-const _ragTokCache=new Map();
-async function docChunkTok(id, mt){
-  const key=id+':'+(mt||'');
-  if(_ragTokCache.has(key)) return _ragTokCache.get(key);
-  const chs=await docChunkTexts(id, mt); if(!chs||!chs.length) return null;
-  const rec=chs.map(t=>{ const toks=ragTokens(t); const tf={}; toks.forEach(w=>tf[w]=(tf[w]||0)+1); return {t, tf, len:toks.length, set:Object.keys(tf)}; });
-  if(_ragTokCache.size>40){ const first=_ragTokCache.keys().next().value; _ragTokCache.delete(first); }
-  _ragTokCache.set(key, rec);
-  return rec;
-}
-async function ragRetrieveLocal(query, k){
-  const list=await ragDocList(); if(!list.length) return {hits:[], sinTexto:[]};
-  const all=[]; const sinTexto=[];
-  for(const {id,name,mt} of list){ const rec=await docChunkTok(id, mt); if(!rec){ sinTexto.push(name); continue; }
-    rec.forEach(c=>all.push({doc:name, t:c.t, tf:c.tf, len:c.len, set:c.set})); }   // tf/len/set ya calculados (caché)
-  if(!all.length) return {hits:[], sinTexto};
-  const N=all.length, df={}; all.forEach(c=>{ c.set.forEach(w=>df[w]=(df[w]||0)+1); });
-  const qset=[...new Set(ragTokens(query))]; const k1=1.5, b=0.75;
-  const avgdl=all.reduce((a,c)=>a+c.len,0)/(N||1) || 1;
-  all.forEach(c=>{ let s=0;
-    qset.forEach(w=>{ const f=c.tf[w]; if(!f) return; const idf=Math.log(1+(N-(df[w]||0)+0.5)/((df[w]||0)+0.5)); s+=idf*(f*(k1+1))/(f+k1*(1-b+b*c.len/avgdl)); });
-    c.s=s; });
-  const hits=all.filter(c=>c.s>0).sort((a,b)=>b.s-a.s).slice(0, k||6);
-  return {hits, sinTexto};
 }
 /* Recupera pasajes relevantes del SEGUNDO CEREBRO (Vector Store OpenAI, file_search) para inyectarlos en la
    autoría de protocolos. La búsqueda la hace OpenAI; la redacción del protocolo la hace Opus (task:'author'). */
@@ -3680,27 +3526,14 @@ async function sbRetrieveContext(query){
     const ctx=parts.join('\n\n'); return ctx.length>14000?ctx.slice(0,14000):ctx;
   }catch(e){ return ''; }
 }
-async function ragContext(maxDocs, query){
-  // Fuente de documentos para la IA: SEGUNDO CEREBRO (Vector Store) por defecto, o RAG local (selector en Ajustes).
-  if(query && loadCfg().authoringSource!=='rag'){ const sb=await sbRetrieveContext(query); if(sb) return sb; }
-  const list=await ragDocList(); if(!list.length) return '';
-  // Recuperación HÍBRIDA: BM25 (por palabras, siempre) + semántica (por significado, si hay índice semántico).
-  if(query){ try{
-    const {hits:lex}=await ragRetrieveLocal(query, 8);
-    let sem=null; try{ sem=await semRetrieve(query, 8); }catch(e){}
-    const merged=mergeRag([sem, lex], 8);
-    if(merged.length) return merged.map(h=>'\n--- '+(h.doc||'doc')+' ---\n'+h.t).join('\n');
-  }catch(e){} }
-  // Respaldo: "stuffing" (primeros caracteres de cada documento).
-  let out=''; let n=0;
-  for(const {id,name,mt} of list){ if(n>=(maxDocs||4)) break; try{ const t=await driveDownloadText(id, mt); if(t){ out += '\n--- '+(name||id)+' ---\n'+t.slice(0,7000); n++; } }catch(e){} }
-  return out;
-}
+/* Contexto documental para la IA al crear/actualizar protocolos = SEGUNDO CEREBRO (Vector Store).
+   El RAG local se retiró: si no hay Vector Store/clave OpenAI configurados, no hay contexto documental
+   (la IA se apoya solo en la búsqueda web + su conocimiento, como antes de tener repositorio). */
+async function ragContext(maxDocs, query){ return query ? (await sbRetrieveContext(query)) : ''; }
 
 /* ===========================================================================
-   Consultar — chatbot que responde SOLO con la documentación indexada (RAG estricto)
+   Consultar — chatbot que responde SOLO con el SEGUNDO CEREBRO (Vector Store), grounding estricto
    =========================================================================== */
-const CHAT_SYSTEM='Eres un asistente documental para un genetista clínico. Respondes ÚNICA y EXCLUSIVAMENTE con la información contenida en los EXTRACTOS de la propia documentación del clínico que se te proporcionan. REGLAS ESTRICTAS: (1) NO uses conocimiento externo, general ni previo; solo los extractos. (2) Si la respuesta NO está en los extractos, dilo con claridad: «No encuentro esa información en tu documentación» y, si procede, sugiere qué tipo de documento podría faltar; NO la completes con lo que "sabrías". (3) CITA de qué documento sale cada afirmación, por su título o número de extracto. (4) Si distintos documentos discrepan, indícalo. (5) Responde en español, con precisión clínica y de forma concreta. Es un apoyo documental; no sustituye el juicio clínico.';
 /* Conversaciones del chat: se guardan en localStorage (para siempre, salvo que se borren). _chatMsgs apunta a
    los mensajes de la conversación ACTIVA (misma referencia que su .msgs). */
 let _convos=null, _activeId=null, _chatMsgs=[];
@@ -3718,11 +3551,6 @@ async function maybeTitleConvo(){ const c=activeConvo(); if(c.title) return;
   try{ const t=await callLLM({system:'Devuelve SOLO un título muy corto (3-6 palabras, español, sin comillas ni punto final) que resuma el tema de esta consulta clínica.', user:'Pregunta: '+q+'\nRespuesta: '+a.slice(0,400), task:'assign', maxTokens:24});
     c.title=String(t||'').replace(/["'.]/g,'').trim().slice(0,60); persistConvos(); try{ renderConvoList(); }catch(e){}
   }catch(e){}
-}
-async function retrieveRepo(query, k){
-  let lex=[]; try{ const r=await ragRetrieveLocal(query, k||10); lex=r.hits||[]; }catch(e){}
-  let sem=null; try{ sem=await semRetrieve(query, k||10); }catch(e){}
-  return mergeRag([sem, lex], k||12);
 }
 /* Segundo cerebro: id(s) del/los Vector Store(s) de OpenAI configurados. Si hay → el chat pregunta ahí. */
 function secondBrainStores(){ return String(loadCfg().secondBrainStore||'').split(/[\s,]+/).filter(Boolean); }
@@ -3938,17 +3766,12 @@ async function askRepo(q){
       const {text, sources, passages}=await askRepoStore(input, ids);
       pend.pending=false; pend.text=text||'No encuentro esa información en tu documentación.'; pend.sources=sources; pend.passages=passages||[]; renderChatMsgs(); maybeTitleConvo(); return;
     }
-    // Respaldo (sin store): buscador LOCAL (BM25 + semántico) sobre lo indexado en Ariadna.
-    const retrievalQuery = prevUser ? (prevUser.text+' \n '+q) : q;   // combina la pregunta anterior + la actual → recupera bien los seguimientos
-    const hits=await retrieveRepo(retrievalQuery, 12);
-    if(!hits.length){ pend.pending=false; pend.text='No encuentro nada en tu documentación indexada. Ve a «Documentos», conéctate a Drive e indexa tus PDF (y, si quieres búsqueda por significado, construye el índice semántico).'; renderChatMsgs(); return; }
-    const ctx=hits.map((h,i)=>'['+(i+1)+'] '+(h.doc||'documento')+':\n'+String(h.t||'').slice(0,1500)).join('\n\n');
-    const hist=_chatMsgs.filter(m=>!m.pending && m.text).slice(-7,-1).map(m=>(m.role==='user'?'Usuario: ':'Asistente: ')+m.text).join('\n');
-    const user=(hist?('Conversación previa (contexto):\n'+hist+'\n\n'):'')+'EXTRACTOS DE TU DOCUMENTACIÓN (ÚNICA fuente permitida):\n'+ctx+'\n\nPREGUNTA: '+q;
-    const resp=await callLLM({system:CHAT_SYSTEM, user, webSearch:false, maxTokens:1200, task:'chat'});
-    pend.pending=false; pend.text=(resp||'').trim()||'(sin respuesta)';
-    pend.sources=[...new Set(hits.map(h=>h.doc).filter(Boolean))];
-    renderChatMsgs(); maybeTitleConvo();
+    // Sin Vector Store no hay a qué consultar: el RAG local se retiró. Guía al usuario a configurarlo.
+    pend.pending=false;
+    pend.text = loadCfg().openaiKey
+      ? 'Aún no has configurado tu **segundo cerebro**. Ve a ⚙ Ajustes → 🧠 Segundo cerebro y pega el ID del Vector Store de OpenAI para poder consultar tu documentación.'
+      : 'Para consultar tu documentación necesitas tu **segundo cerebro**: una clave de OpenAI y el ID del Vector Store en ⚙ Ajustes → 🧠 Segundo cerebro.';
+    renderChatMsgs();
   }catch(e){ pend.pending=false; pend.text='Error al consultar: '+e.message; renderChatMsgs(); }
 }
 function chatSourceHtml(name){
@@ -4070,12 +3893,7 @@ function renderDocumentos(){
       <button class="btn primary" id="docConnect">Conectar</button>
       ${driveTokenValid()?`<button class="btn ghost" id="docSbToken" title="Copia una línea con tu token de Drive para el script de descarga del «segundo cerebro» (secondbrain/download-drive.mjs). El token caduca en ~1h.">⬇ Token 2º cerebro</button>`:''}
     </div>
-    <div class="sec-note">Al <b>indexar</b> un documento, la IA lo analiza (nombre + resumen) y queda incorporado automáticamente: la IA lo tendrá en cuenta al crear protocolos (RAG) y podrás citarlo. Ya no hay que marcar nada. <b>unido a bibliografía</b> = citado por algún protocolo.</div>
-    <div style="display:flex;gap:8px;margin:6px 0 12px">
-      <input id="docSearch" type="text" placeholder="🔎 Buscar en tus documentos — por palabras y, si tienes índice semántico, también por significado…" autocomplete="off" style="flex:1;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
-      <button class="btn" id="docSearchBtn">Buscar</button>
-    </div>
-    <div id="docSearchOut"></div>
+    <div class="sec-note">Al <b>indexar</b> un documento, la IA lo analiza (nombre + resumen) y le busca DOI/PMID. Para <b>consultar</b> tu documentación por significado, usa el chat «💬 Consultar» (tu <b>segundo cerebro</b>). <b>unido a bibliografía</b> = citado por algún protocolo.</div>
     <div id="docList">${_driveFilesCache.length?'':'<div class="placeholder">'+(driveTokenValid()?'Cargando tus PDFs…':'Pulsa "Conectar" para listar tus PDFs.')+'</div>'}</div>
     <div id="docExternos" style="margin-top:16px"></div>`;
   document.getElementById('docConnect').addEventListener('click', cargarDriveDocs);
@@ -4090,9 +3908,6 @@ function renderDocumentos(){
     });
   })();
   renderExternalRefs();
-  const ds=document.getElementById('docSearch'), dsb=document.getElementById('docSearchBtn');
-  if(dsb) dsb.addEventListener('click', ()=>buscarDocsRAG(ds.value));
-  if(ds) ds.addEventListener('keydown', e=>{ if(e.key==='Enter') buscarDocsRAG(ds.value); });
   if(_driveFilesCache.length) renderDriveList(_driveFilesCache);
   else if(driveTokenValid()) cargarDriveDocs();   // token aún válido → recarga sin re-autorizar
 }
@@ -4117,10 +3932,8 @@ async function renderDriveList(files){
   const regOf=(f)=> docs.find(d=>d.driveId===f.id) || matchDoc({url:f.webViewLink, titulo:f.name}, docs);
   const flag=(on,label,title)=> `<span class="dx-meta hastip" style="color:${on?'var(--ok)':'var(--ink3)'}">${on?'✓':'–'} ${label}<span class="tooltip">${escHtml(title)}</span></span>`;
   const nIdx=files.filter(f=>!!regOf(f)).length;
-  const semPend=files.filter(f=>{ const r=regOf(f); return r && r.textLen>=500 && !(r.embN && r.embMt===r.mt); }).length;   // indexados con texto y sin índice semántico al día
   const reidxPend=files.filter(f=>{ const r=regOf(f); return r && r.textLen===undefined; }).length;   // indexados en versión anterior (texto sin medir → posiblemente truncado)
-  const hasOpenAIkey=!!loadCfg().openaiKey;
-  list.innerHTML=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} PDF(s) · ${nIdx} indexado(s) (en el contexto de la IA) · <span class="dx-meta">flags: indexado (IA) · unido a bibliografía</span>${reidxPend?` · <button class="btn" id="docReidxAll" style="padding:2px 9px;font-size:11px" title="Vuelve a leer el PDF ENTERO de todos los documentos indexados en una versión anterior (para completar los que quedaron recortados a las primeras páginas).">↻ Re-indexar incompletos (${reidxPend})</button>`:''}${(hasOpenAIkey&&semPend)?` · <button class="btn" id="docSemAll" style="padding:2px 9px;font-size:11px" title="Construye el índice semántico (embeddings) de todos los documentos que aún no lo tengan. Coste único de céntimos por documento (OpenAI); se guarda en tu GitHub.">🧠 Indexar semántico (${semPend})</button>`:''}</div>
+  list.innerHTML=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} PDF(s) · ${nIdx} indexado(s) (en el contexto de la IA) · <span class="dx-meta">flags: indexado (IA) · unido a bibliografía</span>${reidxPend?` · <button class="btn" id="docReidxAll" style="padding:2px 9px;font-size:11px" title="Vuelve a leer el PDF ENTERO de todos los documentos indexados en una versión anterior (para completar los que quedaron recortados a las primeras páginas).">↻ Re-indexar incompletos (${reidxPend})</button>`:''}</div>
     <div class="lib-grid">`+files.map((f,i)=>{
     const reg=regOf(f);
     const indexado=!!reg;
@@ -4144,19 +3957,14 @@ async function renderDriveList(files){
       else if(tl<500){ idxInfo='<span class="dx-meta hastip" style="color:#e0704f">⚠ casi sin texto — ¿PDF escaneado?<span class="tooltip">Se extrajeron '+tl+' caracteres. Si es un PDF escaneado (imágenes sin capa de texto) no sirve para el RAG. Necesitaría OCR.</span></span>'; needReidx=true; }
       else { idxInfo='<span class="dx-meta hastip" style="color:var(--ok)">📖 texto completo: '+(tl>=1000?Math.round(tl/1000)+'k':tl)+' letras'+(reg.pages?(' · '+reg.pages+' pág'):'')+'<span class="tooltip">Caracteres de texto extraídos e indexados para el RAG (búsqueda por relevancia sobre TODO el documento).</span></span>'; }
     }
-    // Índice SEMÁNTICO (embeddings): estado + botón para construirlo (una vez, se guarda en tu GitHub).
-    const semOn = !!(reg && reg.embN && reg.embMt && reg.embMt===reg.mt);
-    const hasText = !!(reg && reg.textLen>=500);
-    const semInfo = semOn ? '<span class="dx-meta hastip" style="color:#9b8cff">🧠 semántico ✓<span class="tooltip">Índice semántico (búsqueda por significado) construido: '+reg.embN+' fragmentos. Se combina con la búsqueda por palabras (BM25).</span></span>' : '';
-    const semBtn = (indexado && hasText && !semOn) ? `<button class="btn" data-sem="${i}" title="Construir el índice SEMÁNTICO (busca por significado, no solo por palabras). Coste único de céntimos con tu clave de OpenAI; se guarda en tu GitHub y se reutiliza siempre.">🧠 Indexar semántico</button>` : '';
     return `<div class="lib-card">
       <div class="nm">${escHtml(cita)}${descTip}</div>
       ${mostrarArchivo?`<div class="meta" title="Nombre del archivo en Google Drive">📄 ${escHtml(f.name)}</div>`:''}
       ${badges?`<div style="margin:2px 0 4px">${badges}</div>`:''}
-      <div class="meta">${(f.modifiedTime||'').slice(0,10)} · ${flag(indexado,'indexado','¿Analizado por IA y en el contexto (RAG) para crear protocolos?')} · ${flag(enBib,'bibliografía','¿Citado por alguna referencia/protocolo?')}${idxInfo?' · '+idxInfo:''}${semInfo?' · '+semInfo:''}</div>
+      <div class="meta">${(f.modifiedTime||'').slice(0,10)} · ${flag(indexado,'indexado','¿Analizado por IA y en el contexto para crear protocolos?')} · ${flag(enBib,'bibliografía','¿Citado por alguna referencia/protocolo?')}${idxInfo?' · '+idxInfo:''}</div>
       <div class="acts">
         ${f.webViewLink?`<a class="drive-ico" href="${f.webViewLink}" target="_blank" rel="noopener" title="Abrir en Google Drive">${DRIVE_ICON}</a>`:''}${papersBadge}
-        ${indexado ? `${needReidx?`<button class="btn" data-reindex="${i}" title="Vuelve a leer el PDF ENTERO y re-analizarlo (completa libros o documentos indexados en una versión anterior)">↻ Re-indexar</button>`:''}${semBtn}<button class="btn" data-editmeta="${i}" title="Editar el nombre y la descripción a mano, o regenerarlos con IA leyendo el PDF">✏ Editar</button><button class="btn ghost" data-unreg="${reg.id}" title="Quitar del índice (deja de estar indexado: la IA ya no lo tiene en cuenta ni se puede citar; el PDF NO se borra de tu Drive)">Quitar del índice</button>` : `<button class="btn primary" data-index="${i}" title="La IA lo analiza una vez y queda en el contexto para crear protocolos">✨ Indexar (IA)</button>`}
+        ${indexado ? `${needReidx?`<button class="btn" data-reindex="${i}" title="Vuelve a leer el PDF ENTERO y re-analizarlo (completa libros o documentos indexados en una versión anterior)">↻ Re-indexar</button>`:''}<button class="btn" data-editmeta="${i}" title="Editar el nombre y la descripción a mano, o regenerarlos con IA leyendo el PDF">✏ Editar</button><button class="btn ghost" data-unreg="${reg.id}" title="Quitar del índice (deja de estar indexado: la IA ya no lo tiene en cuenta ni se puede citar; el PDF NO se borra de tu Drive)">Quitar del índice</button>` : `<button class="btn primary" data-index="${i}" title="La IA lo analiza una vez y queda en el contexto para crear protocolos">✨ Indexar (IA)</button>`}
       </div>
     </div>`;
   }).join('')+'</div>';
@@ -4168,14 +3976,6 @@ async function renderDriveList(files){
   };
   list.querySelectorAll('[data-index]').forEach(b=>b.addEventListener('click', ()=>idx(+b.dataset.index,false)));
   list.querySelectorAll('[data-reindex]').forEach(b=>b.addEventListener('click', ()=>idx(+b.dataset.reindex,true)));   // re-lee el PDF entero (completa libros / versiones antiguas)
-  const buildSem=async(i)=>{ const f=files[i]; const reg=regOf(f); if(!reg) return;
-    if(!loadCfg().openaiKey){ showToast('Configura tu clave de OpenAI en ⚙ Ajustes para el índice semántico'); return; }
-    showToast('Construyendo índice semántico…');
-    try{ const rec=await buildDocEmbeddings(f.id, reg.titulo||f.name, f.modifiedTime, (d,t)=>showToast('Índice semántico… '+d+'/'+t+' fragmentos'));
-      await registrarDoc(Object.assign({}, reg, {embMt:f.modifiedTime, embN:rec.n})); _fichaRefSet=null;
-      showToast('Índice semántico listo ('+rec.n+' fragmentos)'); renderDriveList(files);
-    }catch(e){ showToast('Error: '+e.message); } };
-  list.querySelectorAll('[data-sem]').forEach(b=>b.addEventListener('click', ()=>buildSem(+b.dataset.sem)));
   const reidxAllBtn=list.querySelector('#docReidxAll');
   if(reidxAllBtn) reidxAllBtn.addEventListener('click', async ()=>{
     const pend=files.map((f,i)=>({f,i})).filter(({f})=>{ const r=regOf(f); return r && r.textLen===undefined; });
@@ -4184,19 +3984,6 @@ async function renderDriveList(files){
     for(const {f,i} of pend){ showToast('↻ Re-indexando '+(done+1)+'/'+pend.length+'… '+(f.name||'').slice(0,40));
       try{ await indexarDriveDoc(f); done++; }catch(e){ err++; } }
     _fichaRefSet=null; showToast('Re-indexado: '+done+' completo(s)'+(err?(' · '+err+' con error'):'')); renderDriveList(files);
-  });
-  const semAllBtn=list.querySelector('#docSemAll');
-  if(semAllBtn) semAllBtn.addEventListener('click', async ()=>{
-    if(!loadCfg().openaiKey){ showToast('Configura tu clave de OpenAI en ⚙ Ajustes para el índice semántico'); return; }
-    const pend=files.filter(f=>{ const r=regOf(f); return r && r.textLen>=500 && !(r.embN && r.embMt===r.mt); });
-    if(!pend.length){ showToast('Todos los documentos ya tienen índice semántico'); return; }
-    semAllBtn.disabled=true; let done=0, err=0;
-    for(const f of pend){ const reg=regOf(f); if(!reg) continue;
-      try{ const rec=await buildDocEmbeddings(f.id, reg.titulo||f.name, f.modifiedTime, (d,t)=>showToast('🧠 '+(done+1)+'/'+pend.length+' · '+(reg.titulo||f.name).slice(0,40)+'… '+d+'/'+t+' frag'));
-        await registrarDoc(Object.assign({}, reg, {embMt:f.modifiedTime, embN:rec.n})); done++;
-      }catch(e){ err++; }
-    }
-    _fichaRefSet=null; showToast('Índice semántico: '+done+' listo(s)'+(err?(' · '+err+' con error'):'')); renderDriveList(files);
   });
   list.querySelectorAll('[data-editmeta]').forEach(b=>b.addEventListener('click', ()=>editarDocMeta(files[+b.dataset.editmeta], regOf(files[+b.dataset.editmeta]), ()=>renderDriveList(files))));
   list.querySelectorAll('[data-unreg]').forEach(b=>b.addEventListener('click', async ()=>{
@@ -4353,7 +4140,6 @@ async function indexarDriveDoc(f, opts){
     textLen:(pdfText||'').length, pages:pTot||0, truncado:((pdfText||'').length>=5000000),   // indicador de indexado completo (cuánto texto se extrajo; truncado si topó el límite de 5M)
     url:f.webViewLink||('drive:'+f.id), enlace:f.webViewLink||('https://drive.google.com/file/d/'+f.id), driveId:f.id, mt:f.modifiedTime||'', iaAnalizado:!!j };
   await registrarDoc(doc);
-  try{ _ragTokCache.clear(); }catch(e){}   // el texto cambió → invalida la caché de tokenización del RAG
   return doc;
 }
 
@@ -5713,7 +5499,7 @@ async function buscarSeguimiento(gene){
   if(!anyProvider()){ out.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
   out.innerHTML='<div class="loading">Buscando guías de vigilancia y tratamiento (web · IA)…</div>';
   try{
-    let rag=''; try{ if(Object.keys(ragDocs).length){ rag=await ragContext(4, gene); } }catch(e){}
+    let rag=''; try{ rag=await ragContext(4, gene); }catch(e){}   // segundo cerebro (Vector Store); '' si no está configurado
     const sys='Eres genetista clínico. Para el GEN / alteración / entidad indicada, devuelve las recomendaciones de VIGILANCIA (cribado/seguimiento) y de MANEJO/TRATAMIENTO basadas en GUÍAS VIGENTES (GeneReviews, sociedades médicas, documentos de consenso). NO inventes URLs ni datos; si no hay evidencia clara, indícalo. '+SOURCE_PRIORITY+(rag?('\n\nDOCUMENTOS DE MI REPOSITORIO (tenlos en cuenta y cítalos en fuentes):\n'+rag):'')+' Devuelve SOLO JSON {"gen":"","entidad":"","herencia":"","resumen":"1-2 frases","vigilancia":[{"area":"","prueba":"","inicio":"","frecuencia":"","nota":""}],"tratamiento":[{"tema":"","recomendacion":""}],"fuentes":[{"titulo":"","url":"","anio":"","doi":"(opcional)","pmid":"(opcional)","pmcid":"(opcional)"}]}.';
     const resp=await callLLM({system:sys, user:'Gen/alteración/entidad: '+gene, webSearch:true, maxTokens:2400, task:'eval'});
     const j=extractJSON(resp);
