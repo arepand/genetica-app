@@ -498,8 +498,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.19.0';
+const APP_VERSION='2.20.0';
 const CHANGELOG=[
+  {v:'2.20.0', d:'2026-07-12', c:['«Referencias sin PDF» → nuevo botón <b>«🔗 Buscar entre mis PDFs (IA)»</b>: la IA compara cada referencia (cita de un protocolo sin fichero) con TODOS tus PDFs ya indexados y detecta cuál es el MISMO documento — aunque el título esté en español/abreviado o le falte el DOI (p. ej. «ACMG · Points to Consider» ↔ «Monaghan KG… ACMG. Genetics in Medicine. 2020»), cosa que el emparejado por identificador exacto no pillaba. Te muestra las coincidencias para que confirmes; al aceptar, cada referencia se reconoce en su PDF (queda «✓ bibliografía») y desaparece de «sin PDF». Empareja solo el MISMO documento (no por tema), en 1 llamada IA.']},
   {v:'2.19.0', d:'2026-07-12', c:['Duplicados en «Documentos»: si tienes en Drive <b>dos ficheros distintos del mismo artículo</b> (mismo DOI/PMID/PMCID/NBK), Ariadna ya no los indexa con metadatos divergentes. Al indexar comprueba si el identificador ya está en la biblioteca: si coincide con una <b>referencia sin fichero</b> (cita de protocolo) la enlaza (como antes); si coincide con <b>otro PDF</b>, NO los fusiona (son dos ficheros y Ariadna no borra de tu Drive) sino que les <b>unifica los metadatos</b> (misma cita/tipo/año) y los marca con badge <b>⚠ duplicado</b>. Nueva pestaña <b>⚠ Duplicados</b> que los agrupa para que revises cuál conservar y borres el sobrante en tu Drive.']},
   {v:'2.18.0', d:'2026-07-12', c:['Nuevo botón <b>«🔗 Reconciliar pendientes (N)»</b> en «Documentos»: reconcilia tus PDFs sin indexar con la biblioteca <b>SIN gastar IA</b>. Para cada pendiente saca un identificador barato — el <b>NBK del nombre del fichero</b> (Bookshelf_NBKxxxx.pdf) y, si no, el <b>DOI/PMID de la 1ª página</b> del PDF (descarga la 1ª página, sin IA ni pisar la caché de texto) — y, si coincide con una de tus «Referencias sin PDF» (citas de protocolos), <b>enlaza el PDF a esa referencia</b> automáticamente (queda «✓ bibliografía»). Así resuelves los duplicados gratis y solo gastas IA («Indexar pendientes») en los realmente nuevos. No crea entradas para los que no casen.']},
   {v:'2.17.3', d:'2026-07-12', c:['Reconciliación automática al indexar: cuando indexas un PDF de Drive (individual o con «Indexar pendientes») cuyo <b>DOI/PMID/PMCID/NBK</b> ya está en tu biblioteca —por ejemplo una cita de un protocolo que aún no tenía fichero—, ahora <b>se FUSIONA con esa referencia</b> en vez de crear un duplicado: hereda lo curado (cita, enlace ReadCube, alias, id) y queda marcado «✓ bibliografía» solo. Antes se creaba una entrada aparte y luego se borraba la referencia (perdiendo lo curado). La fusión es segura: solo por identificador fuerte, nunca por título parecido.']},
@@ -4119,6 +4120,34 @@ async function renderDriveList(files){
 }
 /* Referencias del repositorio SIN fichero (citas externas auto-añadidas al guardar protocolos). Se muestran
    aparte de los PDFs de Drive, con sus badges; se les puede asignar un PDF de Drive o quitarlas. */
+/* Empareja con IA las «Referencias sin PDF» con los PDFs YA indexados: identifica cuál PDF es EL MISMO documento que
+   cada referencia (aunque el título esté en otro idioma/abreviado o falte el DOI). Una sola llamada. → [{ref,pdf}]. */
+async function matchRefsToPdfsIA(refs, pdfs){
+  if(!refs.length || !pdfs.length || !anyProvider()) return [];
+  const line=(d,i)=>`${i+1}. ${String(d.cita||d.titulo||'').slice(0,220)}${d.anio?' ('+d.anio+')':''}${d.doi?' doi:'+d.doi:''}${d.pmid?' pmid:'+d.pmid:''}${d.nbk?' '+d.nbk:''}`;
+  const system='Eres bibliotecario clínico. Te doy una lista de REFERENCIAS (citas sin PDF) y otra de PDFS (documentos ya indexados). Para CADA referencia, di el número del PDF que es EXACTAMENTE el MISMO documento (mismo trabajo: mismos autores/título/año; puede diferir el idioma, la abreviatura de la cita o faltar el DOI). NUNCA emparejes por parecido temático ni por ser del mismo grupo/tema: solo si es literalmente el mismo documento. Si dudas, NO lo emparejes. Devuelve SOLO JSON {"pares":[{"ref":N,"pdf":M}]} con números 1-indexados; omite las referencias sin coincidencia segura.';
+  const user='REFERENCIAS:\n'+refs.map(line).join('\n')+'\n\nPDFS:\n'+pdfs.map(line).join('\n');
+  const resp=await callLLM({system, user, webSearch:false, maxTokens:1400, task:'deepen'});
+  const j=extractJSON(resp); const pares=(j&&j.pares)||[];
+  const out=[]; const usedRef=new Set();
+  for(const p of pares){ const ri=(p.ref|0)-1, pi=(p.pdf|0)-1; const r=refs[ri], pd=pdfs[pi];
+    if(r && pd && !usedRef.has(r.id)){ usedRef.add(r.id); out.push({ref:r, pdf:pd}); } }
+  return out;
+}
+/* Enlaza una referencia (sin fichero) a un PDF ya indexado: copia al PDF los identificadores/ReadCube que le falten y
+   añade la identidad de la referencia como ALIAS (→ el PDF queda reconocido como esa cita y marca «bibliografía»), y
+   elimina la referencia. Muta idx.docs; el llamador persiste. */
+function linkRefIntoPdf(idx, ref, pdf){
+  const P=(idx.docs||[]).find(d=>d.id===pdf.id); if(!P) return;
+  P.doi=P.doi||ref.doi||''; P.pmid=P.pmid||ref.pmid||''; P.pmcid=P.pmcid||ref.pmcid||''; P.nbk=P.nbk||ref.nbk||'';
+  P.readcube=P.readcube||ref.readcube||'';
+  P.aliases=P.aliases||[];
+  const u=normUrl(ref.url), t=normTxt(ref.titulo||ref.cita||'');
+  if(u && !P.aliases.includes(u)) P.aliases.push(u);
+  if(t && !P.aliases.includes('t:'+t)) P.aliases.push('t:'+t);
+  (ref.aliases||[]).forEach(a=>{ if(typeof a==='string' && !P.aliases.includes(a)) P.aliases.push(a); });
+  idx.docs=(idx.docs||[]).filter(d=>d.id!==ref.id);
+}
 function renderExternalRefs(){
   const box=document.getElementById('docExternos'); if(!box) return;
   const all=((cachedDocs()||{}).docs||[]);
@@ -4126,7 +4155,7 @@ function renderExternalRefs(){
   // Referencia sin PDF = sin fichero Y que NINGÚN documento con PDF ya cubra (por id/doi/pmid/nbk/url/título/alias) → si se fusionó, desaparece.
   const docs=all.filter(d=>d && !d.driveId && !d.enlace && !withFile.some(w=>docMatchesFuente(w, d)));
   if(!docs.length){ box.innerHTML=''; return; }
-  box.innerHTML=`<div class="cart-group-title">📑 Referencias sin PDF <span class="dx-meta">(${docs.length}) — citas de tus protocolos que aún no tienen un documento en Drive</span></div>
+  box.innerHTML=`<div class="cart-group-title">📑 Referencias sin PDF <span class="dx-meta">(${docs.length}) — citas de tus protocolos que aún no tienen un documento en Drive</span> <button class="btn" id="docMatchIA" style="padding:2px 9px;font-size:11px" title="La IA busca cuál de tus PDFs indexados es el mismo documento que cada referencia y los enlaza (aunque el título esté en otro idioma/abreviado o falte el DOI). 1 llamada IA; confirmas antes de aplicar.">🔗 Buscar entre mis PDFs (IA)</button></div>
     <div class="lib-grid">`+docs.map(d=>`<div class="lib-card">
       <div class="nm">${escHtml(d.titulo||d.id)}${refIdChipsHtml(d)}${readcubeLibBadgeHtml(d)}${geneReviewsBadgeHtml(d)}</div>
       <div class="meta">${escHtml(d.tipo||'referencia')}${d.anio?' · '+escHtml(String(d.anio)):''}${d.url?` · <a href="${escA(d.url)}" target="_blank" rel="noopener">enlace</a>`:''}</div>
@@ -4137,6 +4166,25 @@ function renderExternalRefs(){
     </div>`).join('')+'</div>';
   box.querySelectorAll('[data-assigndoc]').forEach(b=>b.addEventListener('click', ()=>assignDriveToDoc(b.dataset.assigndoc)));
   box.querySelectorAll('[data-unreg]').forEach(b=>b.addEventListener('click', async ()=>{ try{ await desregistrarDoc(b.dataset.unreg); showToast('Quitada del repositorio'); renderExternalRefs(); }catch(e){ showToast('Error: '+e.message); } }));
+  const mia=box.querySelector('#docMatchIA');
+  if(mia) mia.addEventListener('click', async ()=>{
+    if(!anyProvider()){ showToast('Configura una API key (Claude u OpenAI) en ⚙ Ajustes'); return; }
+    const pdfs=(((cachedDocs()||{}).docs)||[]).filter(d=>d.driveId||d.enlace);
+    if(!pdfs.length){ showToast('No tienes PDFs indexados con los que emparejar'); return; }
+    mia.disabled=true; showToast('Emparejando con IA… ('+docs.length+' referencias × '+pdfs.length+' PDFs)');
+    try{
+      const pairs=await matchRefsToPdfsIA(docs, pdfs);
+      if(!pairs.length){ showToast('La IA no encontró coincidencias seguras'); mia.disabled=false; return; }
+      const lista=pairs.map(p=>'• '+String(p.ref.titulo||p.ref.cita||'').slice(0,55)+'  →  '+String(p.pdf.cita||p.pdf.titulo||'').slice(0,55)).join('\n');
+      if(!confirm('La IA encontró '+pairs.length+' coincidencia(s):\n\n'+lista+'\n\n¿Enlazarlas? Cada referencia pasará a reconocerse en su PDF (queda «bibliografía») y desaparecerá de «sin PDF».')){ mia.disabled=false; return; }
+      let idx, sha=null; try{ const ci=await ghGetFile('docs/index.json'); idx=ci.json||{docs:[]}; sha=ci.sha; }catch(e){ idx=cachedDocs()||{docs:[]}; }
+      for(const {ref, pdf} of pairs) linkRefIntoPdf(idx, ref, pdf);
+      await ghPutFile('docs/index.json', idx, 'docs: enlazar '+pairs.length+' referencia(s) con su PDF (IA)', sha);
+      cacheDocs(idx); _fichaRefSet=null;
+      showToast('Enlazadas '+pairs.length+' referencia(s) con su PDF');
+      renderExternalRefs(); if(_driveFilesCache.length) renderDriveList(_driveFilesCache);
+    }catch(e){ mia.disabled=false; showToast('Error: '+e.message); }
+  });
 }
 /* Selector de un PDF de Drive para vincularlo a una referencia externa del repositorio (le da fichero + texto). */
 function assignDriveToDoc(docId){
