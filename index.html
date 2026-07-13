@@ -498,8 +498,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.21.0';
+const APP_VERSION='2.21.1';
 const CHANGELOG=[
+  {v:'2.21.1', d:'2026-07-13', c:['Quitado el aviso engañoso «⚠ documento enorme: indexados los primeros ~5M caracteres» de los libros grandes. Ese límite de 5M solo afecta a la extracción de texto DENTRO de la app (que ahora solo se usa para autodetectar el DOI/PMID en las primeras páginas). Tu <b>segundo cerebro</b> lo alimenta el pipeline, que lee el PDF ENTERO y lo trocea por capítulos SIN ese límite — así que esos libros (p. ej. el Sperling de 1075 páginas) están COMPLETOS en el Vector Store, no a medias. Se mantienen los avisos que sí importan (PDF escaneado / sin texto).']},
   {v:'2.21.0', d:'2026-07-12', c:['Duplicados más listos (y sin falsos positivos). (1) En «Documentos» ahora también se detectan duplicados <b>sin DOI</b> — por título+año — así un manual/guía duplicado (p. ej. dos copias del mismo PDF) se marca aunque no tenga identificador. (2) <b>Legislación excluida del emparejado por título</b>, tanto en Documentos como en el inventario del segundo cerebro: las leyes comparten título por naturaleza (ley + anexos + versiones + boletines), así que ya no se marcan como duplicadas por error (se acabó el «Ley 14/2006 ×3» falso). (3) La detección de duplicados en «Documentos» solo cuenta ficheros que <b>existen ahora en Drive</b>: si borras el duplicado en tu Drive y pulsas «Refrescar», el badge ⚠ desaparece solo. (4) Nuevo botón <b>«🧹 Limpiar borrados de Drive (N)»</b> que quita del índice las entradas cuyo fichero ya no está en tu carpeta vigilada (sin IA; no toca tu Drive).']},
   {v:'2.20.0', d:'2026-07-12', c:['«Referencias sin PDF» → nuevo botón <b>«🔗 Buscar entre mis PDFs (IA)»</b>: la IA compara cada referencia (cita de un protocolo sin fichero) con TODOS tus PDFs ya indexados y detecta cuál es el MISMO documento — aunque el título esté en español/abreviado o le falte el DOI (p. ej. «ACMG · Points to Consider» ↔ «Monaghan KG… ACMG. Genetics in Medicine. 2020»), cosa que el emparejado por identificador exacto no pillaba. Te muestra las coincidencias para que confirmes; al aceptar, cada referencia se reconoce en su PDF (queda «✓ bibliografía») y desaparece de «sin PDF». Empareja solo el MISMO documento (no por tema), en 1 llamada IA.']},
   {v:'2.19.0', d:'2026-07-12', c:['Duplicados en «Documentos»: si tienes en Drive <b>dos ficheros distintos del mismo artículo</b> (mismo DOI/PMID/PMCID/NBK), Ariadna ya no los indexa con metadatos divergentes. Al indexar comprueba si el identificador ya está en la biblioteca: si coincide con una <b>referencia sin fichero</b> (cita de protocolo) la enlaza (como antes); si coincide con <b>otro PDF</b>, NO los fusiona (son dos ficheros y Ariadna no borra de tu Drive) sino que les <b>unifica los metadatos</b> (misma cita/tipo/año) y los marca con badge <b>⚠ duplicado</b>. Nueva pestaña <b>⚠ Duplicados</b> que los agrupa para que revises cuál conservar y borres el sobrante en tu Drive.']},
@@ -4114,14 +4115,14 @@ async function renderDriveList(files){
     const papersBadge = reg ? readcubeLibBadgeHtml(reg) : '';
     const esDup=isDup(reg); const nDup=esDup?(byStrong[docStrongId(reg)]||[]).length:0;
     const dupBadge = esDup ? `<span class="dx-meta hastip" style="color:#e0a53f;font-weight:600">⚠ duplicado<span class="tooltip">Hay ${nDup} documentos en Drive con el mismo identificador (${escHtml(docStrongId(reg).replace(':',' '))}). Son el MISMO documento — revisa cuál conservar y borra el/los sobrante(s) en tu Google Drive (Ariadna no borra de tu Drive). Metadatos unificados.</span></span>` : '';
-    // Indicador de indexado COMPLETO: cuánto texto se extrajo. Avisa si está incompleto (versión antigua) o vacío (escaneado).
+    // Solo se avisan PROBLEMAS reales para el segundo cerebro (PDF escaneado/sin texto). El límite de 5M caracteres NO
+    // se muestra: solo afecta a la extracción interna (autodetección de DOI/PMID); el pipeline sube el documento ENTERO
+    // al Vector Store (lee todas las páginas y trocea por capítulos, sin ese límite), así que el libro no está a medias.
     let idxInfo='', needReidx=false;
     if(reg){
       const tl=reg.textLen;
-      if(reg.truncado){ idxInfo='<span class="dx-meta hastip" style="color:#e0a53f">⚠ documento enorme: indexados los primeros ~5M caracteres'+(reg.pages?(' (de '+reg.pages+' pág)'):'')+'<span class="tooltip">Se alcanzó el límite de 5.000.000 de caracteres (~2000 páginas) al extraer el texto. Si necesitas más, pídemelo y subo el límite.</span></span>'; }
-      else if(tl===undefined){ idxInfo='<span class="dx-meta hastip" style="color:#e0a53f">⚠ texto sin medir (indexado en versión anterior)<span class="tooltip">Se indexó antes de poder medir el texto; puede estar recortado a las primeras páginas. Pulsa «↻ Re-indexar» para leer el PDF entero.</span></span>'; needReidx=true; }
+      if(tl===undefined){ idxInfo='<span class="dx-meta hastip" style="color:#e0a53f">⚠ texto sin medir (indexado en versión anterior)<span class="tooltip">Se indexó antes de poder medir el texto; puede estar recortado a las primeras páginas. Pulsa «↻ Re-indexar» para leer el PDF entero.</span></span>'; needReidx=true; }
       else if(tl<500){ idxInfo='<span class="dx-meta hastip" style="color:#e0704f">⚠ casi sin texto — ¿PDF escaneado?<span class="tooltip">Se extrajeron '+tl+' caracteres. Si es un PDF escaneado (imágenes sin capa de texto) no sirve: el segundo cerebro necesita texto. Necesitaría OCR.</span></span>'; needReidx=true; }
-      // El caso normal (texto completo) ya no se muestra: era del RAG local retirado. Solo se avisan los problemas.
     }
     return `<div class="lib-card">
       <div class="nm">${escHtml(cita)}${descTip}</div>
