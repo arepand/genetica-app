@@ -498,8 +498,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='2.21.1';
+const APP_VERSION='2.22.0';
 const CHANGELOG=[
+  {v:'2.22.0', d:'2026-07-13', c:['Nuevo filtro <b>«🚫 No en el 2º cerebro»</b> en el inventario del segundo cerebro (⚙ Ajustes → 🧠 Segundo cerebro): lista los documentos de tu repositorio con PDF en Drive que <b>NO aparecen en el Vector Store</b> — comparando por URL de Drive / DOI / PMID / NBK / título. La causa habitual es un <b>PDF escaneado sin capa de texto</b>: el pipeline no puede extraerlo (0 secciones) y no llega al segundo cerebro, aunque en «Documentos» se vea con una cita bonita (sacada del nombre + web). Así ves de un vistazo qué te falta y puedes conseguir una versión con OCR. (Pulsa antes «Cargar/refrescar inventario»; si acabas de indexar algo, el pipeline corre a diario.)']},
   {v:'2.21.1', d:'2026-07-13', c:['Quitado el aviso engañoso «⚠ documento enorme: indexados los primeros ~5M caracteres» de los libros grandes. Ese límite de 5M solo afecta a la extracción de texto DENTRO de la app (que ahora solo se usa para autodetectar el DOI/PMID en las primeras páginas). Tu <b>segundo cerebro</b> lo alimenta el pipeline, que lee el PDF ENTERO y lo trocea por capítulos SIN ese límite — así que esos libros (p. ej. el Sperling de 1075 páginas) están COMPLETOS en el Vector Store, no a medias. Se mantienen los avisos que sí importan (PDF escaneado / sin texto).']},
   {v:'2.21.0', d:'2026-07-12', c:['Duplicados más listos (y sin falsos positivos). (1) En «Documentos» ahora también se detectan duplicados <b>sin DOI</b> — por título+año — así un manual/guía duplicado (p. ej. dos copias del mismo PDF) se marca aunque no tenga identificador. (2) <b>Legislación excluida del emparejado por título</b>, tanto en Documentos como en el inventario del segundo cerebro: las leyes comparten título por naturaleza (ley + anexos + versiones + boletines), así que ya no se marcan como duplicadas por error (se acabó el «Ley 14/2006 ×3» falso). (3) La detección de duplicados en «Documentos» solo cuenta ficheros que <b>existen ahora en Drive</b>: si borras el duplicado en tu Drive y pulsas «Refrescar», el badge ⚠ desaparece solo. (4) Nuevo botón <b>«🧹 Limpiar borrados de Drive (N)»</b> que quita del índice las entradas cuyo fichero ya no está en tu carpeta vigilada (sin IA; no toca tu Drive).']},
   {v:'2.20.0', d:'2026-07-12', c:['«Referencias sin PDF» → nuevo botón <b>«🔗 Buscar entre mis PDFs (IA)»</b>: la IA compara cada referencia (cita de un protocolo sin fichero) con TODOS tus PDFs ya indexados y detecta cuál es el MISMO documento — aunque el título esté en español/abreviado o le falte el DOI (p. ej. «ACMG · Points to Consider» ↔ «Monaghan KG… ACMG. Genetics in Medicine. 2020»), cosa que el emparejado por identificador exacto no pillaba. Te muestra las coincidencias para que confirmes; al aceptar, cada referencia se reconoce en su PDF (queda «✓ bibliografía») y desaparece de «sin PDF». Empareja solo el MISMO documento (no por tema), en 1 llamada IA.']},
@@ -2406,6 +2407,7 @@ function openSettings(){
         <button type="button" data-t="gr">📖 GeneReviews</button>
         <button type="button" data-t="pdf">📄 Documentos</button>
         <button type="button" data-t="dup">⚠ Duplicados</button>
+        <button type="button" data-t="missing" title="Documentos de tu repositorio con PDF en Drive que NO están en el segundo cerebro (normalmente escaneados/sin texto que el pipeline no pudo extraer).">🚫 No en el 2º cerebro</button>
       </div>
       <input id="cfgSbInvSearch" type="text" placeholder="Buscar (enfermedad, NBK, DOI, PMID, ISBN, documento)…" autocomplete="off" style="width:100%;box-sizing:border-box;margin-top:6px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink);font-size:12px">
       <div id="cfgSbInvList" style="max-height:280px;overflow:auto;margin-top:6px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;background:var(--panel2)"></div>
@@ -2465,7 +2467,7 @@ function openSettings(){
   // Inventario del segundo cerebro (recuento + filtro por tipo + buscador, desde sources.json)
   const invStats=ov.querySelector('#cfgSbInvStats'), invSearch=ov.querySelector('#cfgSbInvSearch'), invList=ov.querySelector('#cfgSbInvList'), invRefresh=ov.querySelector('#cfgSbInvRefresh');
   let invType='all';
-  const renderInvList=()=>{ if(invList) invList.innerHTML = invType==='dup' ? sbDupRowsHtml() : sbInvRows(invSearch?invSearch.value:'', invType); };
+  const renderInvList=()=>{ if(invList) invList.innerHTML = invType==='dup' ? sbDupRowsHtml() : invType==='missing' ? sbMissingRowsHtml() : sbInvRows(invSearch?invSearch.value:'', invType); };
   function renderInv(){ if(invStats){ const cc=sbInvCounts(); invStats.innerHTML= cc.total? ('📖 <b>'+cc.gr+'</b> GeneReviews · 📄 <b>'+cc.pdf+'</b> documentos'+(cc.otro?' · '+cc.otro+' otros':'')) : 'Sin cargar'; } renderInvList(); }
   ov.querySelectorAll('#cfgSbInvType button').forEach(b=>b.addEventListener('click', ()=>{ invType=b.dataset.t; ov.querySelectorAll('#cfgSbInvType button').forEach(x=>x.classList.toggle('on', x===b)); renderInvList(); }));
   if(invRefresh) invRefresh.addEventListener('click', async ()=>{ if(invStats) invStats.textContent='Cargando…'; try{ localStorage.removeItem('fh_sb_sources'); _sbSources=null; await loadSbSources(); }catch(e){} renderInv(); });
@@ -3682,6 +3684,31 @@ function sbDupRowsHtml(){
     + groups.map(g=>'<div style="border:1px solid var(--line);border-radius:8px;padding:6px 9px;margin:4px 0">'
       + g.map(([k,v])=>{ const f=sbFuente(k,v); return '<div style="padding:2px 0;font-size:12px">'+(f.url?('<a href="'+escA(f.url)+'" target="_blank" rel="noopener" style="color:var(--accent)">'+escHtml(f.titulo)+'</a>'):('<span>'+escHtml(f.titulo)+'</span>'))+refIdChipsHtml(f)+sbDriveIcon(f)+'</div>'; }).join('')
       + '</div>').join('');
+}
+/* Documentos de TU REPOSITORIO (con PDF en Drive) que NO están en el segundo cerebro (sources.json). Se compara por
+   URL de Drive / identificador fuerte / título. Causa habitual: PDF escaneado sin capa de texto → el pipeline no puede
+   extraerlo (0 secciones) y no llega al Vector Store. Devuelve null si el inventario aún no se ha cargado. */
+function sbMissingDocs(){
+  if(!_sbSources || !Object.keys(_sbSources).length) return null;
+  const sbList=Object.values(_sbSources);
+  const inSb=(d)=> sbList.some(v=>{
+    if(v.doi && d.doi && normDoi(v.doi)===normDoi(d.doi)) return true;
+    if(v.pmid && d.pmid && String(v.pmid).trim()===String(d.pmid).trim()) return true;
+    const dn=String(d.nbk||(geneReviewsInfo(d)||{}).nbk||'').toUpperCase(); if(v.nbk && dn && String(v.nbk).toUpperCase()===dn) return true;
+    if(v.isbn && d.isbn && String(v.isbn).replace(/[^0-9xX]/gi,'')===String(d.isbn).replace(/[^0-9xX]/gi,'')) return true;
+    const vu=normUrl(v.url); if(vu && (vu===normUrl(d.url)||vu===normUrl(d.enlace))) return true;   // MISMO fichero de Drive (señal fiable)
+    const vt=normTxt(v.titulo||''), dt=normTxt(d.cita||d.titulo||''); if(vt.length>=10 && vt===dt) return true;
+    return false;
+  });
+  return ((cachedDocs()||{}).docs||[]).filter(d=>d.driveId && !inSb(d));
+}
+function sbMissingRowsHtml(){
+  const miss=sbMissingDocs();
+  if(miss===null) return '<div class="dx-meta" style="padding:4px 0">Pulsa «↻ Cargar / refrescar inventario» arriba para poder comparar tu repositorio con el segundo cerebro.</div>';
+  if(!miss.length) return '<div class="dx-meta" style="padding:4px 0">✓ Todos tus documentos con PDF en Drive están en el segundo cerebro.</div>';
+  return '<div class="dx-meta" style="padding:2px 0 6px">🚫 <b>'+miss.length+'</b> documento(s) con PDF en Drive que NO aparecen en el segundo cerebro. Causa habitual: <b>PDF escaneado / sin capa de texto</b> — el pipeline no puede extraerlo. Consigue una versión con <b>OCR</b> y re-súbela a Drive. (Si acabas de indexar algo, puede que el pipeline aún no haya corrido — se actualiza a diario.)</div>'
+    + miss.map(d=>{ const url=d.url||d.enlace;
+        return '<div style="padding:3px 0;border-bottom:1px solid var(--line);font-size:12px">'+(url?('<a href="'+escA(url)+'" target="_blank" rel="noopener" style="color:var(--accent)">'+escHtml(d.cita||d.titulo||d.id)+'</a>'):('<span>'+escHtml(d.cita||d.titulo||d.id)+'</span>'))+refIdChipsHtml(d)+'</div>'; }).join('');
 }
 /* Una entrada de sources.json → fuente (para pintarla como cualquier referencia de Ariadna). */
 function sbFuente(k,v){
