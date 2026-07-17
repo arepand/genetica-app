@@ -332,6 +332,12 @@
   .section-btn:hover{color:var(--ink);}
   .section-btn.on{color:var(--accent); border-bottom-color:var(--accent);}
   .section-view{padding:24px 30px 90px; max-width:1100px; margin:0 auto;}
+  #consultarView.section-view{max-width:none;}   /* chat + visor aprovechan todo el ancho; el PDF ya no comprime la conversación */
+  .gr-source-page{background:#fff;color:#17202a;border:1px solid #cfd6dc;border-radius:10px;padding:22px 24px;box-shadow:0 2px 12px rgba(0,0,0,.16);}
+  .gr-source-brand{font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#345d79;border-bottom:3px solid #5aa6c8;padding-bottom:8px;margin-bottom:18px;}
+  .gr-source-page h3{font-family:Georgia,serif;font-size:20px;line-height:1.3;margin:0 0 12px;color:#162b3a;}
+  .gr-source-passage{font-family:Georgia,serif;font-size:15px;line-height:1.72;white-space:pre-wrap;}
+  .gr-source-passage mark{background:#ffe879;color:inherit;padding:1px 2px;box-decoration-break:clone;-webkit-box-decoration-break:clone;}
   .morfo-region{margin:6px 0 4px; border-bottom:1px solid var(--line);}
   .morfo-region > summary{cursor:pointer; font-weight:700; padding:10px 0; color:var(--accent); list-style:revert;}
   .morfo-terms{display:flex; flex-wrap:wrap; gap:8px; padding:4px 0 12px;}
@@ -526,8 +532,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.0.5';
+const APP_VERSION='3.0.6';
 const CHANGELOG=[
+  {v:'3.0.6',d:'2026-07-18',c:['Consultar ocupa ahora todo el ancho útil de la ventana. Al abrir el visor lateral, el PDF conserva su tamaño amplio y la conversación deja de quedar comprimida por el límite general de 1.100 píxeles.','Los pasajes de GeneReviews se abren en el mismo panel derecho que los PDF: Ariadna reconstruye una vista de lectura local, identifica capítulo y apartado y marca en amarillo el texto exacto recuperado y utilizado. El enlace al capítulo oficial de NCBI se conserva como comprobación secundaria.','El editor «Ventanas de visibilidad ecográfica y fuentes» puede investigar con IA las filas seleccionadas o todas las visibles tras aplicar un filtro. Cada HPO permite además una búsqueda individual. Ariadna contrasta el Segundo Cerebro con literatura científica web, distingue visibilidad ecográfica de desarrollo embriológico, exige fuentes comprobables y mantiene cada resultado como propuesta hasta la confirmación manual.']},
   {v:'3.0.5',d:'2026-07-17',c:['Los HPO del editor prenatal son interactivos como los de los protocolos normales: muestran el nombre oficial de la ontología y, al pulsarlos, permiten buscar, comprobar o corregir el código. Al guardar una regeneración, cualquier HPO nuevo se incorpora también al selector prenatal y se repinta inmediatamente.','El diferencial prenatal deja de presentar una búsqueda genérica de GeneReviews como si fuera bibliografía. Las fuentes reales se muestran con el render común del Catálogo Maestro; los protocolos iniciales sin referencias quedan señalados como pendientes y permiten actualizar su evidencia antes de confirmar la recomendación de estudio.','Las fuentes GeneReviews de Consultar abren ahora la revisión oficial de NCBI en el pasaje literal utilizado e intentan seleccionarlo y resaltarlo automáticamente. Si NCBI ha modificado el texto o el navegador no admite fragmentos de texto, el mismo enlace conserva como alternativa la apertura del capítulo oficial.','Las citas documentales antiguas que solo conservaban un bloque —por ejemplo, «chunk 004»— resuelven bajo demanda la página exacta dentro del archivo ya indexado y abren el PDF en esa página con el pasaje resaltado, sin descargar ni volver a vectorizar el libro completo.','Los títulos bibliográficos con codificación heredada rota se reparan al mostrarse: «Bases genÃ©ticas de la conducta» vuelve a verse correctamente como «Bases genéticas de la conducta», sin modificar el archivo original.','Consultar permite plegar la columna de conversaciones, recuerda la preferencia y dedica todo el ancho disponible a la conversación y al documento original.','Las repreguntas conservan un contexto más amplio de la misma conversación para entender expresiones como «eso» o «el anterior», sin convertir el historial en evidencia clínica.','Incidencias y duplicados distinguen ahora claramente un borrador local de una resolución aplicada; la app local incorpora los paquetes confirmados y regenera la propuesta del Catálogo con cero borrados automáticos.']},
   {v:'3.0.4',d:'2026-07-17',c:['Consultar descompone cada pregunta en todas sus necesidades de evidencia y busca cada una en los dos Vector Store completos; una misma cuestión puede integrar varias fuentes y la respuesta debe cubrir todos los apartados planteados.','Las referencias mostradas bajo cada respuesta son únicamente las fuentes realmente utilizadas. Los cálculos derivados distinguen el documento que aporta los datos del que aporta el método, y nunca presentan el resultado calculado como si fuera una cifra publicada.','Nuevo modo «Máxima profundidad»: GPT-5.6 Sol con razonamiento alto, seleccionable dentro de cada conversación sin cambiar el modo predeterminado de las demás.','Las conversaciones de Consultar conservan una copia local y se sincronizan de forma segura con el repositorio privado de GitHub, por conversación, para recuperarlas en otros navegadores o dispositivos.','GeneReviews ya incorporadas al Catálogo Maestro dejan de ofrecerse erróneamente como referencias por añadir y se identifican como recursos indexados.']},
   {v:'3.0.3',d:'2026-07-17',c:['Consultar abre los PDF propios directamente en la página que contiene el pasaje y resalta el texto recuperado. El lector usa descargas parciales autenticadas de Google Drive para no cargar libros completos en memoria; el visor convencional de Drive queda como alternativa manual.','Las fuentes del chat y el resto de referencias bibliográficas muestran los accesos de Google Drive y ReadCube Papers, uno o ambos, según su disponibilidad real en el Catálogo Maestro y en tus bibliotecas.','Los tres modos de Consultar comparten ahora una única recuperación semántica reproducible; Rápido, Estándar y Profundo solo cambian la redacción y el razonamiento, no los documentos encontrados.','Ajustes deja de presentar como activa la transición cuando los dos Vector Store nuevos están completos, y el inventario bibliográfico usa el Catálogo Maestro en vez del sources.json histórico.','GeneReviews, Genotipia y otras fuentes web dejan de aparecer como PDF pendiente: se distinguen como recursos web que no necesitan archivo.']},
@@ -4727,6 +4734,18 @@ function geneReviewsTextFragmentUrl(nbk, passage){
   const start=words.slice(0,12).join(' '), end=words.slice(-8).join(' ');
   return base+'#:~:text='+encodeURIComponent(start)+','+encodeURIComponent(end);
 }
+function geneReviewsViewerText(passage){
+  return String(passage||'')
+    .replace(/^\s*---[\s\S]*?---\s*/,'')
+    .replace(/^\s*(?:source_sha256|asset_id|tipo|p[aá]gina|archivo_fuente_drive_id|huella_imagen)\s*:.*$/gmi,'')
+    .replace(/^\s*\|?\s*:?-{3,}.*$/gm,'')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g,'$1')
+    .replace(/^\s*#{1,6}\s+/gm,'')
+    .replace(/[\*_`~]+/g,'')
+    .replace(/\u00a0/g,' ')
+    .replace(/\n{3,}/g,'\n\n')
+    .trim();
+}
 function sbQuoteHtml(passages, key){
   if(!passages || !passages.length || !key) return '';
   const mine=passages.filter(p=>String(p.filename||'').split('__')[0]===key && String(p.text||'').trim());
@@ -4737,7 +4756,8 @@ function sbQuoteHtml(passages, key){
   const body=mine.map(p=>{ const rawText=String(p.text), text=rawText.slice(0,1600), visual=sourceVisualAsset(rawText,p.filename), unit=sourcePassageUnit(rawText), unitLabel=unit?(unit.kind+' '+unit.number):'', passageHash=sourcePassageHash(rawText), stale=!!(passageHash&&currentHash&&passageHash!==currentHash);
     const visualData=visual?` data-sbasset="${escA(visual.assetId)}" data-sbassetsha="${escA(visual.sha256)}" data-sbassettype="${escA(visual.type)}" data-sbassetlabel="${escA(encodeURIComponent(visual.label||''))}" data-sbassetsource="${escA(visual.sourceDriveId||'')}"`:'';
     const sourceFileId=p.fileId||p.file_id||'', fileData=sourceFileId?` data-sbfileid="${escA(sourceFileId)}"`:'';
-    const open=nbk?`<a class="btn ghost" href="${escA(geneReviewsTextFragmentUrl(nbk,rawText))}" target="_blank" rel="noopener" style="display:inline-block;font-size:10.5px;padding:3px 7px;margin-top:3px" title="Abrir la revisión oficial e intentar seleccionar este pasaje">↗ Abrir y resaltar en NCBI</a>`:work&&!stale?`<button class="btn ghost" data-sbviewer="${escA(key)}" data-sbformat="${escA(format)}" data-sbunitkind="${escA(unit?.kind||'')}" data-sbunit="${escA(unit?.number||visual?.page||'')}" data-sbquote="${escA(encodeURIComponent(text))}"${fileData}${visualData} style="font-size:10.5px;padding:3px 7px;margin-top:3px">${visual?'🖼 Ver '+escHtml(visual.label||'imagen'):'↗ Ver '+escHtml(unitLabel||'original')} a la derecha</button>`:stale?'<div class="dx-meta" style="color:#e0a53f">⚠ El original ha cambiado desde esta indexación; reindexa antes de localizar el pasaje.</div>':'';
+    const section=apartado(p.filename);
+    const open=nbk?`<button class="btn ghost" data-grviewer="${escA(nbk)}" data-grsection="${escA(encodeURIComponent(section))}" data-grquote="${escA(encodeURIComponent(text))}" style="font-size:10.5px;padding:3px 7px;margin-top:3px" title="Mostrar este pasaje GeneReviews en el panel de evidencia">↗ Ver pasaje resaltado a la derecha</button>`:work&&!stale?`<button class="btn ghost" data-sbviewer="${escA(key)}" data-sbformat="${escA(format)}" data-sbunitkind="${escA(unit?.kind||'')}" data-sbunit="${escA(unit?.number||visual?.page||'')}" data-sbquote="${escA(encodeURIComponent(text))}"${fileData}${visualData} style="font-size:10.5px;padding:3px 7px;margin-top:3px">${visual?'🖼 Ver '+escHtml(visual.label||'imagen'):'↗ Ver '+escHtml(unitLabel||'original')} a la derecha</button>`:stale?'<div class="dx-meta" style="color:#e0a53f">⚠ El original ha cambiado desde esta indexación; reindexa antes de localizar el pasaje.</div>':'';
     return '<div style="margin:4px 0">'+(apartado(p.filename)?'<div class="dx-meta" style="font-size:10.5px">apartado: '+escHtml(apartado(p.filename))+'</div>':'')
       +'<blockquote style="margin:2px 0;padding:4px 9px;border-left:2px solid var(--accent);font-size:11.5px;line-height:1.5;white-space:pre-wrap;color:var(--ink2)">'+escHtml(text)+'</blockquote>'+open+'</div>'; }).join('');
   return '<details style="margin-top:2px"><summary class="tip-ai" style="display:inline;font-size:11px">🔍 ver el texto exacto en que se basa</summary><div style="margin-top:2px">'+body+'</div></details>';
@@ -4961,6 +4981,17 @@ function releaseChatSourceViewer(){
   const host=document.getElementById('chatSourceViewer'); if(!host) return;
   _chatSourceResolveRequest++; _chatVisualRequest++; releaseChatVisualObjectUrl(); releaseChatPdfReader();
   host.innerHTML=''; host.style.display='none';
+}
+function openGeneReviewsSourceViewer({nbk,section,quote}={}){
+  const id=((String(nbk||'').match(/NBK\d+/i)||[])[0]||'').toUpperCase(); if(!id) return;
+  releaseChatSourceViewer();
+  const host=document.getElementById('chatSourceViewer'); if(!host) return;
+  const source=chatSourceFuente(id), title=repairMojibake(String(source&&source.titulo||grRefTitle(id,''))), clean=geneReviewsViewerText(quote).slice(0,8000);
+  const sectionLabel=String(section||'').trim().replace(/\s+/g,' ')||'Pasaje recuperado';
+  const official='https://www.ncbi.nlm.nih.gov/books/'+encodeURIComponent(id)+'/';
+  host.style.display='block';
+  host.innerHTML=`<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:10px"><div style="flex:1;min-width:0"><b>${escHtml(title)}</b><div class="dx-meta">${escHtml(id)} · GeneReviews® · ${escHtml(sectionLabel)}</div></div><button class="btn ghost" id="chatSourceViewerClose" title="Cerrar">✕</button></div><div class="gr-source-page"><div class="gr-source-brand">NCBI Bookshelf · GeneReviews®</div><h3>${escHtml(sectionLabel)}</h3><div class="gr-source-passage"><mark>${escHtml(clean||'El pasaje recuperado está vacío.')}</mark></div></div><div class="dx-meta" style="margin-top:8px">El amarillo identifica el pasaje exacto recuperado del GeneReviews activo y utilizado como evidencia. Esta vista local evita depender del resaltado de otra pestaña.</div><div style="margin-top:8px"><a class="btn ghost" href="${escA(official)}" target="_blank" rel="noopener">Abrir capítulo oficial en NCBI</a></div>`;
+  host.querySelector('#chatSourceViewerClose')?.addEventListener('click',releaseChatSourceViewer);
 }
 async function openChatSourceViewer({driveId,format,unitKind,unitNumber,quote,visualAsset,sourceFileId}={}){
   const host=document.getElementById('chatSourceViewer'); if(!host||!driveId) return;
@@ -5324,6 +5355,7 @@ function renderChatMsgs(){
     const visualAsset=button.dataset.sbasset?{assetId:button.dataset.sbasset,sha256:button.dataset.sbassetsha||'',type:button.dataset.sbassettype||'visual',label:assetLabel,page:Number(button.dataset.sbunit)||null,sourceDriveId:button.dataset.sbassetsource||''}:null;
     if(visualAsset?.sourceDriveId && visualAsset.sourceDriveId!==button.dataset.sbviewer){ showToast('El recurso visual no corresponde a esta fuente; no se abrirá.'); return; }
     openChatSourceViewer({driveId:button.dataset.sbviewer,format:button.dataset.sbformat,unitKind:button.dataset.sbunitkind,unitNumber:Number(button.dataset.sbunit)||null,quote,visualAsset,sourceFileId:button.dataset.sbfileid||''}); }));
+  el.querySelectorAll('[data-grviewer]').forEach(button=>button.addEventListener('click',()=>{ let quote='', section=''; try{ quote=decodeURIComponent(button.dataset.grquote||''); section=decodeURIComponent(button.dataset.grsection||''); }catch(e){} openGeneReviewsSourceViewer({nbk:button.dataset.grviewer,section,quote}); }));
   el.scrollTop=el.scrollHeight;
   try{ persistConvos(); }catch(e){}   // guarda la conversación activa tras cada cambio
 }
@@ -8076,8 +8108,47 @@ function allPrenatalFindingRecords(){
   });
   return rows;
 }
+function prenatalGaCandidate(raw){
+  const g=raw||{}, min=parseInt(g.min), parsedMax=parseInt(g.max), max=Number.isFinite(parsedMax)?parsedMax:null;
+  if(!(min>=6&&min<=42)||Number.isFinite(max)&&(max<min||max>42)) return null;
+  // Una referencia con solo título no basta para sostener una semana clínica: debe poder comprobarse.
+  const sources=prenatalGaSources(g).filter(ref=>ref.url||ref.doi||ref.pmid||ref.pmcid||ref.nbk||ref.work_id);
+  if(!sources.length) return null;
+  return {min,max,sources,source_type:'ai_brain_web_candidate',updated_at:new Date().toISOString(),note:String(g.justificacion||g.justification||g.note||'').trim(),confidence:String(g.confianza||g.confidence||'').trim()};
+}
+async function searchPrenatalGaEvidence(ids, out, options){
+  options=options||{};
+  if(!anyProvider()){ if(out) out.innerHTML='<div class="err">Configura una API key en ⚙ Ajustes.</div>'; return {prepared:0,omitted:0,failed:0}; }
+  const byId=new Map(allPrenatalFindingRecords().map(row=>[row.id,row]));
+  const targets=[...new Set((ids||[]).filter(id=>byId.has(id)))].map(id=>byId.get(id));
+  if(!targets.length){ if(out) out.innerHTML='<div class="err">No hay HPO en el ámbito elegido.</div>'; return {prepared:0,omitted:0,failed:0}; }
+  const batches=[]; for(let i=0;i<targets.length;i+=6) batches.push(targets.slice(i,i+6));
+  let prepared=0, omitted=0, failed=0;
+  const system='Eres especialista sénior en medicina materno-fetal, ecografía prenatal y embriología clínica. Investiga la VENTANA DE VISIBILIDAD ECOGRÁFICA de cada HPO fetal solicitado. "min" es la primera semana gestacional en la que el hallazgo puede identificarse de forma fiable mediante ecografía clínica; NO es el inicio embriológico de la anomalía. "max" es la última semana en que suele seguir siendo identificable; usa null si persiste hasta el final de la gestación. Distingue, cuando afecte a la cifra, ecografía transvaginal/transabdominal, cribado rutinario y técnicas especializadas, y explícalo brevemente en "justificacion". Contrasta primero los pasajes aportados del Segundo Cerebro y completa o verifica con búsqueda científica web. Prioriza guías o consensos de ISUOG, SMFM, ACOG, RCOG u otras sociedades, protocolos ecográficos, revisiones sistemáticas y estudios primarios. Cada ventana debe tener al menos una referencia REAL que respalde ESPECÍFICAMENTE esas semanas, con URL comprobable y DOI/PMID/NBK cuando exista. No uses una fuente que solo asocie el HPO con una enfermedad pero no sustente la ventana. Si la evidencia no permite fijar una ventana fiable, omite ese HPO. No inventes referencias, identificadores ni semanas. Devuelve SOLO JSON {"HP:0000000":{"min":12,"max":null,"justificacion":"...","confianza":"alta|moderada|baja","sources":[{"titulo":"","url":"https://...","anio":"","doi":"","pmid":"","pmcid":"","nbk":""}]}}.';
+  for(let bi=0;bi<batches.length;bi++){
+    const batch=batches[bi], label='grupo '+(bi+1)+' de '+batches.length;
+    if(out) out.innerHTML='<div class="loading">Consultando Segundo Cerebro y literatura científica web · '+escHtml(label)+'…<br><span class="dx-meta">Las propuestas no se aplicarán sin tu confirmación.</span></div>';
+    const query='Visibilidad ecográfica fetal, primera y última semana gestacional y fuentes para '+batch.map(t=>t.id+' '+t.es).join('; ');
+    let ctx=''; try{ ctx=await ragContext(10,query); }catch(e){ ctx=''; }
+    const user='HPO solicitados:\n'+batch.map(t=>t.id+' — '+t.es+' — sistema: '+t.sistema).join('\n')+'\n\nPASAJES RECUPERADOS DEL SEGUNDO CEREBRO (pueden ser insuficientes; compruébalos y usa además búsqueda científica web):\n'+(ctx||'No se recuperaron pasajes pertinentes; realiza una búsqueda científica web rigurosa.');
+    try{
+      const resp=await callLLM({system,user,webSearch:true,maxTokens:6500,operation:'prenatal_hpo_window',thinking:true});
+      const json=extractJSON(resp);
+      if(!json||typeof json!=='object'){ failed+=batch.length; continue; }
+      const requested=new Set(batch.map(row=>row.id));
+      for(const row of batch){
+        const raw=json[row.id], candidate=prenatalGaCandidate(raw);
+        if(!candidate){ omitted++; continue; }
+        if(!requested.has(row.id)) continue;
+        _prenatalGaProposals[row.id]=candidate; prepared++;
+      }
+    }catch(e){ failed+=batch.length; }
+  }
+  if(out) out.innerHTML=`<div style="color:var(--ok);font-weight:600">✓ ${prepared} propuesta(s) preparadas; ninguna aplicada.</div><div class="dx-meta" style="margin-top:4px">${omitted?omitted+' HPO omitido(s) por falta de una ventana o fuente comprobable. ':''}${failed?failed+' HPO no pudieron investigarse en esta pasada. ':''}Abre cada propuesta, revisa las semanas y confirma manualmente sus referencias.</div>`;
+  return {prepared,omitted,failed};
+}
 function openPrenatalGaEditor(id, candidate, onSaved){
-  const current=PRENATAL_GA[id]||{}, base=candidate||current, draft={min:base.min||'',max:base.max||'',sources:prenatalGaSources(base),note:base.note||''};
+  const current=PRENATAL_GA[id]||{}, base=candidate||current, draft={min:base.min||'',max:base.max||'',sources:prenatalGaSources(base),note:base.note||''}; let aiCandidate=!!candidate;
   const ov=document.createElement('div'); ov.className='overlay'; ov.id='prenatalGaEditorOverlay';
   const history=Array.isArray(current.history)?current.history:[];
   ov.innerHTML=`<div class="modal" style="max-width:760px" role="dialog" aria-label="Editar semanas y fuentes de ${escA(id)}">
@@ -8088,7 +8159,8 @@ function openPrenatalGaEditor(id, candidate, onSaved){
       <div class="field"><label>Desde la semana <span class="dx-meta">(primera visibilidad documentada)</span></label><input id="pgaMin" type="number" min="6" max="42" value="${escA(draft.min)}"></div>
       <div class="field"><label>Hasta la semana <span class="dx-meta">(vacío = persiste hasta el final de la gestación)</span></label><input id="pgaMax" type="number" min="6" max="42" value="${escA(draft.max)}"></div>
     </div>
-    <h3 style="margin:10px 0 3px">Fuentes bibliográficas</h3>
+    <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:10px 0 3px"><h3 style="margin:0">Fuentes bibliográficas</h3><button class="btn primary" id="pgaSearchAi">✨ Buscar esta ventana con IA</button></div>
+    <div id="pgaAiOut" class="dx-meta" style="margin:4px 0"></div>
     <div class="dx-meta">Estas referencias se incorporan al Catálogo Maestro y la ficha del HPO guarda el vínculo con ellas.</div>
     <div id="pgaSources"></div>
     <div class="field"><label>Justificación o nota clínica</label><input id="pgaNote" value="${escA(draft.note)}" placeholder="Motivo de la corrección o matiz"></div>
@@ -8097,15 +8169,23 @@ function openPrenatalGaEditor(id, candidate, onSaved){
   </div>`;
   document.body.appendChild(ov);
   const sourceHost=ov.querySelector('#pgaSources');
-  buildFuentesEditor(sourceHost,()=>draft.sources,(arr)=>{ draft.sources=arr; });
+  const sourceEditor=buildFuentesEditor(sourceHost,()=>draft.sources,(arr)=>{ draft.sources=arr; });
   const close=()=>ov.remove(); ov.querySelector('#pgaCancel').addEventListener('click',close); ov.addEventListener('click',e=>{ if(e.target===ov) close(); });
+  ov.querySelector('#pgaSearchAi').addEventListener('click',async()=>{
+    const button=ov.querySelector('#pgaSearchAi'), aiOut=ov.querySelector('#pgaAiOut'); button.disabled=true;
+    const result=await searchPrenatalGaEvidence([id],aiOut,{individual:true}); button.disabled=false;
+    const proposal=_prenatalGaProposals[id]; if(!result.prepared||!proposal) return;
+    aiCandidate=true; draft.min=proposal.min||''; draft.max=proposal.max||''; draft.sources=prenatalGaSources(proposal); draft.note=proposal.note||draft.note||'';
+    ov.querySelector('#pgaMin').value=draft.min; ov.querySelector('#pgaMax').value=draft.max; ov.querySelector('#pgaNote').value=draft.note; sourceEditor.render();
+    aiOut.innerHTML+='<div class="study-flag" style="margin-top:7px"><b>Propuesta cargada en el formulario.</b> Todavía no está aplicada: revisa la ventana y sus fuentes y pulsa «Confirmar y guardar» solo si estás de acuerdo.</div>';
+  });
   ov.querySelector('#pgaSave').addEventListener('click',async()=>{
     const out=ov.querySelector('#pgaOut'), min=parseInt(ov.querySelector('#pgaMin').value), max=parseInt(ov.querySelector('#pgaMax').value), refs=prenatalGaSources({sources:draft.sources});
     if(!(min>=6&&min<=42)){ out.innerHTML='<div class="err">Indica una semana inicial entre 6 y 42.</div>'; return; }
     if(Number.isFinite(max)&&(max<6||max>42||max<min)){ out.innerHTML='<div class="err">La semana final debe estar entre la inicial y la 42.</div>'; return; }
     if(!refs.length&&!confirm('Esta ventana seguirá sin una referencia bibliográfica trazable. ¿Guardar de todos modos como corrección manual pendiente de fuente?')) return;
     const now=new Date().toISOString(), note=ov.querySelector('#pgaNote').value.trim();
-    setGa(id,min,Number.isFinite(max)?max:null,{sources:refs,source_type:refs.length?(candidate?'ai_web_reviewed':'manual_bibliographic'):'manual',updated_at:now,note,record_history:true});
+    setGa(id,min,Number.isFinite(max)?max:null,{sources:refs,source_type:refs.length?(aiCandidate?'ai_brain_web_reviewed':'manual_bibliographic'):'manual',updated_at:now,note,record_history:true});
     out.innerHTML='<div class="loading">Guardando la ventana y vinculando sus referencias…</div>';
     await persistPrenatalGa('prenatal: semanas y fuentes aprobadas para '+id);
     if(refs.length){ try{ await ensureFuentesInRepo(refs); }catch(e){} _fichaRefSet=null; }
@@ -8143,12 +8223,21 @@ function renderPrenatalGaManager(){
 function openPrenatalGaManager(){
   let ov=document.getElementById('prenatalGaManagerOverlay'); if(ov){ renderPrenatalGaManager(); return; }
   ov=document.createElement('div'); ov.className='overlay'; ov.id='prenatalGaManagerOverlay';
-  ov.innerHTML=`<div class="modal modal-full" role="dialog" aria-label="Ventanas de visibilidad y fuentes"><div style="display:flex;align-items:center;gap:10px"><h2 style="margin:0">Ventanas de visibilidad ecográfica y fuentes</h2><span id="pgaManagerCount" class="pop-badge"></span><span style="flex:1"></span><button class="btn ghost" id="pgaManagerClose">Cerrar</button></div><div class="msub">Una fila por HPO. La ventana va desde la primera semana documentada hasta la última; si persiste, termina al final de la gestación. Busca, ordena y revisa la referencia que la respalda.</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0"><input id="pgaManagerSearch" type="text" placeholder="Buscar HPO, nombre, sistema o fuente…" style="flex:1;min-width:260px"><select id="pgaManagerSort"><option value="name">Ordenar por nombre</option><option value="hpo">Ordenar por código HPO</option><option value="week">Ordenar por semana inicial</option></select><select id="pgaManagerFilter"><option value="all">Todos</option><option value="missing">Sin fuente documentada</option><option value="proposed">Con propuesta pendiente</option></select></div><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-bottom:8px"><button class="btn ghost" id="pgaSelectVisible">Seleccionar visibles con ventana</button><button class="btn ghost" id="pgaSelectAll">Seleccionar todos con ventana</button><button class="btn ghost" id="pgaClearSelected">Limpiar selección</button><span id="pgaSelectedCount" class="dx-meta"></span><button class="btn primary" id="pgaAssignSource">Vincular fuente a seleccionados</button></div><div style="display:grid;grid-template-columns:28px minmax(230px,1.3fr) 170px minmax(260px,1.5fr) auto;gap:10px;padding:5px 6px;color:var(--ink3);font-size:11px"><span></span><b>HPO</b><b>Ventana desde → hasta</b><b>Referencia(s)</b><b>Acción</b></div><div id="pgaManagerList" style="overflow:auto;max-height:calc(100vh - 275px)"></div></div>`;
+  ov.innerHTML=`<div class="modal modal-full" role="dialog" aria-label="Ventanas de visibilidad y fuentes"><div style="display:flex;align-items:center;gap:10px"><h2 style="margin:0">Ventanas de visibilidad ecográfica y fuentes</h2><span id="pgaManagerCount" class="pop-badge"></span><span style="flex:1"></span><button class="btn ghost" id="pgaManagerClose">Cerrar</button></div><div class="msub">Una fila por HPO. La ventana va desde la primera semana documentada hasta la última; si persiste, termina al final de la gestación. Busca, ordena y revisa la referencia que la respalda.</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0"><input id="pgaManagerSearch" type="text" placeholder="Buscar HPO, nombre, sistema o fuente…" style="flex:1;min-width:260px"><select id="pgaManagerSort"><option value="name">Ordenar por nombre</option><option value="hpo">Ordenar por código HPO</option><option value="week">Ordenar por semana inicial</option></select><select id="pgaManagerFilter"><option value="all">Todos</option><option value="missing">Sin fuente documentada</option><option value="proposed">Con propuesta pendiente</option></select></div><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-bottom:8px"><button class="btn ghost" id="pgaSelectVisible">Seleccionar visibles con ventana</button><button class="btn ghost" id="pgaSelectAll">Seleccionar todos con ventana</button><button class="btn ghost" id="pgaClearSelected">Limpiar selección</button><span id="pgaSelectedCount" class="dx-meta"></span><button class="btn primary" id="pgaSearchVisibleAi" title="Si hay filas seleccionadas investiga esas; si no, investiga todas las visibles tras aplicar búsqueda y filtro">✨ Buscar semanas y fuentes con IA</button><button class="btn" id="pgaAssignSource">Vincular fuente a seleccionados</button></div><div id="pgaManagerAiOut" class="dx-meta" style="margin:4px 0 8px">La búsqueda contrasta el Segundo Cerebro con literatura científica web y solo prepara candidatos para revisión individual.</div><div style="display:grid;grid-template-columns:28px minmax(230px,1.3fr) 170px minmax(260px,1.5fr) auto;gap:10px;padding:5px 6px;color:var(--ink3);font-size:11px"><span></span><b>HPO</b><b>Ventana desde → hasta</b><b>Referencia(s)</b><b>Acción</b></div><div id="pgaManagerList" style="overflow:auto;max-height:calc(100vh - 315px)"></div></div>`;
   document.body.appendChild(ov); ov.querySelector('#pgaManagerClose').addEventListener('click',()=>ov.remove()); ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); });
   ov.querySelector('#pgaManagerSearch').addEventListener('input',renderPrenatalGaManager); ov.querySelector('#pgaManagerSort').addEventListener('change',renderPrenatalGaManager); ov.querySelector('#pgaManagerFilter').addEventListener('change',renderPrenatalGaManager);
   ov.querySelector('#pgaSelectVisible').addEventListener('click',()=>{ ov.querySelectorAll('[data-pga-select]:not(:disabled)').forEach(c=>_prenatalGaSelected.add(c.dataset.pgaSelect)); renderPrenatalGaManager(); });
   ov.querySelector('#pgaSelectAll').addEventListener('click',()=>{ allPrenatalFindingRecords().forEach(row=>{ const g=PRENATAL_GA[row.id]||{}; if(g.min||g.max) _prenatalGaSelected.add(row.id); }); renderPrenatalGaManager(); });
-  ov.querySelector('#pgaClearSelected').addEventListener('click',()=>{ _prenatalGaSelected.clear(); renderPrenatalGaManager(); }); ov.querySelector('#pgaAssignSource').addEventListener('click',openPrenatalGaBulkSourceEditor); renderPrenatalGaManager();
+  ov.querySelector('#pgaClearSelected').addEventListener('click',()=>{ _prenatalGaSelected.clear(); renderPrenatalGaManager(); });
+  ov.querySelector('#pgaSearchVisibleAi').addEventListener('click',async()=>{
+    const selected=[..._prenatalGaSelected], visible=[...ov.querySelectorAll('[data-pga-row]')].map(button=>button.dataset.pgaRow), ids=selected.length?selected:visible;
+    if(!ids.length){ showToast('No hay HPO seleccionados o visibles para investigar'); return; }
+    const scope=selected.length?(selected.length+' HPO seleccionados'):(visible.length+' HPO visibles con el filtro actual');
+    if(!confirm('Se consultará IA, Segundo Cerebro y búsqueda científica web para '+scope+'. Solo se crearán propuestas pendientes. ¿Continuar?')) return;
+    const button=ov.querySelector('#pgaSearchVisibleAi'), out=ov.querySelector('#pgaManagerAiOut'); button.disabled=true;
+    await searchPrenatalGaEvidence(ids,out,{manager:true}); button.disabled=false; renderPrenatalGaManager();
+  });
+  ov.querySelector('#pgaAssignSource').addEventListener('click',openPrenatalGaBulkSourceEditor); renderPrenatalGaManager();
 }
 function allPrenatalSyndromes(){
   const builtin=PRENATAL_SYNDROMES.map((s,i)=>ensurePrenatalProtocolMeta(s,{legacyIndex:i}));
@@ -8813,22 +8902,12 @@ async function revisarHallazgosIA(){
 /* Asigna a cada hallazgo (HPO) la ventana de visibilidad ecográfica (semana desde / hasta). Dato del SIGNO, no del síndrome. */
 async function analizarGaIA(force){
   const out=document.getElementById('prenatalIAupd'); if(!out) return;
-  if(!anyProvider()){ out.innerHTML='<div class="err">Configura una API key en ⚙ Ajustes.</div>'; return; }
   const all=[...PRENATAL_FINDINGS.flatMap(s=>s.terms.map(t=>({id:t.id, es:t.es}))), ...(PRENATAL_CUSTOM.findings||[]).map(t=>({id:t.id, es:t.es}))];
   const seen=new Set(); const todo=[];
   for(const t of all){ if(seen.has(t.id)) continue; seen.add(t.id); if(force || !PRENATAL_GA[t.id]) todo.push(t); }
   if(!todo.length){ out.innerHTML='<div style="color:var(--ok)">✓ Todos los hallazgos ya tienen semanas de visibilidad.</div>'; return; }
-  out.innerHTML='<div class="loading">Buscando semanas y referencias para '+todo.length+' hallazgos (IA · web)… No se aplicará ninguna sin revisión.</div>';
-  try{
-    const sys='Eres especialista en medicina materno-fetal. Para CADA signo ECOGRÁFICO FETAL de la lista, indica la SEMANA DE GESTACIÓN a partir de la cual es TÍPICAMENTE visible en ecografía ("min") y, si DEJA de ser visible a partir de cierta semana, hasta cuál ("max"; null si persiste o no aplica). Cada ventana debe incluir al menos una fuente bibliográfica REAL y específica: guía o práctica clínica de sociedad profesional (ISUOG/SMFM/ACOG/RCOG), revisión curada o artículo primario pertinente. NO inventes referencias ni URL; si no puedes documentar un dato fiable, OMÍTELO. Devuelve SOLO JSON {"HP:0000000":{"min":12,"max":null,"sources":[{"titulo":"","url":"https://...","anio":"","doi":"","pmid":""}]}, …} (semanas enteras).';
-    const user='Signos (id — nombre):\n'+todo.map(t=>t.id+' — '+t.es).join('\n');
-    const resp=await callLLM({system:sys, user, webSearch:true, maxTokens:3500, operation:'prenatal_hpo_window'});
-    const j=extractJSON(resp);
-    if(!j){ out.innerHTML='<div class="err">La IA no devolvió datos válidos. Reintenta.</div>'; return; }
-    let n=0, omitted=0; for(const id in j){ if(!/^HP:\d{7}$/.test(id)) continue; const g=j[id]||{}, refs=prenatalGaSources(g); if(!(g.min||g.max)||!refs.length){ omitted++; continue; } _prenatalGaProposals[id]={min:g.min||null,max:g.max||null,sources:refs,source_type:'ai_web_candidate',updated_at:new Date().toISOString()}; n++; }
-    out.innerHTML=`<div style="color:var(--ok);font-weight:600">✓ Preparadas ${n} propuesta(s) con fuente; ninguna se ha aplicado.</div><div class="dx-meta" style="margin-top:4px">${omitted?omitted+' resultado(s) se omitieron por no aportar una referencia trazable. ':''}Abre el listado para revisar y confirmar una a una.</div><button class="btn primary" id="pgaOpenProposals" style="margin-top:7px">Revisar propuestas de semanas</button>`;
-    out.querySelector('#pgaOpenProposals')?.addEventListener('click',()=>{ openPrenatalGaManager(); const f=document.getElementById('pgaManagerFilter'); if(f){ f.value='proposed'; renderPrenatalGaManager(); } });
-  }catch(e){ out.innerHTML='<div class="err">Error: '+e.message+'</div>'; }
+  const result=await searchPrenatalGaEvidence(todo.map(t=>t.id),out,{legacyButton:true});
+  if(result.prepared){ out.innerHTML+=`<button class="btn primary" id="pgaOpenProposals" style="margin-top:7px">Revisar propuestas de semanas</button>`; out.querySelector('#pgaOpenProposals')?.addEventListener('click',()=>{ openPrenatalGaManager(); const f=document.getElementById('pgaManagerFilter'); if(f){ f.value='proposed'; renderPrenatalGaManager(); } }); }
 }
 
 const PRENATAL_REFS={
@@ -9129,7 +9208,7 @@ function renderPrenatal(){
   const fil=document.getElementById('prenatalFilter'); if(fil) fil.addEventListener('input', e=>applyPrenatalFilter(e.target.value));
   const bIA=document.getElementById('btnSindIA'); if(bIA) bIA.addEventListener('click', actualizarSindromesIA);
   const bBulk=document.getElementById('btnPrenatalBulk'); if(bBulk) bBulk.addEventListener('click', openPrenatalBulkRegeneration);
-  const bGa=document.getElementById('btnGaIA'); if(bGa) bGa.addEventListener('click', analizarGaIA);
+  const bGa=document.getElementById('btnGaIA'); if(bGa) bGa.addEventListener('click',()=>analizarGaIA(false));
   const bGaManager=document.getElementById('btnGaManager'); if(bGaManager) bGaManager.addEventListener('click', openPrenatalGaManager);
   const bRev=document.getElementById('btnRevisarIA'); if(bRev) bRev.addEventListener('click', revisarHallazgosIA);
   box.querySelectorAll('[data-gaedit]').forEach(el=>{ const open=e=>{ e.preventDefault(); e.stopPropagation(); openPrenatalGaEditor(el.dataset.gaedit); }; el.addEventListener('click',open); el.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ open(e); } }); });
