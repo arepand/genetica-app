@@ -526,8 +526,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.0.2';
+const APP_VERSION='3.0.3';
 const CHANGELOG=[
+  {v:'3.0.3',d:'2026-07-17',c:['Consultar abre los PDF propios directamente en la página que contiene el pasaje y resalta el texto recuperado. El lector usa descargas parciales autenticadas de Google Drive para no cargar libros completos en memoria; el visor convencional de Drive queda como alternativa manual.','Las fuentes del chat y el resto de referencias bibliográficas muestran los accesos de Google Drive y ReadCube Papers, uno o ambos, según su disponibilidad real en el Catálogo Maestro y en tus bibliotecas.','Los tres modos de Consultar comparten ahora una única recuperación semántica reproducible; Rápido, Estándar y Profundo solo cambian la redacción y el razonamiento, no los documentos encontrados.','Ajustes deja de presentar como activa la transición cuando los dos Vector Store nuevos están completos, y el inventario bibliográfico usa el Catálogo Maestro en vez del sources.json histórico.','GeneReviews, Genotipia y otras fuentes web dejan de aparecer como PDF pendiente: se distinguen como recursos web que no necesitan archivo.']},
   {v:'3.0.2',d:'2026-07-17',c:['Documentos vuelve a reconocer la biblioteca: el Catálogo Maestro se lee primero desde su repositorio privado de GitHub, con compatibilidad para la ubicación antigua del segundo cerebro.','La lista de Google Drive enlaza cada archivo por su drive_id exacto con la obra canónica del Catálogo Maestro.','Los archivos ya catalogados dejan de aparecer como pendientes de indexación y se distinguen del índice documental heredado.']},
   {v:'3.0.1', d:'2026-07-17', c:['Drive: el botón <b>«Copiar acceso para la app local»</b> permanece visible en Documentos. Si la autorización ha caducado, abre Google Drive y copia el token nuevo en un solo paso; ya no queda oculto después de pulsar «Conectar».']},
   {v:'3.0.0', d:'2026-07-17', c:['Nuevo Catálogo Maestro bibliográfico: protocolos generales y prenatales, criterios prenatales, seguimiento, documentos, GeneReviews y divulgación comparten obras canónicas con work_id. DOI, PMID, PMCID, NBK e ISBN se muestran de forma homogénea y las coincidencias dudosas pasan a bandejas de revisión asistida.','Segundo cerebro separado: GeneReviews y el archivo documental usan Vector Stores independientes, con carga local reanudable, control de coste y actualización incremental. El almacén mixto anterior se conserva únicamente como rollback.','Archivo documental renovado: búsqueda natural, ordenación por título/nombre o fecha, título canónico antes que autor, año resaltado, metadatos específicos para artículos, libros, capítulos, normas, protocolos, congresos y presentaciones, estados de calidad y miniaturas.','Evidencia original en Consultar: cada cita conserva el pasaje y su localización; el visor lateral abre el PDF o EPUB relacionado. Las tablas y figuras documentales pueden mostrar el JPG exacto de Drive tras verificar asset_id y SHA-256, sin confundir una descripción automática con la imagen original.','GeneReviews 3.0: 888 capítulos, 9.879 apartados, 720 figuras oficiales y 7.464 tablas validadas. Las revisiones nuevas sustituyen a la versión activa solo tras validación y la anterior se conserva fuera de las búsquedas.','Protocolos y prenatal: bibliografía conectada al Catálogo, actualización asistida con segundo cerebro y búsqueda científica, ámbitos adulto/pediatría configurables y edición prenatal con semanas HPO como ventana desde–hasta, fuente bibliográfica e historial. Ninguna propuesta clínica se aplica sin confirmación.','Menor consumo de memoria: el repositorio documental se pagina, los índices reconstruibles pasan a IndexedDB, el log de IA se limita, y visores, búferes y URL temporales se liberan al terminar sin recortar documentos ni prestaciones.','Indexador local para macOS: seguimiento de extracción, OCR, incidencias, GeneReviews, Drive y cargas vectoriales; checkpoints por archivo/página, claves en el Llavero y acciones externas siempre separadas por aprobación.']},
@@ -1313,18 +1314,16 @@ const CHAT_MODES={
 function normalizedChatMode(mode){ return ({'openai-fast':'quick','hybrid-fast':'standard','openai-deep':'deep','hybrid-deep':'deep'})[mode] || (CHAT_MODES[mode]?mode:'quick'); }
 function chatModeInfo(){
   const mode=normalizedChatMode(loadCfg().chatMode); const def=CHAT_MODES[mode];
-  const retrieval=modelPlanForOperation('file_search_retrieve'); const answer=modelPlanForOperation(def.operation);
-  const answerPick=answer&&answer.primary, retrievePick=retrieval&&retrieval.primary;
-  const hybrid=!!(answerPick&&answerPick.provider==='anthropic'&&retrievePick);
-  const directPick=hybrid?retrievePick:(answerPick||retrievePick);
-  return {mode,label:def.label,hybrid,retrieveModel:directPick&&directPick.model,answerModel:answerPick&&answerPick.model,
-    answerProvider:answerPick&&answerPick.provider,uses:hybrid?('busca '+retrievePick.model+' + redacta '+answerPick.model):((directPick&&directPick.model)||'sin modelo')};
+  const answer=modelPlanForOperation(def.operation), answerPick=answer&&answer.primary;
+  const hybrid=!!(answerPick&&answerPick.provider==='anthropic');
+  return {mode,label:def.label,hybrid,retrieveModel:'OpenAI Retrieval API',answerModel:answerPick&&answerPick.model,
+    answerProvider:answerPick&&answerPick.provider,uses:answerPick?('búsqueda semántica + '+answerPick.model):'sin modelo de redacción'};
 }
 function chatModeOptionsHtml(sel){
   sel=normalizedChatMode(sel);
   return Object.keys(CHAT_MODES).map(k=>{
-    const answer=modelPlanForOperation(CHAT_MODES[k].operation), retrieval=modelPlanForOperation('file_search_retrieve');
-    const ap=answer&&answer.primary, rp=retrieval&&retrieval.primary; const uses=ap&&ap.provider==='anthropic'&&rp?('busca '+rp.model+' + redacta '+ap.model):((ap&&ap.model)||(rp&&rp.model)||'sin modelo');
+    const answer=modelPlanForOperation(CHAT_MODES[k].operation), ap=answer&&answer.primary;
+    const uses=ap?('búsqueda documental + '+ap.model):'sin modelo';
     return '<option value="'+k+'"'+(k===sel?' selected':'')+'>'+CHAT_MODES[k].label+' ('+uses+')</option>'; }).join('');
 }
 function loadCfg(){
@@ -1689,6 +1688,13 @@ async function saveFicha(ficha){
 function cacheDocs(idx){ safeLocalSet('fh_docs', JSON.stringify(idx)); }
 function cachedDocs(){ try{ return JSON.parse(localStorage.getItem('fh_docs')); }catch(e){ return null; } }
 function normUrl(u){ return (u||'').toLowerCase().trim().replace(/^https?:\/\//,'').replace(/^www\./,'').replace(/[#?].*$/,'').replace(/\/+$/,''); }
+function driveFileIdFromUrl(value){
+  const text=String(value||'').trim();
+  const match=text.match(/drive\.google\.com\/(?:file\/d\/|open\?(?:[^#]*&)?id=)([^/?&#]+)/i)
+    || text.match(/(?:^|[?&])id=([^&#]+)/i)
+    || text.match(/^drive:([^/?&#]+)$/i);
+  return match?decodeURIComponent(match[1]):'';
+}
 async function getDocsIndex(){
   if(ghConfigured()){
     try{ const r=await ghGetFile('docs/index.json'); if(r.json){ cacheDocs(r.json); return r.json; } if(r.missing) return {docs:[]}; }
@@ -1698,8 +1704,10 @@ async function getDocsIndex(){
 }
 function matchDoc(fuente, docs){
   if(!fuente) return null;
+  const directDriveId=String(fuente.driveId||fuente.drive_id||driveFileIdFromUrl(fuente.enlace||fuente.url)||'');
   const fu=normUrl(fuente.url), ft=normTxt(fuente.titulo||'');
   return (docs||[]).find(d=>{
+    if(directDriveId && String(d.driveId||d.drive_id||driveFileIdFromUrl(d.enlace||d.url)||'')===directDriveId) return true;
     if(docMatchesFuente(d, fuente)) return true;   // doi/pmid/NBK/url/título (incluye GeneReviews por NBK aunque el PMID difiera)
     if(fu && (normUrl(d.url)===fu || normUrl(d.enlace)===fu)) return true;
     if(d.doi && fuente.url && fuente.url.toLowerCase().includes(d.doi.toLowerCase())) return true;
@@ -2131,7 +2139,7 @@ function bibRefHtml(fuente, opts){
     doi: fuente.doi||(d&&d.doi)||doiFromUrl(fuente.url)||doiFromUrl(d&&d.url),
     pmid: fuente.pmid||(d&&d.pmid)||pmidFromUrl(fuente.url)||pmidFromUrl(d&&d.url),
     pmcid: fuente.pmcid||(d&&d.pmcid)||pmcidFromUrl(fuente.url)||pmcidFromUrl(d&&d.url),
-    readcube: fuente.readcube||''   // enlace ReadCube pegado a mano en la referencia (tiene prioridad)
+    readcube: fuente.readcube||(d&&d.readcube)||''   // enlace ReadCube pegado a mano en la referencia (tiene prioridad)
   };
   const grBadge=geneReviewsBadgeHtml(Object.assign({}, d||{}, fuente));   // badge propio si es GeneReviews (fecha de revisión + página + PDF)
   // Documento del repositorio CON fichero en Drive → SOLO el icono de Drive (limpio), clic para abrirlo; tooltip nativo.
@@ -2142,6 +2150,16 @@ function bibRefHtml(fuente, opts){
     return readcubeLibBadgeHtml(ids)+grBadge+` <a class="drive-ico"${openHref} title="${escA(t)}">${DRIVE_ICON}</a>`
       +(d.id && !opts.noAssign?' <a class="tip-ai bib-unassign" data-docid="'+escHtml(String(d.id))+'" title="Eliminar este documento asignado del índice">✕</a>':'')
       +readcubeMarkerHtml(ids);
+  }
+  // El Catálogo Maestro o el fichero citado por el Vector Store pueden conocer el Drive exacto aunque el
+  // antiguo docs/index.json todavía no lo contenga. Así la misma referencia puede mostrar Drive + Papers.
+  const work=masterWorkForReference(fuente)||masterWorkForDriveId(fuente.driveId||fuente.drive_id||driveFileIdFromUrl(fuente.enlace||fuente.url));
+  const directDriveId=String(fuente.driveId||fuente.drive_id||driveFileIdFromUrl(fuente.enlace||fuente.url)||(work&&work.drive_file_ids||[])[0]||'');
+  const suppliedDriveUrl=[fuente.enlace,fuente.url].find(value=>driveFileIdFromUrl(value))||'';
+  if(directDriveId||suppliedDriveUrl){
+    const href=suppliedDriveUrl||('https://drive.google.com/open?id='+encodeURIComponent(directDriveId));
+    const title=(fuente.titulo||'Documento')+' — abrir el archivo exacto en Google Drive';
+    return readcubeLibBadgeHtml(ids)+grBadge+` <a class="drive-ico" href="${escA(href)}" target="_blank" rel="noopener" title="${escA(title)}">${DRIVE_ICON}</a>`+readcubeMarkerHtml(ids);
   }
   // Referencia YA en el repositorio pero SIN fichero (cita externa auto-añadida) → solo badges, sin «asignar PDF».
   if(d) return readcubeLibBadgeHtml(ids)+grBadge+readcubeMarkerHtml(ids);
@@ -2533,6 +2551,7 @@ function openSettings(){
   const splitGeneReviewsStore=String(c.geneReviewsStore||'').trim();
   const splitDocumentsStore=String(c.documentsStore||'').trim();
   const legacyMixedStore=String(c.secondBrainStore||'').trim();
+  const splitStoresReady=!secondBrainSplitConfigError(splitGeneReviewsStore,splitDocumentsStore)&&!!splitGeneReviewsStore&&!!splitDocumentsStore;
   const ov=document.createElement('div');
   ov.className='overlay'; ov.id='settingsOverlay';
   ov.innerHTML = `
@@ -2578,7 +2597,7 @@ function openSettings(){
 
     <div class="cfg-pane" data-pane="sb">
     <div class="sec-note">Ariadna 3 separa los dos corpus: conserva el Vector Store ya validado de <b>GeneReviews</b> y usa otro independiente para <b>tus documentos</b>. El chat puede consultar ambos sin mezclarlos durante la actualización.</div>
-    ${legacyMixedStore?`<div class="sec-note" style="border-color:#9b7a32"><b>Almacén mixto actual (transición):</b> <code>${escHtml(legacyMixedStore)}</code><br>Seguirá siendo el activo mientras no estén configurados <b>los dos</b> almacenes nuevos. No se borra ni se reclasifica como GeneReviews.</div>`:''}
+    ${legacyMixedStore&&!splitStoresReady?`<div class="sec-note" style="border-color:#9b7a32"><b>Almacén mixto activo durante la transición:</b> <code>${escHtml(legacyMixedStore)}</code><br>Solo se utiliza mientras no estén configurados correctamente <b>los dos</b> almacenes nuevos.</div>`:legacyMixedStore&&splitStoresReady?`<details class="sec-note"><summary style="cursor:pointer"><b>Respaldo histórico conservado (no activo)</b></summary><div style="margin-top:5px"><code>${escHtml(legacyMixedStore)}</code><br>Consultar ya no usa este almacén. Se conserva únicamente para una reversión manual y segura.</div></details>`:''}
     <div class="field"><label>Vector Store de GeneReviews 3.0 <span class="dx-meta">(revisiones oficiales y sus figuras)</span></label>
       <input id="cfgSbGeneReviewsStore" type="text" value="${escHtml(splitGeneReviewsStore).replace(/"/g,'&quot;')}" placeholder="vs_… GeneReviews" autocomplete="off"></div>
     <div class="field"><label>Vector Store de documentos propios <span class="dx-meta">(nuevo; PDF, EPUB y futuras presentaciones)</span></label>
@@ -2590,18 +2609,19 @@ function openSettings(){
       <select id="cfgChatMode" style="width:100%; padding:8px 9px; border:1px solid var(--line); border-radius:8px; background:var(--panel2); color:var(--ink)">
         ${chatModeOptionsHtml(c.chatMode||'quick')}
       </select>
-      <div class="dx-meta" style="margin-top:5px;font-size:11px;line-height:1.5"><b>Rápido</b> prioriza latencia y coste; <b>Estándar</b> equilibra calidad; <b>Profundo</b> reserva el máximo razonamiento para consultas complejas. La política decide el proveedor y mantiene OpenAI File Search para recuperar los pasajes.</div></div>
+      <div class="dx-meta" style="margin-top:5px;font-size:11px;line-height:1.5"><b>Rápido</b> prioriza latencia y coste; <b>Estándar</b> equilibra calidad; <b>Profundo</b> reserva el máximo razonamiento para consultas complejas. Los tres reciben exactamente la misma búsqueda semántica; solo cambia el modelo que interpreta los pasajes.</div></div>
     <div class="field"><label>Documentos al CREAR protocolos</label>
       <div class="dx-meta" style="margin-top:2px;font-size:11px;line-height:1.5">Al crear o actualizar un protocolo, tus documentos + GeneReviews salen del <b>segundo cerebro</b>; la web aporta evidencia nueva y la redacción usa la política de <b>autoría de protocolos</b>. Actualmente: ${escHtml((modelPlanForOperation('protocol_create').primary&&prettyModel(modelPlanForOperation('protocol_create').primary.provider,modelPlanForOperation('protocol_create').primary.model))||'sin modelo disponible')}.</div></div>
-    <div class="field"><label>Inventario del segundo cerebro <span class="dx-meta">(lo que hay indexado, según sources.json)</span></label>
-      <button class="btn" id="cfgSbInvRefresh">↻ Cargar / refrescar inventario</button>
+    <div class="field"><label>Cobertura documental <span class="dx-meta">(Catálogo Maestro + estado real de los Vector Store)</span></label>
+      <button class="btn" id="cfgSbInvRefresh">↻ Comprobar cobertura</button>
       <span class="dx-meta" id="cfgSbInvStats" style="margin-left:8px"></span>
       <div class="seg" id="cfgSbInvType" style="margin-top:6px">
         <button type="button" data-t="all" class="on">Todo</button>
         <button type="button" data-t="gr">📖 GeneReviews</button>
         <button type="button" data-t="pdf">📄 Documentos</button>
+        <button type="button" data-t="web">🌐 Web</button>
         <button type="button" data-t="dup">⚠ Duplicados</button>
-        <button type="button" data-t="missing" title="Documentos de tu repositorio con PDF en Drive que NO están en el segundo cerebro (normalmente escaneados/sin texto que el pipeline no pudo extraer).">🚫 No en el 2º cerebro</button>
+        <button type="button" data-t="missing" title="Incidencias registradas en el Catálogo Maestro; no se infieren desde el sources.json antiguo.">⚠ Incidencias</button>
       </div>
       <input id="cfgSbInvSearch" type="text" placeholder="Buscar (enfermedad, NBK, DOI, PMID, ISBN, documento)…" autocomplete="off" style="width:100%;box-sizing:border-box;margin-top:6px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink);font-size:12px">
       <div id="cfgSbInvList" style="max-height:280px;overflow:auto;margin-top:6px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;background:var(--panel2)"></div>
@@ -2659,7 +2679,7 @@ function openSettings(){
     ov.querySelectorAll('.cfg-pane').forEach(p=>p.classList.toggle('on', p.dataset.pane===t));
   }));
 
-  // Inventario del segundo cerebro (recuento + filtro por tipo + buscador, desde sources.json)
+  // Cobertura del segundo cerebro: bibliografía del Catálogo Maestro + recuentos reales de OpenAI.
   const splitStoresStatus=ov.querySelector('#cfgSbStoresStatus');
   const splitGeneInput=ov.querySelector('#cfgSbGeneReviewsStore');
   const splitDocumentsInput=ov.querySelector('#cfgSbDocumentsStore');
@@ -2688,11 +2708,11 @@ function openSettings(){
   const invStats=ov.querySelector('#cfgSbInvStats'), invSearch=ov.querySelector('#cfgSbInvSearch'), invList=ov.querySelector('#cfgSbInvList'), invRefresh=ov.querySelector('#cfgSbInvRefresh');
   let invType='all';
   const renderInvList=()=>{ if(invList) invList.innerHTML = invType==='dup' ? sbDupRowsHtml() : invType==='missing' ? sbMissingRowsHtml() : sbInvRows(invSearch?invSearch.value:'', invType); };
-  function renderInv(){ if(invStats){ const cc=sbInvCounts(); invStats.innerHTML= cc.total? ('📖 <b>'+cc.gr+'</b> GeneReviews · 📄 <b>'+cc.pdf+'</b> documentos'+(cc.otro?' · '+cc.otro+' otros':'')) : 'Sin cargar'; } renderInvList(); }
+  function renderInv(){ if(invStats){ const cc=sbInvCounts(), ss=_sbStoreStats||{}, remote=(ss.genereviews!=null&&ss.documents!=null)?(' · VS: <b>'+ss.genereviews+'</b> + <b>'+ss.documents+'</b> archivos'):''; invStats.innerHTML=cc.total?('📚 <b>'+cc.total+'</b> referencias · 📖 <b>'+cc.gr+'</b> GeneReviews · 📄 <b>'+cc.pdf+'</b> con archivo · 🌐 <b>'+cc.web+'</b> web'+remote):'Sin cargar'; } renderInvList(); }
   ov.querySelectorAll('#cfgSbInvType button').forEach(b=>b.addEventListener('click', ()=>{ invType=b.dataset.t; ov.querySelectorAll('#cfgSbInvType button').forEach(x=>x.classList.toggle('on', x===b)); renderInvList(); }));
-  if(invRefresh) invRefresh.addEventListener('click', async ()=>{ if(invStats) invStats.textContent='Cargando…'; try{ await masterCacheDelete('secondbrain_sources','fh_sb_sources'); _sbSources=null; await loadSbSources(); }catch(e){} renderInv(); });
+  if(invRefresh) invRefresh.addEventListener('click', async ()=>{ if(invStats) invStats.textContent='Comprobando…'; try{ await Promise.all([loadMasterCatalogIndex(true),loadSbStoreStats(true),loadSbSources()]); }catch(e){} renderInv(); });
   if(invSearch) invSearch.addEventListener('input', renderInvList);
-  loadSbSources().then(renderInv);   // pinta al abrir si ya hay sources cacheadas/configuradas
+  Promise.all([loadMasterCatalogIndex(),loadSbStoreStats(),loadSbSources()]).then(renderInv);   // catálogo completo + estado remoto
 
   const resetOverrides=ov.querySelector('#cfgResetModelOverrides');
   if(resetOverrides) resetOverrides.addEventListener('click', ()=>{
@@ -3903,6 +3923,22 @@ function secondBrainStoreDescription(){
   else if(g.legacy.length) labels.push('almacén mixto heredado');
   return labels.join(' + ');
 }
+let _sbStoreStats=null;
+/* Recuento remoto real de archivos completados. Sirve para verificar el estado de los almacenes; el listado
+   bibliográfico procede del Catálogo Maestro, porque un documento puede ocupar varios archivos/chunks. */
+async function loadSbStoreStats(force){
+  if(force) _sbStoreStats=null;
+  if(_sbStoreStats) return _sbStoreStats;
+  const c=loadCfg(), g=secondBrainStoreGroups();
+  if(!c.openaiKey||!g.splitReady) return {};
+  const get=async id=>{ try{
+    const r=await fetch('https://api.openai.com/v1/vector_stores/'+encodeURIComponent(id),{headers:{Authorization:'Bearer '+c.openaiKey,'Content-Type':'application/json'},cache:'no-store'});
+    if(!r.ok) return null; const d=await r.json(); return Number(d&&d.file_counts&&d.file_counts.completed);
+  }catch(e){ return null; } };
+  const [genereviews,documents]=await Promise.all([get(g.genereviews[0]),get(g.documents[0])]);
+  _sbStoreStats={genereviews:Number.isFinite(genereviews)?genereviews:null,documents:Number.isFinite(documents)?documents:null};
+  return _sbStoreStats;
+}
 /* Mapa fichero→referencia (sources.json del repo del pipeline) → mostrar cada cita del chat como referencia
    real con su badge (GeneReviews/PMID/DOI) y «añadir a biblioteca». Su caché reconstruible vive en IndexedDB. */
 let _sbSources=null;
@@ -4419,8 +4455,11 @@ function masterDocumentRegistrationForDriveFile(file){
     _masterCatalog:true,_masterWork:work,_catalogCited:state.cited===true,_catalogSecondBrain:state.in_second_brain===true};
 }
 function canonicalBibliographyReference(ref){
-  ref=ref||{}; const work=masterWorkForReference(ref); if(!work) return ref;
+  ref=ref||{};
+  const suppliedDriveId=String(ref.driveId||ref.drive_id||driveFileIdFromUrl(ref.enlace||ref.url)||'');
+  const work=masterWorkForReference(ref)||masterWorkForDriveId(suppliedDriveId); if(!work) return ref;
   const ids=work.external_ids||{}, bib=work.bibliographic||{};
+  const driveIds=(work.drive_file_ids||[]).map(String), driveId=suppliedDriveId||driveIds[0]||'';
   return Object.assign({},ref,{
     work_id:work.work_id,
     titulo:work.title||ref.titulo||ref.title||'',
@@ -4430,7 +4469,9 @@ function canonicalBibliographyReference(ref){
     tipo:work.type||ref.tipo||'',
     doi:ids.doi||ref.doi||'', pmid:ids.pmid||ref.pmid||'', pmcid:ids.pmcid||ref.pmcid||'',
     nbk:ids.nbk||ref.nbk||'', isbn:ids.isbn||ref.isbn||'', legal_id:ids.legal_id||ref.legal_id||'',
-    url:bib.official_url||ref.url||''
+    url:bib.official_url||ref.url||'',
+    driveId:driveId||ref.driveId||ref.drive_id||'',
+    enlace:ref.enlace||(driveId?('https://drive.google.com/open?id='+encodeURIComponent(driveId)):'')
   });
 }
 /* Archivo documental del Catálogo Maestro. La consulta es deliberadamente local: interpreta tipos y
@@ -4506,11 +4547,23 @@ function masterArchiveHasFile(work){
   const state=(work&&work.state)||{};
   return state.pdf_available===true || (Array.isArray(work&&work.drive_file_ids) && work.drive_file_ids.length>0) || Number(work&&work.file_count)>0;
 }
+function masterArchiveIsGeneReviews(work){
+  const ids=(work&&work.external_ids)||{}, sources=(work&&work.source_ids||[]).map(x=>accLower(String(x)));
+  return !!ids.nbk || sources.some(x=>x.includes('genereview'));
+}
+/* Recursos nacidos como páginas vivas (GeneReviews, Genotipia y futuras bases web) no tienen un PDF
+   pendiente por defecto. Pueden enlazarse a un archivo si se añade uno, pero su ausencia no es incidencia. */
+function masterArchiveIsWebOnly(work){
+  const type=String(work&&work.type||''), sources=(work&&work.source_ids||[]).map(x=>accLower(String(x)));
+  return masterArchiveIsGeneReviews(work) || ['web_article','website','database_entry'].includes(type)
+    || sources.some(x=>/genotipia|\bomim\b|orphanet|\borpha\b/.test(x));
+}
 function masterArchiveFileFilterMatch(work,filter){
   const state=(work&&work.state)||{}, hasFile=masterArchiveHasFile(work);
   if(filter==='with_file') return hasFile;
   if(filter==='without_file') return !hasFile;
-  if(filter==='pending_pdf') return !hasFile && state.pending_pdf===true;
+  if(filter==='pending_pdf') return !hasFile && !masterArchiveIsWebOnly(work) && state.pending_pdf===true;
+  if(filter==='web_only') return !hasFile && masterArchiveIsWebOnly(work);
   if(filter==='not_indexed') return hasFile && state.in_second_brain!==true;
   if(filter==='issues') return state.needs_review===true || state.partial_index===true;
   return true;
@@ -4549,8 +4602,9 @@ function masterArchiveCardHtml(work){
   const typeLabel=(ids.nbk||sources.some(x=>x.includes('genereview')))?'GeneReviews':masterArchiveTypeLabel(work.type);
   const detailRows=masterArchiveBibliographicRows(work);
   if(masterArchiveHasFile(work)) states.push('Archivo disponible');
+  else if(masterArchiveIsWebOnly(work)) states.push('Web · no requiere PDF');
   else if(state.pending_pdf) states.push('PDF pendiente');
-  else states.push('Sin archivo');
+  else states.push('Archivo no asociado');
   if(state.in_second_brain) states.push('2º cerebro');
   if(state.partial_index) states.push('índice parcial');
   if(state.needs_review) states.push('revisar');
@@ -4560,8 +4614,8 @@ function renderMasterDocumentArchive(){
   const host=document.getElementById('docMasterArchive'); if(!host) return;
   const works=(_masterCatalogIndex&&_masterCatalogIndex.works)||[];
   if(!works.length){ host.innerHTML='<div class="placeholder">El Catálogo Maestro todavía no está disponible. Puedes actualizarlo desde las incidencias.</div>'; return; }
-  const counts={all:works.length,with_file:works.filter(w=>masterArchiveFileFilterMatch(w,'with_file')).length,without_file:works.filter(w=>masterArchiveFileFilterMatch(w,'without_file')).length,pending_pdf:works.filter(w=>masterArchiveFileFilterMatch(w,'pending_pdf')).length,not_indexed:works.filter(w=>masterArchiveFileFilterMatch(w,'not_indexed')).length,issues:works.filter(w=>masterArchiveFileFilterMatch(w,'issues')).length};
-  const filterDefs=[['all','Todo'],['without_file','Sin archivo'],['pending_pdf','PDF pendiente'],['with_file','Con archivo'],['not_indexed','Pendiente de indexación'],['issues','Con incidencia']];
+  const counts={all:works.length,with_file:works.filter(w=>masterArchiveFileFilterMatch(w,'with_file')).length,pending_pdf:works.filter(w=>masterArchiveFileFilterMatch(w,'pending_pdf')).length,web_only:works.filter(w=>masterArchiveFileFilterMatch(w,'web_only')).length,not_indexed:works.filter(w=>masterArchiveFileFilterMatch(w,'not_indexed')).length,issues:works.filter(w=>masterArchiveFileFilterMatch(w,'issues')).length};
+  const filterDefs=[['all','Todo'],['pending_pdf','Archivo/PDF pendiente'],['web_only','Web · sin PDF previsto'],['with_file','Con archivo'],['not_indexed','Pendiente de indexación'],['issues','Con incidencia']];
   host.innerHTML=`<section class="master-archive"><div class="master-archive-head"><div><h3>🔎 Archivo documental · Catálogo Maestro <span class="dx-meta">(${works.length})</span></h3><div class="dx-meta">Búsqueda local, sin consumo de IA. Interpreta tipo y tema sobre títulos, autores, palabras clave e identificadores.</div></div></div>
     <div id="masterArchiveFileFilters" style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 8px">${filterDefs.map(([id,label])=>`<button class="btn ghost" data-mafilter="${id}" aria-pressed="${_masterArchiveFileFilter===id?'true':'false'}" style="padding:4px 9px;font-size:11px">${escHtml(label)} <span class="dx-meta">${counts[id]}</span></button>`).join('')}</div>
     <input id="masterArchiveSearch" class="master-archive-search" type="search" autocomplete="off" placeholder="Ej.: libro sobre asesoramiento genético · artículo sobre Ehlers-Danlos"><div id="masterArchiveSummary" class="dx-meta" style="margin-top:8px"></div><div id="masterArchiveResults" class="master-archive-grid"></div></section>`;
@@ -4703,9 +4757,106 @@ async function renderDerivedVisualAsset(asset,driveId){
     host.querySelector('#chatVisualReconnect')?.addEventListener('click',()=>requestDriveForDerivedVisual(asset,driveId));
   }
 }
+/* El visor incrustado de Google Drive ignora con frecuencia #page=N y rechaza algunos libros grandes.
+   Para una cita textual usamos pdf.js con peticiones HTTP Range autenticadas: descarga solo las partes
+   necesarias para representar UNA página, la resalta y destruye el PDF en cuanto termina. */
+let _chatPdfLoadingTask=null, _chatPdfRequest=0;
+function pdfQuoteToken(value){
+  return String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('es').replace(/[^a-z0-9]+/g,'');
+}
+function pdfTextTokens(items){
+  const tokens=[];
+  (items||[]).forEach((item,itemIndex)=>{
+    const value=String(item&&item.str||'');
+    for(const match of value.matchAll(/[\p{L}\p{N}]+/gu)){
+      const token=pdfQuoteToken(match[0]); if(token) tokens.push({token,itemIndex});
+    }
+  });
+  return tokens;
+}
+/* Devuelve los items de texto que forman la coincidencia consecutiva más larga. Exige al menos cuatro
+   palabras para no pintar una coincidencia espuria en otra zona de la página. */
+function matchPdfQuoteItems(items,quote){
+  const page=pdfTextTokens(items), wanted=pdfTextTokens([{str:String(quote||'')}]);
+  const positions=new Map(); page.forEach((entry,index)=>{ if(!positions.has(entry.token)) positions.set(entry.token,[]); positions.get(entry.token).push(index); });
+  let best={length:0,pageStart:0,quoteStart:0};
+  for(let qi=0;qi<wanted.length;qi++) for(const pi of (positions.get(wanted[qi].token)||[])){
+    let length=0; while(qi+length<wanted.length&&pi+length<page.length&&wanted[qi+length].token===page[pi+length].token) length++;
+    if(length>best.length) best={length,pageStart:pi,quoteStart:qi};
+  }
+  if(best.length<4) return {itemIndexes:[],matchedWords:best.length,totalWords:wanted.length};
+  const itemIndexes=[...new Set(page.slice(best.pageStart,best.pageStart+best.length).map(entry=>entry.itemIndex))];
+  return {itemIndexes,matchedWords:best.length,totalWords:wanted.length};
+}
+function releaseChatPdfReader(){
+  _chatPdfRequest++;
+  const task=_chatPdfLoadingTask; _chatPdfLoadingTask=null;
+  if(task&&typeof task.destroy==='function'){ try{ task.destroy(); }catch(e){} }
+}
+function requestDriveForPdfPage(driveId,pageNumber,quote){
+  const client=ensureDriveTokenClient(), target=document.getElementById('chatPdfPageViewer');
+  if(!client){ if(target) target.innerHTML='<div class="err">Falta el Client ID de Google Drive en ⚙ Ajustes.</div>'; return; }
+  _onDriveToken=()=>renderChatPdfPage(driveId,pageNumber,quote);
+  client.requestAccessToken();
+}
+function chatPdfDriveFallback(driveId,pageNumber){
+  return `<details style="margin-top:8px"><summary class="tip-ai" style="display:inline">Usar el visor de Google Drive</summary><div style="margin-top:7px"><iframe title="Visor alternativo de Drive" src="${escA(sourceViewerUrl(driveId,pageNumber))}" style="width:100%;height:58vh;border:1px solid var(--line);border-radius:9px;background:white"></iframe><div class="dx-meta" style="margin-top:5px">Drive puede abrir por la portada o rechazar libros grandes. La página buscada es la ${escHtml(pageNumber||'?')}.</div></div></details>`;
+}
+async function renderChatPdfPage(driveId,pageNumber,quote){
+  const host=document.getElementById('chatPdfPageViewer'); if(!host||!driveId||!pageNumber) return;
+  if(!driveTokenValid()){
+    host.innerHTML='<div class="placeholder">Para abrir únicamente la página exacta y resaltarla, conecta Google Drive.<div style="margin-top:8px"><button class="btn primary" id="chatPdfConnect">Conectar Drive y mostrar página</button></div></div>'+chatPdfDriveFallback(driveId,pageNumber);
+    host.querySelector('#chatPdfConnect')?.addEventListener('click',()=>requestDriveForPdfPage(driveId,pageNumber,quote)); return;
+  }
+  if(!window.pdfjsLib){ host.innerHTML='<div class="err">No se ha cargado el lector PDF.</div>'+chatPdfDriveFallback(driveId,pageNumber); return; }
+  releaseChatPdfReader(); const request=++_chatPdfRequest;
+  host.innerHTML='<div class="loading">Abriendo solo la página '+escHtml(pageNumber)+' y localizando el pasaje…</div>';
+  let pdf=null,page=null,loadingTask=null;
+  try{
+    pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    const url='https://www.googleapis.com/drive/v3/files/'+encodeURIComponent(driveId)+'?alt=media';
+    loadingTask=pdfjsLib.getDocument({url,httpHeaders:{Authorization:'Bearer '+_driveToken},withCredentials:false,
+      rangeChunkSize:1024*1024,disableStream:true,disableAutoFetch:true});
+    _chatPdfLoadingTask=loadingTask; pdf=await loadingTask.promise;
+    if(request!==_chatPdfRequest||!document.getElementById('chatPdfPageViewer')) return;
+    const requested=Math.trunc(Number(pageNumber));
+    if(!(requested>=1&&requested<=pdf.numPages)) throw new Error('La página '+requested+' no existe en este PDF ('+pdf.numPages+' páginas).');
+    page=await pdf.getPage(requested);
+    const base=page.getViewport({scale:1}), available=Math.max(520,Math.min(1050,(host.clientWidth||760)-8));
+    const scale=Math.max(.8,Math.min(2.1,available/base.width)), viewport=page.getViewport({scale});
+    const ratio=Math.min(2,window.devicePixelRatio||1), canvas=document.createElement('canvas');
+    canvas.width=Math.ceil(viewport.width*ratio); canvas.height=Math.ceil(viewport.height*ratio);
+    canvas.style.width=viewport.width+'px'; canvas.style.height=viewport.height+'px';
+    const context=canvas.getContext('2d',{alpha:false});
+    await page.render({canvasContext:context,viewport,transform:ratio===1?null:[ratio,0,0,ratio,0,0]}).promise;
+    const content=await page.getTextContent(), match=matchPdfQuoteItems(content.items,quote);
+    if(request!==_chatPdfRequest||!document.getElementById('chatPdfPageViewer')) return;
+    host.innerHTML=`<div class="dx-meta" style="margin-bottom:6px"><b>Página ${escHtml(requested)} de ${escHtml(pdf.numPages)}</b> · descarga parcial, sin cargar el libro completo · ${match.itemIndexes.length?'pasaje resaltado':'no se pudo alinear el texto automáticamente'}</div><div id="chatPdfCanvasWrap" style="position:relative;width:${Math.ceil(viewport.width)}px;height:${Math.ceil(viewport.height)}px;max-width:100%;margin:0 auto;background:white;box-shadow:0 0 0 1px var(--line);overflow:hidden"></div>${chatPdfDriveFallback(driveId,requested)}`;
+    const wrap=host.querySelector('#chatPdfCanvasWrap'); wrap.appendChild(canvas);
+    const selected=new Set(match.itemIndexes);
+    for(const [index,item] of content.items.entries()) if(selected.has(index)&&item&&item.transform){
+      const tx=pdfjsLib.Util.transform(viewport.transform,item.transform), height=Math.max(8,Math.hypot(tx[2],tx[3]));
+      const mark=document.createElement('span'); mark.setAttribute('aria-label','Texto relacionado');
+      mark.style.cssText='position:absolute;pointer-events:none;background:rgba(255,214,10,.42);box-shadow:0 0 0 1px rgba(255,176,0,.5);mix-blend-mode:multiply;border-radius:2px;';
+      mark.style.left=Math.max(0,tx[4]-1)+'px'; mark.style.top=Math.max(0,tx[5]-height*0.88)+'px';
+      mark.style.width=Math.max(3,Math.abs(Number(item.width||0)*scale)+2)+'px'; mark.style.height=Math.max(6,height*1.02)+'px';
+      wrap.appendChild(mark);
+    }
+  }catch(error){
+    if(request!==_chatPdfRequest||!document.getElementById('chatPdfPageViewer')) return;
+    const auth=/401|unauthori|password|token/i.test(String(error&&error.message||''));
+    if(auth){ _driveToken=null; _driveTokExp=0; }
+    host.innerHTML='<div class="placeholder" style="border-color:#e0a53f">'+escHtml(error.message||'No se pudo abrir la página exacta.')+(auth?'<div style="margin-top:8px"><button class="btn primary" id="chatPdfReconnect">Volver a conectar Drive</button></div>':'')+'</div>'+chatPdfDriveFallback(driveId,pageNumber);
+    host.querySelector('#chatPdfReconnect')?.addEventListener('click',()=>requestDriveForPdfPage(driveId,pageNumber,quote));
+  }finally{
+    if(page){ try{ page.cleanup(); }catch(e){} }
+    if(pdf){ try{ await pdf.destroy(); }catch(e){} }
+    if(_chatPdfLoadingTask===loadingTask) _chatPdfLoadingTask=null;
+  }
+}
 function releaseChatSourceViewer(){
   const host=document.getElementById('chatSourceViewer'); if(!host) return;
-  _chatVisualRequest++; releaseChatVisualObjectUrl();
+  _chatVisualRequest++; releaseChatVisualObjectUrl(); releaseChatPdfReader();
   host.innerHTML=''; host.style.display='none';
 }
 function openChatSourceViewer({driveId,format,unitKind,unitNumber,quote,visualAsset}={}){
@@ -4716,14 +4867,21 @@ function openChatSourceViewer({driveId,format,unitKind,unitNumber,quote,visualAs
   const label=visualAsset?.label||(unitNumber?((unitKind||'página')+' '+unitNumber):'fragmento localizado');
   const driveUrl='https://drive.google.com/open?id='+encodeURIComponent(driveId)+(isPdf&&unitNumber?'#page='+encodeURIComponent(unitNumber):'');
   host.style.display='block';
-  const original=visualAsset&&isPdf?`<div style="margin-top:8px"><button class="btn ghost" id="chatSourcePdfToggle">Mostrar también la página original del PDF</button><div id="chatSourcePdfLazy"></div></div>`:isPdf?`<iframe title="Original PDF" src="${escA(sourceViewerUrl(driveId,unitNumber))}" style="width:100%;height:62vh;border:1px solid var(--line);border-radius:9px;background:white"></iframe><div class="dx-meta" style="margin-top:5px">El fragmento indica la página exacta. Si el visor de Drive no salta automáticamente, usa el número mostrado arriba.</div>`:`<div class="placeholder">El fragmento se ha localizado en ${escHtml(label)}. Google Drive no ofrece un visor integrado fiable para ${escHtml((format||'este formato').toUpperCase())}; ábrelo con el botón superior.</div>`;
+  const exactPage=isPdf&&unitNumber?'<div id="chatPdfPageViewer"></div>':'';
+  const original=visualAsset&&isPdf&&unitNumber?`<div style="margin-top:8px"><button class="btn ghost" id="chatSourcePdfToggle">Mostrar también la página original resaltada</button><div id="chatSourcePdfLazy"></div></div>`:isPdf&&unitNumber?exactPage:isPdf?chatPdfDriveFallback(driveId,null):`<div class="placeholder">El fragmento se ha localizado en ${escHtml(label)}. Google Drive no ofrece un visor integrado fiable para ${escHtml((format||'este formato').toUpperCase())}; ábrelo con el botón superior.</div>`;
   host.innerHTML=`<div style="display:flex;gap:8px;align-items:flex-start"><div style="flex:1;min-width:0"><b>${escHtml(title)}</b><div class="dx-meta">${escHtml(label)} · ${escHtml((format||'pdf').toUpperCase())}</div></div><button class="btn ghost" id="chatSourceViewerClose" title="Cerrar">✕</button></div><blockquote style="margin:8px 0;padding:7px 10px;border-left:3px solid var(--accent);font-size:11.5px;line-height:1.45;white-space:pre-wrap;max-height:150px;overflow:auto">${escHtml(String(quote||'').slice(0,2000))}</blockquote><div style="display:flex;gap:6px;margin-bottom:7px"><a class="btn ghost" href="${escA(driveUrl)}" target="_blank" rel="noopener">Abrir original en Drive</a></div>${visualAsset?'<div id="chatDerivedVisual"></div>':''}${original}`;
   host.querySelector('#chatSourceViewerClose')?.addEventListener('click',releaseChatSourceViewer);
-  host.querySelector('#chatSourcePdfToggle')?.addEventListener('click',event=>{ const target=host.querySelector('#chatSourcePdfLazy'); if(!target) return; target.innerHTML=`<iframe title="Original PDF" src="${escA(sourceViewerUrl(driveId,unitNumber))}" style="width:100%;height:58vh;margin-top:7px;border:1px solid var(--line);border-radius:9px;background:white"></iframe><div class="dx-meta" style="margin-top:5px">Página ${escHtml(unitNumber||'localizada')} del PDF original.</div>`; event.currentTarget.remove(); });
+  host.querySelector('#chatSourcePdfToggle')?.addEventListener('click',event=>{ const target=host.querySelector('#chatSourcePdfLazy'); if(!target) return; target.innerHTML=exactPage; event.currentTarget.remove(); renderChatPdfPage(driveId,unitNumber,quote); });
   if(visualAsset) renderDerivedVisualAsset(visualAsset,driveId);
+  else if(isPdf&&unitNumber) renderChatPdfPage(driveId,unitNumber,quote);
 }
-/* Inventario del segundo cerebro (a partir de sources.json que ya carga Ariadna): recuento + lista + buscador. */
-function sbInvCounts(){ const s=_sbSources||{}; let gr=0,pdf=0,otro=0; for(const v of Object.values(s)){ if(v.source==='GeneReviews') gr++; else if(v.source==='PDF') pdf++; else otro++; } return {gr,pdf,otro,total:Object.keys(s).length}; }
+/* La cobertura bibliográfica se obtiene del Catálogo Maestro completo. sources.json se conserva únicamente
+   como mapa de compatibilidad fichero→referencia para las citas de cargas antiguas. */
+function sbInvCounts(){
+  const works=(_masterCatalogIndex&&_masterCatalogIndex.works)||[];
+  if(works.length){ const gr=works.filter(masterArchiveIsGeneReviews).length, pdf=works.filter(masterArchiveHasFile).length, web=works.filter(w=>masterArchiveIsWebOnly(w)&&!masterArchiveIsGeneReviews(w)).length; return {gr,pdf,web,otro:Math.max(0,works.length-gr-pdf-web),total:works.length}; }
+  const s=_sbSources||{}; let gr=0,pdf=0; for(const v of Object.values(s)){ if(v.source==='GeneReviews') gr++; else if(v.source==='PDF') pdf++; } return {gr,pdf,web:0,otro:Math.max(0,Object.keys(s).length-gr-pdf),total:Object.keys(s).length};
+}
 /* Posibles DUPLICADOS: documentos distintos que comparten DOI, PMID, ISBN o título casi idéntico. Devuelve grupos. */
 function sbDupGroups(){
   const s=_sbSources||{}; const byId=new Map();
@@ -4768,6 +4926,13 @@ function sbMissingDocs(){
   return ((cachedDocs()||{}).docs||[]).filter(d=>d.driveId && !inSb(d));
 }
 function sbMissingRowsHtml(){
+  const works=(_masterCatalogIndex&&_masterCatalogIndex.works)||[];
+  if(works.length){
+    const issues=works.filter(w=>w.state&&(w.state.needs_review===true||w.state.partial_index===true));
+    if(!issues.length) return '<div class="dx-meta" style="padding:4px 0">✓ El Catálogo Maestro no registra incidencias documentales activas. El recuento superior procede directamente de OpenAI.</div>';
+    return '<div class="dx-meta" style="padding:2px 0 6px">⚠ <b>'+issues.length+'</b> obra(s) requieren revisión según el Catálogo Maestro. No se infieren ausencias desde el sources.json histórico.</div>'
+      +issues.slice(0,400).map(w=>'<div style="padding:3px 0;border-bottom:1px solid var(--line);font-size:12px">'+bibliographyEntryHtml(canonicalBibliographyReference({work_id:w.work_id,titulo:w.title}))+'</div>').join('');
+  }
   const miss=sbMissingDocs();
   if(miss===null) return '<div class="dx-meta" style="padding:4px 0">Pulsa «↻ Cargar / refrescar inventario» arriba para poder comparar tu repositorio con el segundo cerebro.</div>';
   if(!miss.length) return '<div class="dx-meta" style="padding:4px 0">✓ Todos tus documentos con PDF en Drive están en el segundo cerebro.</div>';
@@ -4778,18 +4943,33 @@ function sbMissingRowsHtml(){
 /* Una entrada de sources.json → fuente (para pintarla como cualquier referencia de Ariadna). */
 function sbFuente(k,v){
   if(v.source==='GeneReviews') return {titulo:grRefTitle(v.nbk, v.titulo), url:v.url||(v.nbk?('https://www.ncbi.nlm.nih.gov/books/'+String(v.nbk).toUpperCase()+'/'):''), nbk:v.nbk, gr_updated:v.updated, gr_initial:v.initial||'', _src:'GeneReviews'};
-  return {titulo:v.titulo||k, url:v.url||'', doi:v.doi||'', pmid:v.pmid||'', isbn:v.isbn||'', _src:'PDF'};
+  return {titulo:v.titulo||k, url:v.url||'', enlace:v.enlace||'', driveId:v.driveId||v.drive_id||driveFileIdFromUrl(v.enlace||v.url)||(masterWorkForDriveId(k)?k:''), doi:v.doi||'', pmid:v.pmid||'', isbn:v.isbn||'', _src:'PDF'};
 }
 /* Icono de Drive para abrir un documento del store: si bibRefHtml ya lo pinta (doc en tu repo local) no repite;
    si es un PDF con enlace de Drive y no está en el repo local, lo añade. */
 function sbDriveIcon(f){
   const d=matchDoc(f, (cachedDocs()||{}).docs||[]);
   if(d && (d.driveId || d.enlace)) return '';   // bibRefHtml ya muestra el icono de Drive del repo
-  if(f._src==='PDF' && f.url) return ' <a class="drive-ico" href="'+escA(f.url)+'" target="_blank" rel="noopener" title="Abrir el documento en Google Drive">'+DRIVE_ICON+'</a>';
+  const work=masterWorkForReference(f)||masterWorkForDriveId(f&&f.driveId), driveId=String((f&&(f.driveId||f.drive_id||driveFileIdFromUrl(f.enlace||f.url)))||(work&&work.drive_file_ids||[])[0]||'');
+  const supplied=[f&&f.enlace,f&&f.url].find(value=>driveFileIdFromUrl(value))||'';
+  if(driveId||supplied){ const href=supplied||('https://drive.google.com/open?id='+encodeURIComponent(driveId)); return ' <a class="drive-ico" href="'+escA(href)+'" target="_blank" rel="noopener" title="Abrir el documento en Google Drive">'+DRIVE_ICON+'</a>'; }
   return '';
 }
 function sbInvRows(filter, type){
-  const s=_sbSources||{}; filter=String(filter||'').trim().toLowerCase(); type=type||'all';
+  const works=(_masterCatalogIndex&&_masterCatalogIndex.works)||[]; filter=String(filter||'').trim().toLowerCase(); type=type||'all';
+  if(works.length){
+    const rows=[];
+    for(const w of works){
+      const isGr=masterArchiveIsGeneReviews(w), hasFile=masterArchiveHasFile(w), isWeb=masterArchiveIsWebOnly(w)&&!isGr;
+      if(type==='gr'&&!isGr) continue; if(type==='pdf'&&!hasFile) continue; if(type==='web'&&!isWeb) continue;
+      const hay=accLower([w.title,w.short_title,w.author,w.type,Object.values(w.external_ids||{}).join(' '),Object.values(w.bibliographic||{}).filter(x=>typeof x==='string').join(' ')].join(' '));
+      if(filter&&!hay.includes(accLower(filter))) continue;
+      rows.push('<div style="padding:4px 0;border-bottom:1px solid var(--line);font-size:12px;line-height:1.55">'+bibliographyEntryHtml(canonicalBibliographyReference({work_id:w.work_id,titulo:w.title}))+'</div>');
+      if(rows.length>=400){ rows.push('<div class="dx-meta" style="padding:4px 0">… afina la búsqueda para ver más</div>'); break; }
+    }
+    return rows.length?rows.join(''):'<div class="dx-meta" style="padding:4px 0">Sin resultados'+(filter?' para «'+escHtml(filter)+'»':'')+'</div>';
+  }
+  const s=_sbSources||{};
   const rows=[];
   for(const [k,v] of Object.entries(s)){
     const isGr=v.source==='GeneReviews';
@@ -4798,7 +4978,7 @@ function sbInvRows(filter, type){
     if(filter && !hay.includes(filter)) continue;
     const f=sbFuente(k,v);
     rows.push('<div style="padding:4px 0;border-bottom:1px solid var(--line);font-size:12px;line-height:1.55">'
-      +bibliographyEntryHtml(f)+sbDriveIcon(f)+'</div>');
+      +bibliographyEntryHtml(f)+'</div>');
     if(rows.length>=400){ rows.push('<div class="dx-meta" style="padding:4px 0">… afina la búsqueda para ver más</div>'); break; }
   }
   return rows.length?rows.join(''):('<div class="dx-meta" style="padding:4px 0">'+(Object.keys(s).length?('Sin resultados'+(filter?' para «'+escHtml(filter)+'»':'')):'Pulsa «↻ Cargar inventario» (necesita el repo de referencias + token en Ajustes).')+'</div>');
@@ -4840,7 +5020,7 @@ function chatSourceFuente(name){
   const s=(_sbSources||{})[key];
   if(s){
     if(s.source==='GeneReviews') return {titulo:grRefTitle(s.nbk, s.titulo), url:s.url, nbk:s.nbk, gr_updated:s.updated, gr_initial:s.initial||'', _src:'GeneReviews'};
-    return {titulo:s.titulo||name, url:s.url||'', doi:s.doi||'', pmid:s.pmid||'', _src:s.source};
+    return canonicalBibliographyReference({titulo:s.titulo||name, url:s.url||'', enlace:s.enlace||'', driveId:s.driveId||s.drive_id||driveFileIdFromUrl(s.enlace||s.url)||(masterWorkForDriveId(key)?key:''), doi:s.doi||'', pmid:s.pmid||'', pmcid:s.pmcid||'', isbn:s.isbn||'', _src:s.source});
   }
   const work=masterWorkForDriveId(key);
   if(work){
@@ -4852,7 +5032,7 @@ function chatSourceFuente(name){
   return {titulo:String(name).replace(/\.(md|txt|pdf)$/i,'').replace(/__/g,' · ')};
 }
 const _CHAT_RULES=' REGLAS ESTRICTAS: (1) PROHIBIDO usar conocimiento general, externo o de memoria. (2) Si la respuesta no está en los pasajes, o tratan de OTRA enfermedad/gen/tema distinto al preguntado, responde EXACTAMENTE con la palabra NO_ENCONTRADO y nada más. (3) Nunca menciones un documento que no trate específicamente lo preguntado. Cuando SÍ esté en los pasajes: responde a NIVEL ESPECIALISTA (preciso, técnico, terminología y matices propios de un genetista clínico; SIN definiciones elementales). Si VARIAS fuentes tratan lo preguntado, INTEGRA TODAS en UNA sola respuesta coherente apoyándote en todas ellas (contrasta y combina). CONTEXTO TEMPORAL: fíjate en las FECHAS de las fuentes; si una guía/ley/documento ha sido SUSTITUIDA o actualizada por otra más reciente entre los pasajes, prioriza la vigente y AVISA de que la anterior quedó desfasada o derogada (no des como vigente algo superado). NO escribas una sección de «Fuentes» ni nombres de fichero: la app muestra por su cuenta TODAS las referencias utilizadas. Responde en español, con precisión, sin inventar.';
-const CHAT_SYSTEM_STORE='Eres un asistente documental para un GENETISTA CLÍNICO EXPERIMENTADO. Respondes SOLO con lo que aparezca en los PASAJES recuperados por file_search de SU documentación.'+_CHAT_RULES;
+const CHAT_SYSTEM_STORE='Eres un asistente documental para un GENETISTA CLÍNICO EXPERIMENTADO. Respondes SOLO con lo que aparezca en los PASAJES recuperados mediante búsqueda semántica de SU documentación.'+_CHAT_RULES;
 const CHAT_SYSTEM_HYBRID='Eres un asistente documental para un GENETISTA CLÍNICO EXPERIMENTADO. A continuación te doy PASAJES recuperados de SU documentación; respondes SOLO con lo que aparezca en ellos.'+_CHAT_RULES;
 /* Redacta con Claude (síntesis) a partir de los pasajes que recuperó OpenAI. Modo híbrido. */
 async function synthWithClaude(question, passages, model){
@@ -4866,46 +5046,44 @@ async function synthWithClaude(question, passages, model){
   const d=await r.json();
   return (d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').trim();
 }
-/* Consulta el/los Vector Store(s) vía la Responses API de OpenAI (File Search). Recupera SIEMPRE con OpenAI; la
-   redacción la hace OpenAI o (modo híbrido) Claude a partir de los pasajes recuperados. Respuesta única + citas. */
+async function searchVectorStores(query,ids){
+  const c=loadCfg(), requested=[...new Set((ids||[]).filter(validVectorStoreId))];
+  const searchOne=async id=>{
+    const body={query,max_num_results:12,rewrite_query:true,ranking_options:{ranker:'auto',score_threshold:0.2}};
+    let r, err='';
+    for(let attempt=1;;attempt++){
+      r=await fetch('https://api.openai.com/v1/vector_stores/'+encodeURIComponent(id)+'/search',{method:'POST',headers:{Authorization:'Bearer '+c.openaiKey,'Content-Type':'application/json'},body:JSON.stringify(body)});
+      if(r.ok) break; err=(await r.text()).slice(0,180);
+      if([429,500,502,503,504].includes(r.status)&&attempt<3){ await new Promise(resolve=>setTimeout(resolve,1200*attempt)); continue; }
+      throw new Error('OpenAI Retrieval '+r.status+' '+err);
+    }
+    const d=await r.json();
+    return (d.data||[]).map(item=>({storeId:id,fileId:item.file_id||'',filename:item.filename||item.file_name||item.file_id||'documento',score:Number(item.score)||0,
+      text:(item.content||[]).filter(part=>part&&part.type==='text').map(part=>part.text||'').join('\n').trim()})).filter(item=>item.text);
+  };
+  const groups=await Promise.all(requested.map(searchOne)), merged=[];
+  for(const item of groups.flat()){
+    const key=(item.fileId||item.filename)+'\n'+item.text; if(merged.some(x=>((x.fileId||x.filename)+'\n'+x.text)===key)) continue; merged.push(item);
+  }
+  merged.sort((a,b)=>b.score-a.score);
+  return merged.slice(0,18);
+}
+async function synthGroundedAnswer(question,passages){
+  const ctx=passages.map((p,i)=>'[Pasaje '+(i+1)+' · '+(p.filename||'?')+' · relevancia '+Number(p.score||0).toFixed(3)+']\n'+p.text).join('\n\n---\n\n');
+  return callLLM({operation:CHAT_MODES[chatModeInfo().mode].operation,system:CHAT_SYSTEM_HYBRID,user:'PASAJES:\n\n'+ctx+'\n\nPREGUNTA: '+question,maxTokens:1800});
+}
+/* La Retrieval API busca de forma determinista en cada Vector Store y devuelve pasajes, puntuación y fichero.
+   Solo después se redacta. Por ello los tres modos parten de la misma evidencia y no pueden discrepar por haber
+   decidido invocar (o no) la herramienta de búsqueda. */
 async function askRepoStore(input, ids){
-  const c=loadCfg(); const info=chatModeInfo();
-  const body={ model:info.retrieveModel, instructions:info.hybrid?'Recupera los pasajes más relevantes mediante file_search. No redactes una respuesta clínica; devuelve solo OK.':CHAT_SYSTEM_STORE, input,
-    // umbral de relevancia → descarta coincidencias flojas (p. ej. otra enfermedad); pedimos los resultados (con texto)
-    tools:[{type:'file_search', vector_store_ids:ids, max_num_results:12, ranking_options:{score_threshold:0.5}}],
-    include:['file_search_call.results'] };
-  if(info.hybrid) body.max_output_tokens=16;
-  // Reintentos ante errores TRANSITORIOS de OpenAI (429/500/502/503/504): el servidor a veces falla y basta reintentar.
-  let r, errTxt='';
-  for(let attempt=1; ; attempt++){
-    r=await fetch('https://api.openai.com/v1/responses', { method:'POST', headers:{Authorization:'Bearer '+c.openaiKey,'Content-Type':'application/json'}, body:JSON.stringify(body) });
-    if(r.ok) break;
-    errTxt=(await r.text()).slice(0,160);
-    const transitorio=[429,500,502,503,504].includes(r.status);
-    if(transitorio && attempt<3){ await new Promise(res=>setTimeout(res, 1200*attempt)); continue; }   // 1,2s · 2,4s
-    throw new Error('OpenAI '+r.status+(transitorio?' (error temporal del servidor; vuelve a intentarlo en un momento)':'')+' '+errTxt);
-  }
-  const d=await r.json();
-  let text=''; const cites=new Set(); const retrieved=new Set(); const passages=[];
-  for(const o of (d.output||[])){
-    if(o.type==='file_search_call'){ for(const rr of (o.results||[])){ if(!rr.filename) continue; retrieved.add(rr.filename);
-      const t = typeof rr.text==='string' ? rr.text : (Array.isArray(rr.content)?rr.content.map(x=>x&&x.text||'').join(' '):(rr.content||''));
-      passages.push({filename:rr.filename, text:t}); } }
-    if(o.type==='message'){ for(const cc of (o.content||[])){ if(cc.type==='output_text'){ text+=cc.text||''; for(const a of (cc.annotations||[])) if(a.filename) cites.add(a.filename); } } }
-  }
-  text=(text || d.output_text || '').trim();
   const notFound=()=>({ text:'No encuentro esto en tu documentación. El chat responde solo con tus documentos y las GeneReviews indexadas — si acabas de lanzar el segundo cerebro, puede que aún se esté cargando.', sources:[], notFound:true });
-  // GROUNDING: si el buscador no recuperó nada relevante → NO respondas de memoria
-  if(!retrieved.size) return notFound();
-  // MODO HÍBRIDO: redacta con Claude a partir de los pasajes recuperados. Nunca oculta un fallo usando un "OK" de recuperación.
-  if(info.hybrid && providerKey('anthropic')){
-    try{ text = await synthWithClaude(input, passages, info.answerModel); }
-    catch(e){ throw new Error('La recuperación documental terminó, pero falló la síntesis con '+prettyModel('anthropic',info.answerModel)+': '+e.message); }
-  }
+  const passages=await searchVectorStores(input,ids);
+  if(!passages.length) return notFound();
+  let text=''; try{ text=await synthGroundedAnswer(input,passages); }
+  catch(e){ throw new Error('La recuperación documental terminó, pero falló la interpretación de los pasajes: '+e.message); }
   if(/^NO_ENCONTRADO/i.test(text) || !text) return notFound();
-  // Muestra TODAS las fuentes citadas que además se recuperaron; si no hubo anotaciones, los documentos recuperados.
-  const src=[...cites].filter(f=>retrieved.has(f));
-  return { text, sources: src.length ? src : [...retrieved].slice(0,8), passages };   // passages = texto EXACTO recuperado por fichero
+  const sources=[...new Set(passages.map(p=>p.filename).filter(Boolean))].slice(0,10);
+  return {text,sources,passages};
 }
 async function askRepo(q){
   q=(q||'').trim(); if(!q) return;
@@ -4968,7 +5146,7 @@ function renderChatMsgs(){
             }
             const figs=f.nbk?grFiguresHtml(f.nbk):'';   // figuras del capítulo GeneReviews (embebidas de NCBI)
             const quote=sbQuoteHtml(m.passages, key);   // texto EXACTO recuperado (localizar la afirmación)
-            return '<div style="margin:2px 0">'+bibliographyEntryHtml(f)+sbDriveIcon(f)+' '+act+figs+quote+'</div>'; }).join('')
+            return '<div style="margin:2px 0">'+bibliographyEntryHtml(f)+' '+act+figs+quote+'</div>'; }).join('')
         + '</div></div>';
     }
     return `<div style="background:${bg};border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0"><div class="dx-meta" style="font-weight:600;margin-bottom:4px">${who}</div><div style="font-size:13.5px;line-height:1.6">${body}</div>${src}</div>`;
