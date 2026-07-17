@@ -526,8 +526,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.0.4';
+const APP_VERSION='3.0.5';
 const CHANGELOG=[
+  {v:'3.0.5',d:'2026-07-17',c:['Los HPO del editor prenatal son interactivos como los de los protocolos normales: muestran el nombre oficial de la ontología y, al pulsarlos, permiten buscar, comprobar o corregir el código. Al guardar una regeneración, cualquier HPO nuevo se incorpora también al selector prenatal y se repinta inmediatamente.','El diferencial prenatal deja de presentar una búsqueda genérica de GeneReviews como si fuera bibliografía. Las fuentes reales se muestran con el render común del Catálogo Maestro; los protocolos iniciales sin referencias quedan señalados como pendientes y permiten actualizar su evidencia antes de confirmar la recomendación de estudio.','Las fuentes GeneReviews de Consultar abren ahora la revisión oficial de NCBI en el pasaje literal utilizado e intentan seleccionarlo y resaltarlo automáticamente. Si NCBI ha modificado el texto o el navegador no admite fragmentos de texto, el mismo enlace conserva como alternativa la apertura del capítulo oficial.','Las citas documentales antiguas que solo conservaban un bloque —por ejemplo, «chunk 004»— resuelven bajo demanda la página exacta dentro del archivo ya indexado y abren el PDF en esa página con el pasaje resaltado, sin descargar ni volver a vectorizar el libro completo.','Los títulos bibliográficos con codificación heredada rota se reparan al mostrarse: «Bases genÃ©ticas de la conducta» vuelve a verse correctamente como «Bases genéticas de la conducta», sin modificar el archivo original.','Consultar permite plegar la columna de conversaciones, recuerda la preferencia y dedica todo el ancho disponible a la conversación y al documento original.','Las repreguntas conservan un contexto más amplio de la misma conversación para entender expresiones como «eso» o «el anterior», sin convertir el historial en evidencia clínica.','Incidencias y duplicados distinguen ahora claramente un borrador local de una resolución aplicada; la app local incorpora los paquetes confirmados y regenera la propuesta del Catálogo con cero borrados automáticos.']},
   {v:'3.0.4',d:'2026-07-17',c:['Consultar descompone cada pregunta en todas sus necesidades de evidencia y busca cada una en los dos Vector Store completos; una misma cuestión puede integrar varias fuentes y la respuesta debe cubrir todos los apartados planteados.','Las referencias mostradas bajo cada respuesta son únicamente las fuentes realmente utilizadas. Los cálculos derivados distinguen el documento que aporta los datos del que aporta el método, y nunca presentan el resultado calculado como si fuera una cifra publicada.','Nuevo modo «Máxima profundidad»: GPT-5.6 Sol con razonamiento alto, seleccionable dentro de cada conversación sin cambiar el modo predeterminado de las demás.','Las conversaciones de Consultar conservan una copia local y se sincronizan de forma segura con el repositorio privado de GitHub, por conversación, para recuperarlas en otros navegadores o dispositivos.','GeneReviews ya incorporadas al Catálogo Maestro dejan de ofrecerse erróneamente como referencias por añadir y se identifican como recursos indexados.']},
   {v:'3.0.3',d:'2026-07-17',c:['Consultar abre los PDF propios directamente en la página que contiene el pasaje y resalta el texto recuperado. El lector usa descargas parciales autenticadas de Google Drive para no cargar libros completos en memoria; el visor convencional de Drive queda como alternativa manual.','Las fuentes del chat y el resto de referencias bibliográficas muestran los accesos de Google Drive y ReadCube Papers, uno o ambos, según su disponibilidad real en el Catálogo Maestro y en tus bibliotecas.','Los tres modos de Consultar comparten ahora una única recuperación semántica reproducible; Rápido, Estándar y Profundo solo cambian la redacción y el razonamiento, no los documentos encontrados.','Ajustes deja de presentar como activa la transición cuando los dos Vector Store nuevos están completos, y el inventario bibliográfico usa el Catálogo Maestro en vez del sources.json histórico.','GeneReviews, Genotipia y otras fuentes web dejan de aparecer como PDF pendiente: se distinguen como recursos web que no necesitan archivo.']},
   {v:'3.0.2',d:'2026-07-17',c:['Documentos vuelve a reconocer la biblioteca: el Catálogo Maestro se lee primero desde su repositorio privado de GitHub, con compatibilidad para la ubicación antigua del segundo cerebro.','La lista de Google Drive enlaza cada archivo por su drive_id exacto con la obra canónica del Catálogo Maestro.','Los archivos ya catalogados dejan de aparecer como pendientes de indexación y se distinguen del índice documental heredado.']},
@@ -791,6 +792,22 @@ function panelAppLink(label){
 }
 
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+/* Algunos títulos históricos llegaron al catálogo como UTF-8 interpretado una vez como Windows-1252
+   (p. ej. «genÃ©ticas»). Solo se corrige cuando la conversión reduce marcas inequívocas de mojibake;
+   cualquier título Unicode correcto se devuelve intacto. */
+function repairMojibake(value){
+  let current=String(value==null?'':value);
+  const score=text=>(String(text).match(/(?:Ã[\u0080-\u00ff]|Â[\u0080-\u00ff]|â[€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ]|ð[\u0080-\u00ff]|�)/g)||[]).length;
+  const cp1252=new Map([[0x20ac,0x80],[0x201a,0x82],[0x0192,0x83],[0x201e,0x84],[0x2026,0x85],[0x2020,0x86],[0x2021,0x87],[0x02c6,0x88],[0x2030,0x89],[0x0160,0x8a],[0x2039,0x8b],[0x0152,0x8c],[0x017d,0x8e],[0x2018,0x91],[0x2019,0x92],[0x201c,0x93],[0x201d,0x94],[0x2022,0x95],[0x2013,0x96],[0x2014,0x97],[0x02dc,0x98],[0x2122,0x99],[0x0161,0x9a],[0x203a,0x9b],[0x0153,0x9c],[0x017e,0x9e],[0x0178,0x9f]]);
+  for(let pass=0;pass<2&&score(current)>0;pass++){
+    const bytes=[]; let encodable=true;
+    for(const char of current){ const code=char.codePointAt(0); if(code<=255) bytes.push(code); else if(cp1252.has(code)) bytes.push(cp1252.get(code)); else { encodable=false; break; } }
+    if(!encodable) break;
+    try{ const decoded=new TextDecoder('utf-8',{fatal:true}).decode(Uint8Array.from(bytes)); if(score(decoded)>=score(current)) break; current=decoded; }
+    catch(e){ break; }
+  }
+  return current;
+}
 function escA(s){ return escHtml(s).replace(/"/g,'&quot;'); }  // valor seguro para atributos
 // Mejor definición disponible para un HPO: {text, improvable}. improvable = procede del
 // Excel (Google Translate) → ofrece "mejorar con IA". Una edición manual (ghDefs) gana SIEMPRE,
@@ -2174,10 +2191,11 @@ function bibRefHtml(fuente, opts){
 /* Render único de una fuente: cita + identificadores + Papers + fichero exacto de Drive. */
 function bibliographyEntryHtml(fuente, opts){
   opts=opts||{}; fuente=canonicalBibliographyReference(fuente||{});
-  const title=fuente.titulo||fuente.title||fuente.url||opts.fallback||'Fuente';
+  const title=repairMojibake(fuente.titulo||fuente.title||fuente.url||opts.fallback||'Fuente');
   const year=fuente.anio||fuente.year||'';
   const label=escHtml(title)+(year?' <span class="bib-year" title="Año de publicación">'+escHtml(String(year))+'</span>':'');
-  const linked=fuente.url?`<a href="${escA(fuente.url)}" target="_blank" rel="noopener">${label}</a>`:`<span>${label}</span>`;
+  const href=opts.href||fuente.url||'';
+  const linked=href?`<a href="${escA(href)}" target="_blank" rel="noopener">${label}</a>`:`<span>${label}</span>`;
   return linked+(opts.noIds?'':refIdChipsHtml(fuente))+bibRefHtml(fuente,{noAssign:true});
 }
 function bibliographyInlineHtml(fuentes, opts){
@@ -4183,7 +4201,7 @@ async function openMasterFileResolution(driveId){
   const saved=masterFileResolutionDrafts().decisions.find(d=>String(d.drive_id)===String(driveId))||null, canonical=saved?.canonical||{};
   let selectedWorkId=saved?.target_work_id||'', proposalSource=saved?.proposal_source||'manual';
   const ext=canonical.external_ids||issue.external_ids||{}, initialTitle=canonical.title||issue.title||issue.original_filename||'', initialType=canonical.type||issue.type||'other';
-  ov.innerHTML=`<div class="modal" style="max-width:780px"><h2>${saved?'Editar decisión documental':'Revisar incidencia documental'}</h2><div class="msub"><b>${escHtml(issue.title||issue.original_filename||issue.path||driveId)}</b><br>${escHtml(issue.path||issue.original_filename||'')}<br><span class="dx-meta">Nada se aplicará al confirmar: solo se preparará una decisión auditable. El archivo permanecerá en su ubicación.</span></div><div style="display:grid;grid-template-columns:minmax(0,1.6fr) minmax(180px,.8fr);gap:8px"><div class="field"><label>Título canónico</label><input id="mfrTitle" value="${escA(initialTitle)}"></div><div class="field"><label>Tipo documental</label><select id="mfrType">${masterFileTypeOptions(initialType)}</select></div></div><div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px"><div class="field"><label>DOI</label><input id="mfr_doi" value="${escA(ext.doi||'')}"></div><div class="field"><label>PMID</label><input id="mfr_pmid" value="${escA(ext.pmid||'')}"></div><div class="field"><label>PMCID</label><input id="mfr_pmcid" value="${escA(ext.pmcid||'')}"></div><div class="field"><label>NBK</label><input id="mfr_nbk" value="${escA(ext.nbk||'')}"></div><div class="field"><label>ISBN</label><input id="mfr_isbn" value="${escA(ext.isbn||'')}"></div><div class="field"><label>Identificador jurídico</label><input id="mfr_legal_id" value="${escA(ext.legal_id||'')}"></div></div><details style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">Buscar una obra ya existente en el Catálogo</summary><input id="mfrSearch" type="text" placeholder="Título, autor, año o identificador…" style="width:100%;box-sizing:border-box;margin:7px 0;padding:8px 10px"><div id="mfrWorks" style="max-height:220px;overflow:auto"></div></details><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px"><button class="btn" id="mfrAi">✨ Intentar propuesta con IA</button><span class="dx-meta">Opcional; consume IA. Nunca confirma ni aplica por sí sola.</span></div><div id="mfrOut" class="test-out" style="margin-top:7px">${saved?`<span style="color:var(--ok)">✓ Decisión confirmada previamente (${escHtml(saved.proposal_source||'manual')}). Puedes revisarla y volver a confirmar.</span>`:''}</div><div class="modal-actions"><button class="btn ghost" id="mfrCancel">Cancelar</button><button class="btn primary" id="mfrSave">${saved?'Volver a confirmar decisión':'Confirmar y preparar decisión'}</button></div></div>`;
+  ov.innerHTML=`<div class="modal" style="max-width:780px"><h2>${saved?'Editar borrador documental':'Revisar incidencia documental'}</h2><div class="msub"><b>${escHtml(issue.title||issue.original_filename||issue.path||driveId)}</b><br>${escHtml(issue.path||issue.original_filename||'')}<br><span class="dx-meta">Este paso guarda un <b>borrador pendiente de aplicar</b>. No cambia el Catálogo ni el archivo; la aplicación verificable se realiza después desde Ariadna Indexador Local.</span></div><div style="display:grid;grid-template-columns:minmax(0,1.6fr) minmax(180px,.8fr);gap:8px"><div class="field"><label>Título canónico</label><input id="mfrTitle" value="${escA(initialTitle)}"></div><div class="field"><label>Tipo documental</label><select id="mfrType">${masterFileTypeOptions(initialType)}</select></div></div><div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px"><div class="field"><label>DOI</label><input id="mfr_doi" value="${escA(ext.doi||'')}"></div><div class="field"><label>PMID</label><input id="mfr_pmid" value="${escA(ext.pmid||'')}"></div><div class="field"><label>PMCID</label><input id="mfr_pmcid" value="${escA(ext.pmcid||'')}"></div><div class="field"><label>NBK</label><input id="mfr_nbk" value="${escA(ext.nbk||'')}"></div><div class="field"><label>ISBN</label><input id="mfr_isbn" value="${escA(ext.isbn||'')}"></div><div class="field"><label>Identificador jurídico</label><input id="mfr_legal_id" value="${escA(ext.legal_id||'')}"></div></div><details style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">Buscar una obra ya existente en el Catálogo</summary><input id="mfrSearch" type="text" placeholder="Título, autor, año o identificador…" style="width:100%;box-sizing:border-box;margin:7px 0;padding:8px 10px"><div id="mfrWorks" style="max-height:220px;overflow:auto"></div></details><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px"><button class="btn" id="mfrAi">✨ Intentar propuesta con IA</button><span class="dx-meta">Opcional; consume IA. Nunca confirma ni aplica por sí sola.</span></div><div id="mfrOut" class="test-out" style="margin-top:7px">${saved?`<span style="color:#e0a53f">◷ Borrador guardado previamente (${escHtml(saved.proposal_source||'manual')}); aún no está aplicado.</span>`:''}</div><div class="modal-actions"><button class="btn ghost" id="mfrCancel">Cancelar</button><button class="btn primary" id="mfrSave">${saved?'Actualizar borrador':'Guardar borrador para aplicar'}</button></div></div>`;
   const close=()=>ov.remove(); ov.querySelector('#mfrCancel').addEventListener('click',close); ov.addEventListener('click',e=>{ if(e.target===ov) close(); });
   const works=(_masterCatalogIndex&&_masterCatalogIndex.works)||[], list=ov.querySelector('#mfrWorks');
   const paintWorks=()=>{ const q=accLower(ov.querySelector('#mfrSearch').value||''); if(!q){ list.innerHTML='<div class="dx-meta">Escribe al menos una palabra para buscar.</div>'; return; }
@@ -4202,7 +4220,7 @@ async function openMasterFileResolution(driveId){
   });
   ov.querySelector('#mfrSave').addEventListener('click',()=>{ const canonical=masterFileCanonicalFromModal(ov); if(!canonical.title){ showToast('El título es obligatorio'); return; }
     const validationError=masterFileCanonicalError(canonical); if(validationError){ ov.querySelector('#mfrOut').innerHTML='<div class="err">'+escHtml(validationError)+'</div>'; return; }
-    saveMasterFileResolutionDecision({drive_id:driveId,action:selectedWorkId?'link_existing_work':'confirm_file_metadata',target_work_id:selectedWorkId||null,canonical,placement_action:'keep_current_location',proposal_source:proposalSource,source_issues_generated_at:data.generated_at||null}); close(); renderMasterFileIssues(); showToast('Decisión confirmada y preparada; todavía no se ha aplicado');
+    saveMasterFileResolutionDecision({drive_id:driveId,action:selectedWorkId?'link_existing_work':'confirm_file_metadata',target_work_id:selectedWorkId||null,canonical,placement_action:'keep_current_location',proposal_source:proposalSource,source_issues_generated_at:data.generated_at||null}); close(); renderMasterFileIssues(); showToast('Borrador guardado; aún no se ha aplicado al Catálogo');
   });
 }
 async function renderMasterFileIssues(){
@@ -4211,10 +4229,10 @@ async function renderMasterFileIssues(){
   if(!data.available){ host.innerHTML='<div class="sec-note">La bandeja de problemas de archivos aparecerá cuando se publique el informe local del Catálogo Maestro.</div>'; return; }
   if(!issues.length){ host.innerHTML='<div class="sec-note" style="border-color:var(--ok)">✓ No hay problemas documentales pendientes publicados.</div>'; return; }
   const counts=issues.reduce((a,i)=>{ const k=masterFileIssueCategory(i); a[k]=(a[k]||0)+1; return a; },{});
-  host.innerHTML=`<div class="sec-note" style="border-color:#e0a53f"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>⚠ Archivos con incidencias (${issues.length})</b><span class="dx-meta">${drafts.decisions.length} con decisión confirmada · ninguna se aplica automáticamente</span><span style="flex:1"></span><button class="btn ghost" id="mfiRefresh">↻ Actualizar</button>${drafts.decisions.length?'<button class="btn primary" id="mfiExport">Descargar decisiones</button>':''}</div><div class="dx-meta" style="margin-top:5px">Ubicación ${counts.placement||0} · contenido/OCR ${counts.content||0} · tipo ${counts.type||0} · metadatos ${counts.metadata||0}</div></div><div style="display:flex;gap:7px;flex-wrap:wrap;margin:7px 0"><input id="mfiSearch" type="text" placeholder="Filtrar por archivo, ruta o problema…" style="flex:1;min-width:240px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink)"><select id="mfiCategory" style="padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink)"><option value="">Todos</option><option value="placement">Ubicación</option><option value="content">Contenido/OCR</option><option value="type">Tipo documental</option><option value="metadata">Metadatos</option></select></div><div id="mfiList"></div>`;
+  host.innerHTML=`<div class="sec-note" style="border-color:#e0a53f"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>⚠ Archivos con incidencias (${issues.length})</b><span class="dx-meta">${drafts.decisions.length} borradores pendientes de aplicar · 0 cambios aplicados desde esta pantalla</span><span style="flex:1"></span><button class="btn ghost" id="mfiRefresh">↻ Actualizar</button>${drafts.decisions.length?'<button class="btn primary" id="mfiExport">Descargar paquete de decisiones</button>':''}</div><div class="dx-meta" style="margin-top:5px">Ubicación ${counts.placement||0} · contenido/OCR ${counts.content||0} · tipo ${counts.type||0} · metadatos ${counts.metadata||0}</div></div><div style="display:flex;gap:7px;flex-wrap:wrap;margin:7px 0"><input id="mfiSearch" type="text" placeholder="Filtrar por archivo, ruta o problema…" style="flex:1;min-width:240px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink)"><select id="mfiCategory" style="padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink)"><option value="">Todos</option><option value="placement">Ubicación</option><option value="content">Contenido/OCR</option><option value="type">Tipo documental</option><option value="metadata">Metadatos</option></select></div><div id="mfiList"></div>`;
   const paint=()=>{ const q=accLower((host.querySelector('#mfiSearch')||{}).value||''), cat=(host.querySelector('#mfiCategory')||{}).value||'';
     const shown=issues.filter(i=>(!cat||masterFileIssueCategory(i)===cat)&&(!q||accLower([i.path,i.original_filename,i.title,i.type,(i.issue_codes||[]).map(masterFileIssueLabel).join(' ')].join(' ')).includes(q)));
-    const visible=shown.slice(0,200); host.querySelector('#mfiList').innerHTML=(shown.length>200?`<div class="dx-meta" style="margin:5px 0">Mostrando 200 de ${shown.length}; usa el filtro para concretar.</div>`:'')+`<div class="lib-grid">${visible.map(i=>{ const d=byId.get(i.drive_id), source=d?.proposal_source==='ai_assisted'?'propuesta IA':d?.proposal_source==='catalog_search'?'búsqueda en Catálogo':'revisión manual'; return `<div class="lib-card"><div class="nm">${escHtml(i.title||i.original_filename||i.path||i.drive_id)}</div><div class="meta">${escHtml(i.path||i.original_filename||'Ruta no disponible')}</div><div class="dx-meta" style="margin:5px 0">Tipo propuesto: <b>${escHtml(i.type||'sin confirmar')}</b></div><div style="display:flex;gap:4px;flex-wrap:wrap">${(i.issue_codes||[]).map(c=>`<span class="pill near">${escHtml(masterFileIssueLabel(c))}</span>`).join('')}</div>${d?`<div style="color:var(--ok);font-size:12px;margin-top:6px">✓ Decisión confirmada · ${escHtml(source)}</div>`:''}<div class="acts"><a class="btn ghost" target="_blank" rel="noopener" href="https://drive.google.com/open?id=${encodeURIComponent(i.drive_id)}">📂 Abrir en Drive</a>${d?`<button class="btn" data-mfiresolve="${escA(i.drive_id)}">Revisar decisión</button><button class="btn ghost" data-mficlear="${escA(i.drive_id)}">Descartar decisión</button>`:`<button class="btn" data-mfiresolve="${escA(i.drive_id)}">Revisar y resolver</button>`}</div></div>`; }).join('')}</div>`;
+    const visible=shown.slice(0,200); host.querySelector('#mfiList').innerHTML=(shown.length>200?`<div class="dx-meta" style="margin:5px 0">Mostrando 200 de ${shown.length}; usa el filtro para concretar.</div>`:'')+`<div class="lib-grid">${visible.map(i=>{ const d=byId.get(i.drive_id), source=d?.proposal_source==='ai_assisted'?'propuesta IA':d?.proposal_source==='catalog_search'?'búsqueda en Catálogo':'revisión manual'; return `<div class="lib-card"><div class="nm">${escHtml(i.title||i.original_filename||i.path||i.drive_id)}</div><div class="meta">${escHtml(i.path||i.original_filename||'Ruta no disponible')}</div><div class="dx-meta" style="margin:5px 0">Tipo propuesto: <b>${escHtml(i.type||'sin confirmar')}</b></div><div style="display:flex;gap:4px;flex-wrap:wrap">${(i.issue_codes||[]).map(c=>`<span class="pill near">${escHtml(masterFileIssueLabel(c))}</span>`).join('')}</div>${d?`<div style="color:#e0a53f;font-size:12px;margin-top:6px">◷ Borrador pendiente de aplicar · ${escHtml(source)}</div>`:''}<div class="acts"><a class="btn ghost" target="_blank" rel="noopener" href="https://drive.google.com/open?id=${encodeURIComponent(i.drive_id)}">📂 Abrir en Drive</a>${d?`<button class="btn" data-mfiresolve="${escA(i.drive_id)}">Revisar borrador</button><button class="btn ghost" data-mficlear="${escA(i.drive_id)}">Descartar borrador</button>`:`<button class="btn" data-mfiresolve="${escA(i.drive_id)}">Preparar resolución</button>`}</div></div>`; }).join('')}</div>`;
     host.querySelectorAll('[data-mfiresolve]').forEach(b=>b.addEventListener('click',()=>openMasterFileResolution(b.dataset.mfiresolve)));
     host.querySelectorAll('[data-mficlear]').forEach(b=>b.addEventListener('click',()=>{ removeMasterFileResolutionDecision(b.dataset.mficlear); renderMasterFileIssues(); })); };
   host.querySelector('#mfiSearch').addEventListener('input',paint); host.querySelector('#mfiCategory').addEventListener('change',paint);
@@ -4256,7 +4274,7 @@ async function openMasterDuplicateReview(sha256){
   ov.querySelector('#mdupSave').addEventListener('click',()=>{ const keep=(ov.querySelector('input[name="mdupKeep"]:checked')||{}).value, confirmed=ov.querySelector('#mdupConfirm').checked, out=ov.querySelector('#mdupOut');
     if(!keep||!confirmed){ out.className='test-out bad'; out.textContent='Selecciona la copia y marca la confirmación.'; return; }
     const remove=files.filter(f=>f.drive_id!==keep).map(f=>f.drive_id), ready=masterDuplicateSelectionReady(group,keep);
-    saveMasterDuplicateDecision({sha256,keep_drive_id:keep,remove_drive_ids:remove,review_status:group.review_status,removal_ready:ready,removal_mode:'owner_action_in_google_drive',source_report_generated_at:report.generated_at||null}); close(); renderMasterDuplicateReview(); showToast(ready?'Copia canónica confirmada; la retirada seguirá siendo manual en Drive':'Copia canónica confirmada; retirada bloqueada hasta completar el Catálogo');
+    saveMasterDuplicateDecision({sha256,keep_drive_id:keep,remove_drive_ids:remove,review_status:group.review_status,removal_ready:ready,removal_mode:'owner_action_in_google_drive',source_report_generated_at:report.generated_at||null}); close(); renderMasterDuplicateReview(); showToast(ready?'Borrador guardado; no se ha borrado ninguna copia':'Borrador guardado; su aplicación sigue bloqueada por el Catálogo');
   });
 }
 async function renderMasterDuplicateReview(){
@@ -4266,8 +4284,8 @@ async function renderMasterDuplicateReview(){
   if(!groups.length){ host.innerHTML='<div class="sec-note" style="border-color:var(--ok)">✓ No hay copias binarias exactas pendientes.</div>'; return; }
   const bytes=Number(report.summary?.redundant_bytes||groups.reduce((n,g)=>n+Number(g.size||0)*(g.remove_candidates||[]).length,0)), gib=(bytes/1024**3).toLocaleString('es-ES',{maximumFractionDigits:2});
   const cards=groups.map((g,index)=>{ const d=byHash.get(g.sha256), files=masterDuplicateFiles(g), keep=files.find(f=>f.drive_id===(d?.keep_drive_id||g.keep?.drive_id))||g.keep, remove=files.filter(f=>f.drive_id!==keep?.drive_id), currentReport=!!d&&d.source_report_generated_at===(report.generated_at||null), ready=currentReport&&d?.removal_ready===true&&masterDuplicateSelectionReady(g,d.keep_drive_id);
-    return `<div class="lib-card"><div class="nm">Grupo ${index+1} · copia exacta</div><div class="meta">SHA-256 ${escHtml(String(g.sha256||'').slice(0,16))}… · ${(Number(g.size||0)/1024/1024).toLocaleString('es-ES',{maximumFractionDigits:1})} MiB</div><div class="dx-meta" style="margin-top:4px"><b>Conservar:</b> ${escHtml(keep?.path||keep?.drive_id||'')}</div><div class="dx-meta"><b>Redundante:</b> ${escHtml(remove.map(f=>f.path||f.drive_id).join(' · '))}</div><div style="font-size:11.5px;margin-top:6px;color:${g.review_status==='ready_for_owner_confirmation'?'var(--ok)':'#e0a53f'}">${escHtml(masterDuplicateStatus(g.review_status))}</div>${d?`<div style="color:${currentReport?'var(--ok)':'#e0a53f'};font-size:12px;margin-top:6px">${currentReport?'✓ Copia canónica confirmada'+(ready?' · retirada manual habilitada':' · retirada aún bloqueada'):'⚠ El informe cambió: vuelve a confirmar esta decisión'}</div>`:''}<div class="acts"><button class="btn" data-mdupreview="${escA(g.sha256)}">${d?'Revisar decisión':'Revisar duplicado'}</button>${d?`<button class="btn ghost" data-mdupclear="${escA(g.sha256)}">Descartar decisión</button>`:''}${ready?remove.map(f=>`<a class="btn ghost" href="https://drive.google.com/open?id=${encodeURIComponent(f.drive_id)}" target="_blank" rel="noopener" title="Ariadna no borra: abre el fichero exacto para que el propietario lo envíe a la papelera">Abrir candidata en Drive</a>`).join(''):''}</div></div>`; }).join('');
-  host.innerHTML=`<details><summary class="sec-note" style="cursor:pointer;border-color:#e0a53f"><b>⚠ Duplicados binarios exactos (${groups.length})</b> · ${escHtml(gib)} GiB redundantes · ${bundle.decisions.length} decisiones confirmadas</summary><div class="dx-meta" style="margin:7px 0">Solo se incluyen hashes idénticos. Ariadna nunca borra: tras confirmar, abre el fichero exacto para que el propietario actúe en Google Drive.</div><div style="display:flex;gap:7px;margin-bottom:8px"><button class="btn ghost" id="mdupRefresh">↻ Actualizar</button>${bundle.decisions.length?'<button class="btn primary" id="mdupExport">Descargar decisiones</button>':''}</div><div class="lib-grid">${cards}</div></details>`;
+    return `<div class="lib-card"><div class="nm">Grupo ${index+1} · copia exacta</div><div class="meta">SHA-256 ${escHtml(String(g.sha256||'').slice(0,16))}… · ${(Number(g.size||0)/1024/1024).toLocaleString('es-ES',{maximumFractionDigits:1})} MiB</div><div class="dx-meta" style="margin-top:4px"><b>Conservar:</b> ${escHtml(keep?.path||keep?.drive_id||'')}</div><div class="dx-meta"><b>Redundante:</b> ${escHtml(remove.map(f=>f.path||f.drive_id).join(' · '))}</div><div style="font-size:11.5px;margin-top:6px;color:${g.review_status==='ready_for_owner_confirmation'?'var(--ok)':'#e0a53f'}">${escHtml(masterDuplicateStatus(g.review_status))}</div>${d?`<div style="color:#e0a53f;font-size:12px;margin-top:6px">${currentReport?'◷ Borrador preparado · 0 copias retiradas'+(ready?' · listo para acción manual':' · retirada aún bloqueada'):'⚠ El informe cambió: vuelve a confirmar esta decisión'}</div>`:''}<div class="acts"><button class="btn" data-mdupreview="${escA(g.sha256)}">${d?'Revisar borrador':'Revisar duplicado'}</button>${d?`<button class="btn ghost" data-mdupclear="${escA(g.sha256)}">Descartar borrador</button>`:''}${ready?remove.map(f=>`<a class="btn ghost" href="https://drive.google.com/open?id=${encodeURIComponent(f.drive_id)}" target="_blank" rel="noopener" title="Ariadna no borra: abre el fichero exacto para que el propietario lo retire manualmente">Abrir copia redundante</a>`).join(''):''}</div></div>`; }).join('');
+  host.innerHTML=`<details><summary class="sec-note" style="cursor:pointer;border-color:#e0a53f"><b>⚠ Duplicados binarios exactos (${groups.length})</b> · ${escHtml(gib)} GiB redundantes · ${bundle.decisions.length} borradores · 0 borrados automáticos</summary><div class="dx-meta" style="margin:7px 0">Elegir la copia canónica prepara una decisión, pero no elimina archivos. Cuando el reenlace esté validado, la retirada de la copia redundante seguirá siendo una acción manual y separada.</div><div style="display:flex;gap:7px;margin-bottom:8px"><button class="btn ghost" id="mdupRefresh">↻ Actualizar</button>${bundle.decisions.length?'<button class="btn primary" id="mdupExport">Descargar paquete de decisiones</button>':''}</div><div class="lib-grid">${cards}</div></details>`;
   host.querySelectorAll('[data-mdupreview]').forEach(b=>b.addEventListener('click',()=>openMasterDuplicateReview(b.dataset.mdupreview)));
   host.querySelectorAll('[data-mdupclear]').forEach(b=>b.addEventListener('click',()=>{ removeMasterDuplicateDecision(b.dataset.mdupclear); renderMasterDuplicateReview(); }));
   host.querySelector('#mdupRefresh')?.addEventListener('click',async()=>{ await loadMasterDuplicateReview(true); renderMasterDuplicateReview(); });
@@ -4434,7 +4452,7 @@ async function renderMasterReferenceIssues(){
   if(!data.available){ host.innerHTML='<div class="sec-note">La bandeja del Catálogo Maestro aparecerá aquí cuando esté configurado el repositorio privado del segundo cerebro y se publique su informe de incidencias.</div>'; return; }
   if(!issues.length){ host.innerHTML='<div class="sec-note" style="border-color:var(--ok)">✓ No hay incidencias bibliográficas pendientes publicadas por el Catálogo Maestro.</div>'; return; }
   const prepared=issues.filter(i=>byId.has(i.occurrence_id)).length;
-  host.innerHTML=`<div class="sec-note" style="border-color:#e0a53f"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>⚠ Incidencias bibliográficas (${issues.length})</b><span class="dx-meta">${prepared} con decisión preparada · ninguna se aplica automáticamente</span><span style="flex:1"></span><button class="btn ghost" id="mirRefresh">↻ Actualizar</button>${drafts.decisions.length?'<button class="btn primary" id="mirExport">Descargar decisiones para revisión</button>':''}</div></div><div class="lib-grid">${issues.map(issue=>{ const d=byId.get(issue.occurrence_id); return `<div class="lib-card"><div class="nm">${escHtml(masterIssueTitle(issue))}</div><div class="meta">${escHtml(masterIssueSource(issue))}</div><div class="dx-meta" style="margin:5px 0">${issue.reason==='multiple_exact_candidates'?'Hay varias obras candidatas exactas.':'Falta una identidad bibliográfica inequívoca.'}</div>${d?`<div style="color:var(--ok);font-size:12px">✓ Decisión preparada: ${escHtml(d.action)}</div><div class="acts"><button class="btn ghost" data-mirclear="${escA(issue.occurrence_id)}">Descartar borrador</button></div>`:`<div class="acts"><button class="btn" data-miraction="link_existing_work" data-mirid="${escA(issue.occurrence_id)}">Elegir obra existente</button><button class="btn" data-miraction="correct_identifiers" data-mirid="${escA(issue.occurrence_id)}">Corregir identificadores</button><button class="btn ghost" data-miraction="confirm_new_work" data-mirid="${escA(issue.occurrence_id)}">Confirmar obra nueva</button></div>`}</div>`; }).join('')}</div>`;
+  host.innerHTML=`<div class="sec-note" style="border-color:#e0a53f"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>⚠ Incidencias bibliográficas (${issues.length})</b><span class="dx-meta">${prepared} borradores pendientes de aplicar · 0 cambios aplicados desde esta pantalla</span><span style="flex:1"></span><button class="btn ghost" id="mirRefresh">↻ Actualizar</button>${drafts.decisions.length?'<button class="btn primary" id="mirExport">Descargar paquete para la app local</button>':''}</div></div><div class="lib-grid">${issues.map(issue=>{ const d=byId.get(issue.occurrence_id); return `<div class="lib-card"><div class="nm">${escHtml(masterIssueTitle(issue))}</div><div class="meta">${escHtml(masterIssueSource(issue))}</div><div class="dx-meta" style="margin:5px 0">${issue.reason==='multiple_exact_candidates'?'Hay varias obras candidatas exactas.':'Falta una identidad bibliográfica inequívoca.'}</div>${d?`<div style="color:#e0a53f;font-size:12px">◷ Borrador preparado: ${escHtml(d.action)} · aún no está en el Catálogo</div><div class="acts"><button class="btn ghost" data-mirclear="${escA(issue.occurrence_id)}">Descartar borrador</button></div>`:`<div class="acts"><button class="btn" data-miraction="link_existing_work" data-mirid="${escA(issue.occurrence_id)}">Elegir obra existente</button><button class="btn" data-miraction="correct_identifiers" data-mirid="${escA(issue.occurrence_id)}">Corregir identificadores</button><button class="btn ghost" data-miraction="confirm_new_work" data-mirid="${escA(issue.occurrence_id)}">Confirmar obra nueva</button></div>`}</div>`; }).join('')}</div>`;
   host.querySelectorAll('[data-miraction]').forEach(b=>b.addEventListener('click',()=>openMasterIssueResolution(b.dataset.mirid,b.dataset.miraction)));
   host.querySelectorAll('[data-mirclear]').forEach(b=>b.addEventListener('click',()=>{ removeMasterResolutionDecision(b.dataset.mirclear); renderMasterReferenceIssues(); }));
   host.querySelector('#mirRefresh').addEventListener('click',async()=>{ await Promise.all([loadMasterReferenceIssues(true),loadMasterCatalogIndex(true)]); renderMasterReferenceIssues(); });
@@ -4483,7 +4501,7 @@ function masterDocumentRegistrationForDriveFile(file){
   const work=masterWorkForDriveId(file&&file.id); if(!work) return null;
   const ids=work.external_ids||{}, bib=work.bibliographic||{}, state=work.state||{};
   return {id:'master:'+String(work.work_id||file.id),work_id:work.work_id,driveId:file.id,
-    titulo:work.title||file.name||'',cita:work.title||file.name||'',nombreIA:work.short_title||'',
+    titulo:repairMojibake(work.title||file.name||''),cita:repairMojibake(work.title||file.name||''),nombreIA:repairMojibake(work.short_title||''),
     descripcion:bib.summary||bib.abstract||'',tipo:masterArchiveTypeLabel(work.type),anio:work.year||'',
     doi:ids.doi||'',pmid:ids.pmid||'',pmcid:ids.pmcid||'',nbk:ids.nbk||'',isbn:ids.isbn||'',legal_id:ids.legal_id||'',
     url:bib.official_url||file.webViewLink||'',enlace:file.webViewLink||('https://drive.google.com/open?id='+encodeURIComponent(file.id)),
@@ -4492,13 +4510,14 @@ function masterDocumentRegistrationForDriveFile(file){
 function canonicalBibliographyReference(ref){
   ref=ref||{};
   const suppliedDriveId=String(ref.driveId||ref.drive_id||driveFileIdFromUrl(ref.enlace||ref.url)||'');
-  const work=masterWorkForReference(ref)||masterWorkForDriveId(suppliedDriveId); if(!work) return ref;
+  const work=masterWorkForReference(ref)||masterWorkForDriveId(suppliedDriveId);
+  if(!work){ const title=repairMojibake(ref.titulo||ref.title||''); return Object.assign({},ref,{titulo:title||ref.titulo||'',title:title||ref.title||''}); }
   const ids=work.external_ids||{}, bib=work.bibliographic||{};
   const driveIds=(work.drive_file_ids||[]).map(String), driveId=suppliedDriveId||driveIds[0]||'';
   return Object.assign({},ref,{
     work_id:work.work_id,
-    titulo:work.title||ref.titulo||ref.title||'',
-    title:work.title||ref.title||ref.titulo||'',
+    titulo:repairMojibake(work.title||ref.titulo||ref.title||''),
+    title:repairMojibake(work.title||ref.title||ref.titulo||''),
     anio:work.year||ref.anio||ref.year||'',
     year:work.year||ref.year||ref.anio||'',
     tipo:work.type||ref.tipo||'',
@@ -4682,15 +4701,43 @@ function grFiguresHtml(nbk){
 }
 /* Texto EXACTO recuperado del store para una fuente (los pasajes en que se basó la respuesta), plegable.
    Permite localizar manualmente la afirmación en el documento (muestra el apartado y el texto literal). */
+function geneReviewsTextFragmentUrl(nbk, passage){
+  const id=(String(nbk||'').match(/NBK\d+/i)||[])[0];
+  if(!id) return '';
+  const base='https://www.ncbi.nlm.nih.gov/books/'+id.toUpperCase()+'/';
+  let clean=String(passage||'')
+    .replace(/^\s*---[\s\S]*?---\s*/,' ')
+    .replace(/^\s*#{1,6}\s+.*$/gm,' ')
+    .replace(/^\s*(?:source_sha256|asset_id|tipo|p[aá]gina|archivo_fuente_drive_id|huella_imagen)\s*:.*$/gmi,' ')
+    .replace(/^\s*\|?\s*:?-{3,}.*$/gm,' ')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g,'$1')
+    .replace(/[\*_`~]+/g,' ')
+    .replace(/\s*\|\s*/g,' ')
+    .replace(/\\([()[\]{}])/g,'$1')
+    .replace(/\u00a0/g,' ')
+    .replace(/\s+/g,' ')
+    .trim();
+  if(!clean) return base;
+  const sentences=clean.match(/[^.!?]+(?:[.!?]+|$)/g)||[clean];
+  let exact=sentences.map(s=>s.trim()).find(s=>s.length>=45&&s.split(/\s+/).length>=7)||clean;
+  let words=exact.split(/\s+/).filter(Boolean);
+  if(words.length>36) words=words.slice(0,36);
+  if(words.length<4) return base;
+  if(words.length<=18) return base+'#:~:text='+encodeURIComponent(words.join(' '));
+  const start=words.slice(0,12).join(' '), end=words.slice(-8).join(' ');
+  return base+'#:~:text='+encodeURIComponent(start)+','+encodeURIComponent(end);
+}
 function sbQuoteHtml(passages, key){
   if(!passages || !passages.length || !key) return '';
   const mine=passages.filter(p=>String(p.filename||'').split('__')[0]===key && String(p.text||'').trim());
   if(!mine.length) return '';
   const apartado=fn=>{ const parts=String(fn||'').replace(/\.(md|txt|pdf)$/i,'').split('__'); return parts.length>1?parts.slice(1).join(' · ').replace(/-/g,' '):''; };
+  const nbk=/^NBK\d+$/i.test(String(key))?String(key).toUpperCase():'';
   const work=masterWorkForDriveId(key), format=masterFileFormatForDriveId(key)||'pdf', currentHash=masterFileHashForDriveId(key);
   const body=mine.map(p=>{ const rawText=String(p.text), text=rawText.slice(0,1600), visual=sourceVisualAsset(rawText,p.filename), unit=sourcePassageUnit(rawText), unitLabel=unit?(unit.kind+' '+unit.number):'', passageHash=sourcePassageHash(rawText), stale=!!(passageHash&&currentHash&&passageHash!==currentHash);
     const visualData=visual?` data-sbasset="${escA(visual.assetId)}" data-sbassetsha="${escA(visual.sha256)}" data-sbassettype="${escA(visual.type)}" data-sbassetlabel="${escA(encodeURIComponent(visual.label||''))}" data-sbassetsource="${escA(visual.sourceDriveId||'')}"`:'';
-    const open=work&&!stale?`<button class="btn ghost" data-sbviewer="${escA(key)}" data-sbformat="${escA(format)}" data-sbunitkind="${escA(unit?.kind||'')}" data-sbunit="${escA(unit?.number||visual?.page||'')}" data-sbquote="${escA(encodeURIComponent(text))}"${visualData} style="font-size:10.5px;padding:3px 7px;margin-top:3px">${visual?'🖼 Ver '+escHtml(visual.label||'imagen'):'↗ Ver '+escHtml(unitLabel||'original')} a la derecha</button>`:stale?'<div class="dx-meta" style="color:#e0a53f">⚠ El original ha cambiado desde esta indexación; reindexa antes de localizar el pasaje.</div>':'';
+    const sourceFileId=p.fileId||p.file_id||'', fileData=sourceFileId?` data-sbfileid="${escA(sourceFileId)}"`:'';
+    const open=nbk?`<a class="btn ghost" href="${escA(geneReviewsTextFragmentUrl(nbk,rawText))}" target="_blank" rel="noopener" style="display:inline-block;font-size:10.5px;padding:3px 7px;margin-top:3px" title="Abrir la revisión oficial e intentar seleccionar este pasaje">↗ Abrir y resaltar en NCBI</a>`:work&&!stale?`<button class="btn ghost" data-sbviewer="${escA(key)}" data-sbformat="${escA(format)}" data-sbunitkind="${escA(unit?.kind||'')}" data-sbunit="${escA(unit?.number||visual?.page||'')}" data-sbquote="${escA(encodeURIComponent(text))}"${fileData}${visualData} style="font-size:10.5px;padding:3px 7px;margin-top:3px">${visual?'🖼 Ver '+escHtml(visual.label||'imagen'):'↗ Ver '+escHtml(unitLabel||'original')} a la derecha</button>`:stale?'<div class="dx-meta" style="color:#e0a53f">⚠ El original ha cambiado desde esta indexación; reindexa antes de localizar el pasaje.</div>':'';
     return '<div style="margin:4px 0">'+(apartado(p.filename)?'<div class="dx-meta" style="font-size:10.5px">apartado: '+escHtml(apartado(p.filename))+'</div>':'')
       +'<blockquote style="margin:2px 0;padding:4px 9px;border-left:2px solid var(--accent);font-size:11.5px;line-height:1.5;white-space:pre-wrap;color:var(--ink2)">'+escHtml(text)+'</blockquote>'+open+'</div>'; }).join('');
   return '<details style="margin-top:2px"><summary class="tip-ai" style="display:inline;font-size:11px">🔍 ver el texto exacto en que se basa</summary><div style="margin-top:2px">'+body+'</div></details>';
@@ -4701,6 +4748,27 @@ function sourcePassageUnit(text){
   if(heading) return {kind:heading[1].toLocaleLowerCase('es'),number:Number(heading[2])};
   const visual=value.match(/(?:^|\n)\s*-\s*p[aá]gina:\s*(\d+)/i);
   return visual?{kind:'página',number:Number(visual[1])}:null;
+}
+/* Los primeros lotes documentales guardaban en la cita solo el nombre del bloque (chunk 004), aunque
+   dentro del archivo subido cada página sí estaba delimitada. Al abrir una cita se lee ESE archivo de
+   OpenAI, se compara el pasaje con sus páginas y se obtiene la localización exacta sin reindexar el PDF. */
+function sourceFileUnitForQuote(sourceText,quote){
+  const value=String(sourceText||''), headings=[...value.matchAll(/(?:^|\n)\s*#{1,3}\s*(Página|Capítulo|Diapositiva)\s+(\d+)\s*(?=\n|$)/gi)];
+  let best=null;
+  headings.forEach((heading,index)=>{
+    const start=(heading.index||0)+heading[0].length, end=index+1<headings.length?(headings[index+1].index||value.length):value.length;
+    const match=matchPdfQuoteItems([{str:value.slice(start,end)}],quote);
+    if(!best||match.matchedWords>best.matchedWords) best={kind:heading[1].toLocaleLowerCase('es'),number:Number(heading[2]),matchedWords:match.matchedWords,totalWords:match.totalWords};
+  });
+  if(best&&best.matchedWords>=4) return best;
+  const kind=(value.match(/(?:^|\n)unit_kind:\s*["']?([^"'\n]+)/i)||[])[1], start=Number((value.match(/(?:^|\n)unit_start:\s*(\d+)/i)||[])[1]), end=Number((value.match(/(?:^|\n)unit_end:\s*(\d+)/i)||[])[1]);
+  return kind&&start&&start===end?{kind:String(kind).trim().toLocaleLowerCase('es'),number:start,matchedWords:0,totalWords:0}:null;
+}
+async function fetchSecondBrainSourceFile(fileId){
+  const key=loadCfg().openaiKey; if(!key) throw new Error('Falta la clave de OpenAI para localizar la página dentro del fragmento indexado.');
+  const response=await fetch('https://api.openai.com/v1/files/'+encodeURIComponent(String(fileId||''))+'/content',{headers:{Authorization:'Bearer '+key}});
+  if(!response.ok) throw new Error('No se pudo leer el fragmento indexado ('+response.status+').');
+  return response.text();
 }
 function sourcePassageHash(text){
   const match=String(text||'').match(/source_sha256:\s*["']?([a-f0-9]{32,64})/i);
@@ -4795,7 +4863,7 @@ async function renderDerivedVisualAsset(asset,driveId){
 /* El visor incrustado de Google Drive ignora con frecuencia #page=N y rechaza algunos libros grandes.
    Para una cita textual usamos pdf.js con peticiones HTTP Range autenticadas: descarga solo las partes
    necesarias para representar UNA página, la resalta y destruye el PDF en cuanto termina. */
-let _chatPdfLoadingTask=null, _chatPdfRequest=0;
+let _chatPdfLoadingTask=null, _chatPdfRequest=0, _chatSourceResolveRequest=0;
 function pdfQuoteToken(value){
   return String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('es').replace(/[^a-z0-9]+/g,'');
 }
@@ -4891,19 +4959,33 @@ async function renderChatPdfPage(driveId,pageNumber,quote){
 }
 function releaseChatSourceViewer(){
   const host=document.getElementById('chatSourceViewer'); if(!host) return;
-  _chatVisualRequest++; releaseChatVisualObjectUrl(); releaseChatPdfReader();
+  _chatSourceResolveRequest++; _chatVisualRequest++; releaseChatVisualObjectUrl(); releaseChatPdfReader();
   host.innerHTML=''; host.style.display='none';
 }
-function openChatSourceViewer({driveId,format,unitKind,unitNumber,quote,visualAsset}={}){
+async function openChatSourceViewer({driveId,format,unitKind,unitNumber,quote,visualAsset,sourceFileId}={}){
   const host=document.getElementById('chatSourceViewer'); if(!host||!driveId) return;
+  const resolveRequest=++_chatSourceResolveRequest;
   _chatVisualRequest++; releaseChatVisualObjectUrl();
-  const work=masterWorkForDriveId(driveId), title=work?.title||driveId, isPdf=(format||'pdf')==='pdf';
+  const work=masterWorkForDriveId(driveId), title=repairMojibake(work?.title||driveId), isPdf=(format||'pdf')==='pdf';
   if(visualAsset&&visualAsset.page&&!unitNumber) unitNumber=visualAsset.page;
+  let locateError='';
+  if(isPdf&&!unitNumber&&sourceFileId){
+    host.style.display='block';
+    host.innerHTML=`<div style="display:flex;gap:8px;align-items:flex-start"><div style="flex:1;min-width:0"><b>${escHtml(title)}</b><div class="dx-meta">Localizando la página exacta dentro del fragmento ya indexado…</div></div><button class="btn ghost" id="chatSourceViewerClose" title="Cerrar">✕</button></div><div class="loading" style="margin-top:10px">Comparando el pasaje con las páginas del bloque; no se vuelve a descargar ni a vectorizar el libro.</div>`;
+    host.querySelector('#chatSourceViewerClose')?.addEventListener('click',releaseChatSourceViewer);
+    try{
+      const sourceText=await fetchSecondBrainSourceFile(sourceFileId), located=sourceFileUnitForQuote(sourceText,quote);
+      if(resolveRequest!==_chatSourceResolveRequest||!document.getElementById('chatSourceViewer')) return;
+      if(located){ unitKind=located.kind; unitNumber=located.number; }
+      else locateError='El bloque indexado no permitió identificar una página con suficiente seguridad.';
+    }catch(error){ locateError=error.message||'No se pudo localizar la página exacta.'; }
+    if(resolveRequest!==_chatSourceResolveRequest||!document.getElementById('chatSourceViewer')) return;
+  }
   const label=visualAsset?.label||(unitNumber?((unitKind||'página')+' '+unitNumber):'fragmento localizado');
   const driveUrl='https://drive.google.com/open?id='+encodeURIComponent(driveId)+(isPdf&&unitNumber?'#page='+encodeURIComponent(unitNumber):'');
   host.style.display='block';
   const exactPage=isPdf&&unitNumber?'<div id="chatPdfPageViewer"></div>':'';
-  const original=visualAsset&&isPdf&&unitNumber?`<div style="margin-top:8px"><button class="btn ghost" id="chatSourcePdfToggle">Mostrar también la página original resaltada</button><div id="chatSourcePdfLazy"></div></div>`:isPdf&&unitNumber?exactPage:isPdf?chatPdfDriveFallback(driveId,null):`<div class="placeholder">El fragmento se ha localizado en ${escHtml(label)}. Google Drive no ofrece un visor integrado fiable para ${escHtml((format||'este formato').toUpperCase())}; ábrelo con el botón superior.</div>`;
+  const original=visualAsset&&isPdf&&unitNumber?`<div style="margin-top:8px"><button class="btn ghost" id="chatSourcePdfToggle">Mostrar también la página original resaltada</button><div id="chatSourcePdfLazy"></div></div>`:isPdf&&unitNumber?exactPage:isPdf?((locateError?`<div class="placeholder" style="border-color:#e0a53f">${escHtml(locateError)}</div>`:'')+chatPdfDriveFallback(driveId,null)):`<div class="placeholder">El fragmento se ha localizado en ${escHtml(label)}. Google Drive no ofrece un visor integrado fiable para ${escHtml((format||'este formato').toUpperCase())}; ábrelo con el botón superior.</div>`;
   host.innerHTML=`<div style="display:flex;gap:8px;align-items:flex-start"><div style="flex:1;min-width:0"><b>${escHtml(title)}</b><div class="dx-meta">${escHtml(label)} · ${escHtml((format||'pdf').toUpperCase())}</div></div><button class="btn ghost" id="chatSourceViewerClose" title="Cerrar">✕</button></div><blockquote style="margin:8px 0;padding:7px 10px;border-left:3px solid var(--accent);font-size:11.5px;line-height:1.45;white-space:pre-wrap;max-height:150px;overflow:auto">${escHtml(String(quote||'').slice(0,2000))}</blockquote><div style="display:flex;gap:6px;margin-bottom:7px"><a class="btn ghost" href="${escA(driveUrl)}" target="_blank" rel="noopener">Abrir original en Drive</a></div>${visualAsset?'<div id="chatDerivedVisual"></div>':''}${original}`;
   host.querySelector('#chatSourceViewerClose')?.addEventListener('click',releaseChatSourceViewer);
   host.querySelector('#chatSourcePdfToggle')?.addEventListener('click',event=>{ const target=host.querySelector('#chatSourcePdfLazy'); if(!target) return; target.innerHTML=exactPage; event.currentTarget.remove(); renderChatPdfPage(driveId,unitNumber,quote); });
@@ -5066,7 +5148,7 @@ function chatSourceFuente(name){
   if(nbk) return {titulo:grRefTitle(nbk, ''), url:'https://www.ncbi.nlm.nih.gov/books/'+nbk.toUpperCase()+'/', nbk:nbk.toUpperCase(), _src:'GeneReviews'};
   return {titulo:String(name).replace(/\.(md|txt|pdf)$/i,'').replace(/__/g,' · ')};
 }
-const _CHAT_RULES=' REGLAS ESTRICTAS: (1) PROHIBIDO usar conocimiento general, externo o de memoria. (2) Debes responder TODAS las NECESIDADES planteadas; una necesidad puede y debe integrar VARIAS fuentes cuando aporten evidencia complementaria. (3) Si no existe ningún pasaje pertinente responde NO_ENCONTRADO. Si solo falta evidencia para una parte, responde lo sustentado e identifica de forma explícita qué parte no está documentada. (4) Nunca menciones un documento que no trate específicamente lo preguntado. (5) Un cálculo solicitado solo puede hacerse cuando los pasajes documenten tanto sus datos de entrada como el método; preséntalo como «Cálculo derivado por Ariadna», muestra la operación y no atribuyas el resultado calculado a una publicación. Cuando SÍ esté en los pasajes: responde a NIVEL ESPECIALISTA (preciso, técnico, terminología y matices propios de un genetista clínico; SIN definiciones elementales). CONTEXTO TEMPORAL: fíjate en las FECHAS; si una guía/ley/documento ha sido SUSTITUIDA o actualizada, prioriza la vigente y AVISA. NO escribas una sección de «Fuentes» ni nombres de fichero: la app muestra por su cuenta TODAS las referencias realmente utilizadas. Responde en español, con precisión, sin inventar.';
+const _CHAT_RULES=' REGLAS ESTRICTAS: (1) PROHIBIDO usar conocimiento general, externo o de memoria. (2) Debes responder TODAS las NECESIDADES planteadas; una necesidad puede y debe integrar VARIAS fuentes cuando aporten evidencia complementaria. (3) Si no existe ningún pasaje pertinente responde NO_ENCONTRADO. Si solo falta evidencia para una parte, responde lo sustentado e identifica de forma explícita qué parte no está documentada. (4) Nunca menciones un documento que no trate específicamente lo preguntado. (5) Un cálculo solicitado solo puede hacerse cuando los pasajes documenten tanto sus datos de entrada como el método; preséntalo como «Cálculo derivado por Ariadna», muestra la operación y no atribuyas el resultado calculado a una publicación. (6) El historial de conversación solo sirve para entender referencias como «eso», «el anterior» o «calcula ahora»; NUNCA es evidencia clínica ni sustituye los PASAJES recuperados. Responde únicamente a la PREGUNTA ACTUAL. Cuando SÍ esté en los pasajes: responde a NIVEL ESPECIALISTA (preciso, técnico, terminología y matices propios de un genetista clínico; SIN definiciones elementales). CONTEXTO TEMPORAL: fíjate en las FECHAS; si una guía/ley/documento ha sido SUSTITUIDA o actualizada, prioriza la vigente y AVISA. NO escribas una sección de «Fuentes» ni nombres de fichero: la app muestra por su cuenta TODAS las referencias realmente utilizadas. Responde en español, con precisión, sin inventar.';
 const CHAT_SYSTEM_STORE='Eres un asistente documental para un GENETISTA CLÍNICO EXPERIMENTADO. Respondes SOLO con lo que aparezca en los PASAJES recuperados mediante búsqueda semántica de SU documentación.'+_CHAT_RULES;
 const CHAT_SYSTEM_HYBRID='Eres un asistente documental para un GENETISTA CLÍNICO EXPERIMENTADO. A continuación te doy PASAJES recuperados de SU documentación; respondes SOLO con lo que aparezca en ellos.'+_CHAT_RULES;
 /* Redacta con Claude (síntesis) a partir de los pasajes que recuperó OpenAI. Modo híbrido. */
@@ -5152,19 +5234,32 @@ async function askRepoStore(input, ids){
   const answer=parseGroundedSynthesis(raw,passages,needs); if(/^NO_ENCONTRADO/i.test(answer.text)||!answer.text) return notFound();
   return {...answer,needs};
 }
+/* Conserva el hilo conversacional sin reenviar indefinidamente conversaciones enormes. Se priorizan los
+   mensajes recientes hasta un presupuesto de caracteres; el historial orienta pronombres y repreguntas,
+   pero la evidencia clínica debe seguir procediendo de los pasajes recuperados en esta consulta. */
+function chatConversationContext(messages,maxChars=12000,maxMessages=20){
+  const rows=(Array.isArray(messages)?messages:[]).filter(m=>m&&!m.pending&&m.text&&(m.role==='user'||m.role==='assistant'));
+  const chosen=[]; let used=0;
+  for(let i=rows.length-1;i>=0&&chosen.length<maxMessages;i--){
+    const prefix=rows[i].role==='user'?'Usuario: ':'Ariadna: ', text=String(rows[i].text||'').trim();
+    if(!text) continue;
+    const remaining=Math.max(0,maxChars-used-prefix.length-1); if(!remaining) break;
+    const clipped=text.length>remaining?text.slice(text.length-remaining):text;
+    chosen.unshift(prefix+clipped); used+=prefix.length+clipped.length+1;
+  }
+  return chosen.join('\n');
+}
 async function askRepo(q){
   q=(q||'').trim(); if(!q) return;
   if(!anyProvider()){ _chatMsgs.push({role:'assistant', text:'Configura una API key (Claude u OpenAI) en ⚙ Ajustes para poder consultar.'}); renderChatMsgs(); return; }
-  const prevUser=_chatMsgs.filter(m=>m.role==='user').slice(-1)[0];   // para repreguntas: da contexto a la recuperación
+  const history=chatConversationContext(_chatMsgs);   // se captura antes de añadir la pregunta actual
   _chatMsgs.push({role:'user', text:q});
   const pend={role:'assistant', text:'', pending:true}; _chatMsgs.push(pend); renderChatMsgs();
-  const histText=()=>_chatMsgs.filter(m=>!m.pending && m.text).slice(-7,-1).map(m=>(m.role==='user'?'Usuario: ':'Asistente: ')+m.text).join('\n');
   try{
     // SEGUNDO CEREBRO: si hay Vector Store configurado + clave OpenAI, se pregunta ahí (rápido, síntesis, citas).
     const ids=secondBrainStores();
     if(ids.length && loadCfg().openaiKey){
-      const h=histText();
-      const input=(h?('Conversación previa (contexto):\n'+h+'\n\n'):'')+'PREGUNTA: '+q;
+      const input=(history?('CONTEXTO DE ESTA MISMA CONVERSACIÓN (solo para entender referencias y repreguntas; no es evidencia):\n'+history+'\n\n'):'')+'PREGUNTA: '+q;
       try{ await Promise.all([loadSbSources(),loadSbFigures(),loadMasterCatalogIndex()]); }catch(e){}   // referencias canónicas + figuras
       const {text, sources, passages}=await askRepoStore(input, ids);
       pend.pending=false; pend.text=text||'No encuentro esa información en tu documentación.'; pend.sources=sources; pend.passages=passages||[]; renderChatMsgs(); maybeTitleConvo(); return;
@@ -5218,7 +5313,9 @@ function renderChatMsgs(){
             }
             const figs=f.nbk?grFiguresHtml(f.nbk):'';   // figuras del capítulo GeneReviews (embebidas de NCBI)
             const quote=sbQuoteHtml(m.passages, key);   // texto EXACTO recuperado (localizar la afirmación)
-            return '<div style="margin:2px 0">'+bibliographyEntryHtml(f)+' '+act+figs+quote+'</div>'; }).join('')
+            const firstPassage=(m.passages||[]).find(p=>String(p.filename||'').split('__')[0]===key&&String(p.text||'').trim());
+            const sourceHref=f.nbk?geneReviewsTextFragmentUrl(f.nbk,firstPassage?.text||''):'';
+            return '<div style="margin:2px 0">'+bibliographyEntryHtml(f,sourceHref?{href:sourceHref}:undefined)+' '+act+figs+quote+'</div>'; }).join('')
         + '</div></div>';
     }
     return `<div style="background:${bg};border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0"><div class="dx-meta" style="font-weight:600;margin-bottom:4px">${who}</div><div style="font-size:13.5px;line-height:1.6">${body}</div>${src}</div>`;
@@ -5226,7 +5323,7 @@ function renderChatMsgs(){
   el.querySelectorAll('[data-sbviewer]').forEach(button=>button.addEventListener('click',()=>{ let quote='', assetLabel=''; try{ quote=decodeURIComponent(button.dataset.sbquote||''); assetLabel=decodeURIComponent(button.dataset.sbassetlabel||''); }catch(e){}
     const visualAsset=button.dataset.sbasset?{assetId:button.dataset.sbasset,sha256:button.dataset.sbassetsha||'',type:button.dataset.sbassettype||'visual',label:assetLabel,page:Number(button.dataset.sbunit)||null,sourceDriveId:button.dataset.sbassetsource||''}:null;
     if(visualAsset?.sourceDriveId && visualAsset.sourceDriveId!==button.dataset.sbviewer){ showToast('El recurso visual no corresponde a esta fuente; no se abrirá.'); return; }
-    openChatSourceViewer({driveId:button.dataset.sbviewer,format:button.dataset.sbformat,unitKind:button.dataset.sbunitkind,unitNumber:Number(button.dataset.sbunit)||null,quote,visualAsset}); }));
+    openChatSourceViewer({driveId:button.dataset.sbviewer,format:button.dataset.sbformat,unitKind:button.dataset.sbunitkind,unitNumber:Number(button.dataset.sbunit)||null,quote,visualAsset,sourceFileId:button.dataset.sbfileid||''}); }));
   el.scrollTop=el.scrollHeight;
   try{ persistConvos(); }catch(e){}   // guarda la conversación activa tras cada cambio
 }
@@ -5251,17 +5348,27 @@ function renderConvoList(){
   }).join('');
 }
 function updateChatModeControl(){ const sel=document.getElementById('chatModeCurrent'); if(sel){ sel.innerHTML=chatModeOptionsHtml(activeChatMode()); sel.value=activeChatMode(); } }
+function chatConversationsHidden(){ return localStorage.getItem('fh_chat_conversations_hidden')==='1'; }
+function applyChatConversationsVisibility(hidden){
+  hidden=hidden===undefined?chatConversationsHidden():!!hidden;
+  const side=document.getElementById('chatConvoSidebar'), button=document.getElementById('chatConvoToggle');
+  if(side) side.style.display=hidden?'none':'flex';
+  if(button){ button.textContent=hidden?'☰ Conversaciones':'◀ Ocultar conversaciones'; button.setAttribute('aria-expanded',hidden?'false':'true'); }
+}
+function setChatConversationsHidden(hidden){ safeLocalSet('fh_chat_conversations_hidden',hidden?'1':'0'); applyChatConversationsVisibility(hidden); }
 function renderConsultar(){
   const box=document.getElementById('consultarView'); if(!box) return;
   activeConvo();   // asegura que _chatMsgs apunta a la conversación activa (crea una si no hay ninguna)
+  const conversationsHidden=chatConversationsHidden();
   box.innerHTML=`
-    <div style="display:flex;gap:16px;align-items:stretch;max-width:1540px;margin:0 auto">
-      <aside style="width:240px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid var(--line);padding-right:12px">
+    <div id="consultarWorkspace" style="display:flex;gap:16px;align-items:stretch;width:100%;max-width:none;margin:0">
+      <aside id="chatConvoSidebar" style="width:240px;flex-shrink:0;display:${conversationsHidden?'none':'flex'};flex-direction:column;border-right:1px solid var(--line);padding-right:12px">
         <button class="btn primary" id="convoNew" style="width:100%;margin-bottom:10px">＋ Nueva conversación</button>
         <div id="convoList" style="overflow-y:auto;flex:1"></div>
       </aside>
       <div style="flex:1;min-width:0;display:flex;flex-direction:column">
         <div class="lib-head" style="gap:8px;flex-wrap:wrap"><h2 style="margin:0;flex:1">💬 Consultar tu documentación</h2>
+          <button class="btn ghost" id="chatConvoToggle" aria-expanded="${conversationsHidden?'false':'true'}">${conversationsHidden?'☰ Conversaciones':'◀ Ocultar conversaciones'}</button>
           <label class="dx-meta" for="chatModeCurrent">Modo de esta conversación</label>
           <select id="chatModeCurrent" style="max-width:360px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink)">${chatModeOptionsHtml(activeChatMode())}</select>
           ${ghConfigured()?'<button class="btn ghost" id="chatSyncNow" title="Guardar y recuperar conversaciones desde tu repositorio privado">↻ GitHub</button>':''}
@@ -5273,7 +5380,7 @@ function renderConsultar(){
           <button class="btn primary" id="chatSend">Preguntar</button>
         </div>
       </div>
-      <aside id="chatSourceViewer" style="display:none;width:min(46vw,520px);flex-shrink:0;border-left:1px solid var(--line);padding-left:12px"></aside>
+      <aside id="chatSourceViewer" style="display:none;width:min(46vw,760px);flex-shrink:0;border-left:1px solid var(--line);padding-left:12px"></aside>
     </div>`;
   renderConvoList();
   renderChatMsgs();
@@ -5284,6 +5391,7 @@ function renderConsultar(){
   // Nueva conversación: si la activa ya está vacía, no crea otra (evita duplicados vacíos).
   const modeSel=box.querySelector('#chatModeCurrent'); if(modeSel) modeSel.addEventListener('change',()=>{ const c=activeConvo(); c.mode=normalizedChatMode(modeSel.value); c.updated=Date.now(); persistConvos(); updateChatModeControl(); });
   const syncBtn=box.querySelector('#chatSyncNow'); if(syncBtn) syncBtn.addEventListener('click',async()=>{ syncBtn.disabled=true; syncBtn.textContent='Sincronizando…'; try{ await syncChatConversationsNow(); showToast('Conversaciones sincronizadas con GitHub'); }catch(e){ showToast('No se pudieron sincronizar: '+e.message); } finally{ syncBtn.disabled=false; syncBtn.textContent='↻ GitHub'; } });
+  const toggle=box.querySelector('#chatConvoToggle'); if(toggle) toggle.addEventListener('click',()=>setChatConversationsHidden(!chatConversationsHidden()));
   const nb=box.querySelector('#convoNew'); if(nb) nb.addEventListener('click', ()=>{ if(activeConvo().msgs.length) newConvo(); renderConvoList(); renderChatMsgs(); updateChatModeControl(); if(inp) inp.focus(); });
   const cl=box.querySelector('#convoList'); if(cl) cl.addEventListener('click', e=>{
     const del=e.target.closest('.convo-del');
@@ -7957,14 +8065,14 @@ function setGa(id, min, max, meta){
 }
 function allPrenatalFindingRecords(){
   const rows=[], seen=new Set();
-  PRENATAL_FINDINGS.forEach(group=>(group.terms||[]).forEach(term=>{ if(seen.has(term.id)) return; seen.add(term.id); rows.push({id:term.id,es:term.es,sistema:group.system}); }));
-  (PRENATAL_CUSTOM.findings||[]).forEach(term=>{ if(!term||!term.id||seen.has(term.id)) return; seen.add(term.id); rows.push({id:term.id,es:term.es||term.id,sistema:term.sistema||'Otros'}); });
+  PRENATAL_FINDINGS.forEach(group=>(group.terms||[]).forEach(term=>{ if(seen.has(term.id)) return; seen.add(term.id); rows.push({id:term.id,es:term.es,sistema:group.system,tipo:term.tipo||PRENATAL_TIPO[term.id]||'mayor'}); }));
+  (PRENATAL_CUSTOM.findings||[]).forEach(term=>{ if(!term||!term.id||seen.has(term.id)) return; seen.add(term.id); rows.push({id:term.id,es:term.es||term.id,sistema:term.sistema||'Otros',tipo:term.tipo||PRENATAL_TIPO[term.id]||'mayor'}); });
   // No ocultar asignaciones antiguas aunque ese HPO ya no esté en el selector vigente.
   // Permanecen revisables hasta que el usuario decida reincorporarlas o retirarlas.
   [...Object.keys(PRENATAL_GA||{}), ...Object.keys(_prenatalGaProposals||{})].forEach(id=>{
     if(!/^HP:\d{7}$/.test(id)||seen.has(id)) return;
     seen.add(id); const label=prenatalFindingLabel(id);
-    rows.push({id,es:label===id?'Registro histórico':label,sistema:'Histórico · fuera del selector prenatal actual',historical_only:true});
+    rows.push({id,es:label===id?'Registro histórico':label,sistema:'Histórico · fuera del selector prenatal actual',tipo:PRENATAL_TIPO[id]||'mayor',historical_only:true});
   });
   return rows;
 }
@@ -8080,11 +8188,17 @@ function prenatalSindromes(){
   for(const s of allPrenatalSyndromes()){
     const all=(s.findings||[]);
     const matched=all.filter(id=>selections[id]);
-    if(matched.length>=(s.min||2)) out.push({name:s.name, test:s.test, matched, missing:all.filter(id=>!selections[id]), total:all.length, min:s.min||2, fuentes:(s.fuentes&&s.fuentes.length)?s.fuentes:(s.ref?[s.ref]:[]), ref:s.ref||null, ia:!!s.ia, orpha:s.orpha||null});
+    if(matched.length>=(s.min||2)) out.push({id:s.id||s.name, name:s.name, test:s.test, matched, missing:all.filter(id=>!selections[id]), total:all.length, min:s.min||2, fuentes:(s.fuentes&&s.fuentes.length)?s.fuentes:(s.ref?[s.ref]:[]), ref:s.ref||null, ia:!!s.ia, orpha:s.orpha||null, evidencePending:prenatalEvidencePending(s)});
   }
   return out.sort((a,b)=>b.matched.length-a.matched.length);
 }
-function grLink(name){ return 'https://www.ncbi.nlm.nih.gov/books/?term='+encodeURIComponent(name+' GeneReviews'); }
+/* Un protocolo sin fuentes no debe fingir que una búsqueda genérica en GeneReviews es su bibliografía.
+   Las referencias reales pasan siempre por el render común, que las enlaza al Catálogo Maestro. */
+function prenatalProtocolBibliographyHtml(s){
+  const refs=(s&&s.fuentes&&s.fuentes.length)?s.fuentes:(s&&s.ref?[s.ref]:[]);
+  if(refs.length) return bibliographyInlineHtml(refs,{fallback:'Bibliografía'});
+  return '<span class="prenatal-bib-pending" style="color:#e0a53f">⚠ Bibliografía pendiente de revisión en el Catálogo Maestro</span>';
+}
 async function persistPrenatalCustom(msg){
   _fichaRefSet=null;   // las refs prenatales cuentan como bibliografía → recalcular el flag
   try{ let sha=null; try{ const ci=await ghGetFile('prenatal-syndromes.json'); sha=ci.sha; }catch(e){} await ghPutFile('prenatal-syndromes.json', PRENATAL_CUSTOM, msg||'prenatal: actualizar síndromes IA', sha); }catch(e){}
@@ -8142,8 +8256,28 @@ function openPrenatalSyndEditor(key, opts){
   s.fuentes = Array.isArray(s.fuentes) ? s.fuentes : ((s.ref && (s.ref.titulo||s.ref.url)) ? [Object.assign({}, s.ref)] : []);
   const ov=document.createElement('div'); ov.className='overlay'; ov.id='prenSynOverlay';
   const editorProfile=setClinicalEditorProfile(ov,'prenatal_protocol');
+  let draftNoIA=!s.ia, draftValidated=!!s.validado, draftNote='';
+  function capturePrenatalDraft(){
+    const get=id=>ov.querySelector(id);
+    if(!get('#psName')) return;
+    s.name=get('#psName').value.trim()||s.name; s.test=get('#psTest').value.trim();
+    s.min=parseInt(get('#psMin').value)||1; const orpha=get('#psOrpha').value.trim(); s.orpha=orpha||null;
+    draftNoIA=!!get('#psNoIA').checked; draftValidated=!!get('#psValidado').checked; draftNote=get('#psNota').value;
+  }
+  function replacePrenatalHpoInDraft(oldId,newId,name){
+    capturePrenatalDraft();
+    const currentMeta=(pendingFindingMeta[oldId]||((PRENATAL_CUSTOM.findings||[]).find(x=>x.id===oldId))||{});
+    if(oldId!==newId){
+      const seen=new Set(); s.findings=(s.findings||[]).map(id=>id===oldId?newId:id).filter(id=>{ if(seen.has(id)) return false; seen.add(id); return true; });
+      if(pendingGa[oldId]&&!pendingGa[newId]) pendingGa[newId]=pendingGa[oldId];
+      delete pendingFindingLabels[oldId]; delete pendingFindingMeta[oldId]; delete pendingGa[oldId];
+    }
+    pendingFindingLabels[newId]=name||prenatalFindingLabel(newId);
+    pendingFindingMeta[newId]=Object.assign({},currentMeta,{label:pendingFindingLabels[newId]});
+    render();
+  }
   function render(){
-    const findings=(s.findings||[]).map((id,i)=>`<div style="display:flex;align-items:center;gap:6px;padding:2px 0"><span class="hp-chip" style="cursor:default">${escHtml(id)}<span class="hp-nm" data-hpo-nm="${escHtml(id)}"> · …</span></span> <span class="dx-meta">${escHtml(prenatalFindingLabel(id))}</span> <a data-rmf="${i}" title="Quitar hallazgo" style="cursor:pointer;color:var(--danger);margin-left:auto;font-weight:700">✕</a></div>`).join('');
+    const findings=(s.findings||[]).map((id,i)=>`<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--line)">${hpoChip(id,pendingFindingLabels[id]||prenatalFindingLabel(id))}<span class="dx-meta" style="flex:1">${escHtml(pendingFindingLabels[id]||prenatalFindingLabel(id))}</span><a data-rmf="${i}" title="Quitar hallazgo" style="cursor:pointer;color:var(--danger);font-weight:700;padding:2px 4px">✕</a></div>`).join('');
     ov.innerHTML=`<div class="modal" role="dialog" aria-label="Editar síndrome prenatal" style="max-width:640px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><h2>${editorProfile.icon} Editor clínico · ${editorProfile.label}</h2><span class="pop-badge">rev ${s.rev||0}</span></div>
       ${opts.evidenceCandidate?'<div class="study-flag" style="margin:0 0 12px"><b>Candidato de actualización con evidencia.</b> Nada se aplicará hasta que revises los campos y pulses «Guardar (nueva versión)».</div>':''}
@@ -8157,29 +8291,35 @@ function openPrenatalSyndEditor(key, opts){
       <h3 style="margin-top:12px;margin-bottom:2px">Referencias <span class="dx-meta" style="font-weight:400">— mismo editor que los protocolos (repositorio 📁, buscar DOI/PMID 🔍, badges)</span></h3>
       <div id="psFuentes"></div>
       <h3>Hallazgos ecográficos (${(s.findings||[]).length})</h3>
+      <div class="dx-meta" style="margin-bottom:5px">Pulsa un código HPO para comprobar su nombre oficial en HPO/JAX o buscar y corregir el término, igual que en los protocolos generales.</div>
       <div id="psFindings">${findings||'<div class="dx-meta">Sin hallazgos.</div>'}</div>
       <button class="btn ghost" id="psAddF" style="margin-top:6px;padding:3px 9px;font-size:12px">+ hallazgo (buscar HPO)</button>
-      <label class="q-opt" style="display:flex;align-items:center;gap:6px;margin-top:14px;font-size:13px"><input type="checkbox" id="psNoIA" ${!s.ia?'checked':''}> Marcar como revisado (quitar la etiqueta «IA»)</label>
-      <label class="q-opt" style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:13px"><input type="checkbox" id="psValidado" ${s.validado?'checked':''}> ✓ Validado</label>
-      <div class="field" style="margin-top:10px"><label>Nota de cambios (changelog)</label><input id="psNota" placeholder="opcional"></div>
+      <label class="q-opt" style="display:flex;align-items:center;gap:6px;margin-top:14px;font-size:13px"><input type="checkbox" id="psNoIA" ${draftNoIA?'checked':''}> Marcar como revisado (quitar la etiqueta «IA»)</label>
+      <label class="q-opt" style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:13px"><input type="checkbox" id="psValidado" ${draftValidated?'checked':''}> ✓ Validado</label>
+      <div class="field" style="margin-top:10px"><label>Nota de cambios (changelog)</label><input id="psNota" value="${escA(draftNote)}" placeholder="opcional"></div>
       ${(s.historial&&s.historial.length)?`<details style="margin-top:6px"><summary class="dx-meta" style="cursor:pointer">🕘 Changelog (${s.historial.length})</summary><div>${s.historial.slice(0,20).map(h=>`<div style="font-size:12px;border-top:1px solid var(--line);padding:3px 0"><b>rev ${h.rev}</b> <span class="dx-meta">${String(h.fecha||'').slice(0,16).replace('T',' ')}</span>${h.nota?' · '+escHtml(h.nota):''}</div>`).join('')}</div></details>`:''}
       <div class="modal-actions"><button class="btn ghost" id="psCancel">Cancelar</button><button class="btn primary" id="psSave">Guardar (nueva versión)</button></div>
     </div>`;
     annotateHpoChips(ov);
     ov.querySelector('#psCancel').addEventListener('click', ()=>ov.remove());
-    ov.querySelectorAll('[data-rmf]').forEach(a=>a.addEventListener('click', ()=>{ s.findings.splice(+a.dataset.rmf,1); render(); }));
-    ov.querySelector('#psAddF').addEventListener('click', (e)=>buildHpoSearchPop(e.target, (id,nm)=>{ s.findings=s.findings||[]; if(!s.findings.includes(id)){ s.findings.push(id); pendingFindingLabels[id]=nm; } render(); }, 'Buscar hallazgo HPO para añadir…'));
+    const findingHost=ov.querySelector('#psFindings');
+    findingHost.addEventListener('click',e=>{
+      if(e.target.closest('.hp-fix-pop')||e.target.closest('[data-rmf]')) return;
+      const chip=e.target.closest('.hp-chip[data-hpo]'); if(!chip||!findingHost.contains(chip)) return;
+      ov.querySelectorAll('.hp-fix-pop').forEach(p=>p.remove());
+      const oldId=chip.dataset.hpo;
+      buildHpoSearchPop(chip,(newId,name)=>replacePrenatalHpoInDraft(oldId,newId,name),'Comprobar o corregir este HPO (español, inglés o código)…');
+    });
+    ov.querySelectorAll('[data-rmf]').forEach(a=>a.addEventListener('click', ()=>{ capturePrenatalDraft(); s.findings.splice(+a.dataset.rmf,1); render(); }));
+    ov.querySelector('#psAddF').addEventListener('click', (e)=>buildHpoSearchPop(e.target, (id,nm)=>{ capturePrenatalDraft(); s.findings=s.findings||[]; if(!s.findings.includes(id)){ s.findings.push(id); pendingFindingLabels[id]=nm; } render(); }, 'Buscar hallazgo HPO para añadir…'));
     const psFu=ov.querySelector('#psFuentes'); if(psFu) buildFuentesEditor(psFu, ()=>s.fuentes, (arr)=>{ s.fuentes=arr; });
     ov.querySelector('#psSave').addEventListener('click', async ()=>{
-      s.name=ov.querySelector('#psName').value.trim()||s.name;
-      s.test=ov.querySelector('#psTest').value.trim();
-      s.min=parseInt(ov.querySelector('#psMin').value)||1;
-      const orpha=ov.querySelector('#psOrpha').value.trim(); s.orpha=orpha||null;
+      capturePrenatalDraft();
       s.fuentes=(s.fuentes||[]).filter(f=>f&&(f.titulo||f.url));
       s.ref=s.fuentes[0]||null;   // compatibilidad con las vistas que aún leen s.ref (primera fuente)
-      if(ov.querySelector('#psNoIA').checked){ s.ia=false; s.verified=true; }
-      s.validado=!!ov.querySelector('#psValidado').checked;
-      bumpPrenatalRev(s, ov.querySelector('#psNota').value);
+      if(draftNoIA){ s.ia=false; s.verified=true; }
+      s.validado=draftValidated;
+      bumpPrenatalRev(s, draftNote);
       s.id=originalId||s.id; s.origen=s.origen||(legacyIndex>=0?'prompt_inicial':'manual');
       s.activo=true; s.estado='vigente'; s.updated_at=new Date().toISOString();
       if(opts.evidenceCandidate){ s.revision_evidencia='revisada'; s.ultima_comprobacion_evidencia=new Date().toISOString(); s.ultima_actualizacion=s.updated_at; }
@@ -8891,15 +9031,17 @@ function renderPrenatalDx(){
   const sinds=prenatalSindromes();
   if(!sinds.length){ box.innerHTML=''; return; }
   box.innerHTML=`<div class="cart-group-title" style="color:var(--ok)">✓ Cumple criterios de ${sinds.length} síndrome(s)</div>`
-    + sinds.map(s=>{ const link=(s.fuentes&&s.fuentes.length)?bibliographyInlineHtml(s.fuentes):`<a href="${grLink(s.name)}" target="_blank" rel="noopener">GeneReviews</a>`;
+    + sinds.map(s=>{ const link=prenatalProtocolBibliographyHtml(s);
       const pres=s.matched.map(id=>escHtml(prenatalFindingLabel(id))+gaLabel(id)).join(' · ');
       const falt=s.missing.map(id=>escHtml(prenatalFindingLabel(id))+gaLabel(id)).join(' · ');
       return `<div class="study" style="margin:6px 0;border-left:3px solid var(--ok);padding-left:8px">`
         +`<div><b>${escHtml(s.name)}</b>${s.orpha?` <a class="dx-meta" href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener" style="color:var(--ink3)">ORPHA:${escHtml(String(s.orpha))}</a>`:''}${s.ia?' <span class="dx-meta" style="color:var(--accent)">· IA</span>':''} <span class="dx-meta">· cumple ${s.matched.length}/${s.total} (mín. ${s.min})</span></div>`
         +`<div style="font-size:12px;line-height:1.5;margin:3px 0"><span style="color:var(--ok)">✓ presentes (${s.matched.length}):</span> ${pres}</div>`
         +(s.missing.length?`<div style="font-size:12px;line-height:1.5;margin:3px 0;color:var(--ink3)">○ faltan (${s.missing.length}): ${falt}</div>`:'')
-        +`<div style="font-size:12px;margin-top:3px">→ <b>${escHtml(s.test)}</b> · ${link}</div></div>`; }).join('')
+        +`<div style="font-size:12px;margin-top:3px">→ <b>${escHtml(s.test)}</b>${s.evidencePending?' <span class="dx-meta" style="color:#e0a53f">· recomendación pendiente de revisión bibliográfica</span>':''}</div>`
+        +`<div class="study-src" style="font-size:12px;margin-top:4px">Bibliografía: ${link}${s.evidencePending?` · <a class="tip-ai" data-prendxupdate="${escA(s.id)}">↻ actualizar evidencia</a>`:''}</div></div>`; }).join('')
     + `<div class="am-note" style="margin-top:4px">Por solapamiento de hallazgos; no es diagnóstico.</div>`;
+  box.querySelectorAll('[data-prendxupdate]').forEach(a=>a.addEventListener('click',()=>proponerActualizacionPrenatal(a.dataset.prendxupdate)));
 }
 async function evalPrenatalGuias(){
   const out=document.getElementById('prenatalIAout'); if(!out) return;
@@ -9532,10 +9674,7 @@ function prenatalCardHtml(s){
 function verSindromePrenatal(key){
   const s=findPrenatalSyndrome(key); if(!s) return;
   const ov=document.createElement('div'); ov.className='overlay'; ov.id='prenViewOverlay';
-  const refs=(s.fuentes&&s.fuentes.length)?s.fuentes:(s.ref?[s.ref]:[]);
-  const link=refs.length
-    ? bibliographyInlineHtml(refs,{fallback:'Bibliografía'})
-    : `<a href="${grLink(s.name)}" target="_blank" rel="noopener">GeneReviews</a>`;
+  const link=prenatalProtocolBibliographyHtml(s);
   ov.innerHTML=`<div class="modal" style="max-width:560px"><h2>🤰 ${escHtml(s.name)} <span class="pop-badge" style="background:rgba(120,180,255,.15);color:#9cc4ff">Prenatal</span></h2>
     ${prenatalEvidencePending(s)?'<div class="warn" style="margin:8px 0"><b>Pendiente de revisión bibliográfica.</b> Continúa activo mientras se revisa individualmente.</div>':''}
     <div class="msub">Estudio dirigido: <b>${escHtml(s.test||'—')}</b> · mínimo ${s.min||2} hallazgo(s) para sugerirlo${s.orpha?` · <a href="https://www.orpha.net/es/disease/detail/${escHtml(String(s.orpha))}" target="_blank" rel="noopener">ORPHA:${escHtml(String(s.orpha))}</a>`:''}</div>
