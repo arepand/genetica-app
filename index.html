@@ -526,8 +526,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.0.0';
+const APP_VERSION='3.0.1';
 const CHANGELOG=[
+  {v:'3.0.1', d:'2026-07-17', c:['Drive: el botón <b>«Copiar acceso para la app local»</b> permanece visible en Documentos. Si la autorización ha caducado, abre Google Drive y copia el token nuevo en un solo paso; ya no queda oculto después de pulsar «Conectar».']},
   {v:'3.0.0', d:'2026-07-17', c:['Nuevo Catálogo Maestro bibliográfico: protocolos generales y prenatales, criterios prenatales, seguimiento, documentos, GeneReviews y divulgación comparten obras canónicas con work_id. DOI, PMID, PMCID, NBK e ISBN se muestran de forma homogénea y las coincidencias dudosas pasan a bandejas de revisión asistida.','Segundo cerebro separado: GeneReviews y el archivo documental usan Vector Stores independientes, con carga local reanudable, control de coste y actualización incremental. El almacén mixto anterior se conserva únicamente como rollback.','Archivo documental renovado: búsqueda natural, ordenación por título/nombre o fecha, título canónico antes que autor, año resaltado, metadatos específicos para artículos, libros, capítulos, normas, protocolos, congresos y presentaciones, estados de calidad y miniaturas.','Evidencia original en Consultar: cada cita conserva el pasaje y su localización; el visor lateral abre el PDF o EPUB relacionado. Las tablas y figuras documentales pueden mostrar el JPG exacto de Drive tras verificar asset_id y SHA-256, sin confundir una descripción automática con la imagen original.','GeneReviews 3.0: 888 capítulos, 9.879 apartados, 720 figuras oficiales y 7.464 tablas validadas. Las revisiones nuevas sustituyen a la versión activa solo tras validación y la anterior se conserva fuera de las búsquedas.','Protocolos y prenatal: bibliografía conectada al Catálogo, actualización asistida con segundo cerebro y búsqueda científica, ámbitos adulto/pediatría configurables y edición prenatal con semanas HPO como ventana desde–hasta, fuente bibliográfica e historial. Ninguna propuesta clínica se aplica sin confirmación.','Menor consumo de memoria: el repositorio documental se pagina, los índices reconstruibles pasan a IndexedDB, el log de IA se limita, y visores, búferes y URL temporales se liberan al terminar sin recortar documentos ni prestaciones.','Indexador local para macOS: seguimiento de extracción, OCR, incidencias, GeneReviews, Drive y cargas vectoriales; checkpoints por archivo/página, claves en el Llavero y acciones externas siempre separadas por aprobación.']},
   {v:'2.23.0', d:'2026-07-14', c:['Nueva exportación segura y de solo lectura para construir el <b>Catálogo Maestro</b>: desde ⚙ Ajustes → GitHub, Ariadna reúne en un único JSON las fichas/protocolos, bibliografía prenatal, seguimiento y el índice documental. El archivo <b>no incluye</b> la contraseña de acceso, el PAT de GitHub ni las claves de IA; sirve para auditar y migrar las referencias localmente antes de solicitar una aplicación aprobada. La operación solo lee el repositorio y no modifica GitHub, Drive ni OpenAI.','Nueva <b>bandeja de incidencias bibliográficas</b> en Documentos: muestra las referencias que el Catálogo Maestro no ha podido enlazar de forma segura y permite preparar una decisión auditada — elegir una obra existente, corregir DOI/PMID/PMCID/NBK/ISBN/identificador jurídico o confirmar una obra nueva. Las decisiones quedan como borrador local y se descargan para revisión; <b>no se aplican solas</b> ni escriben en GitHub, Drive u OpenAI.']},
   {v:'2.22.0', d:'2026-07-13', c:['Nuevo filtro <b>«🚫 No en el 2º cerebro»</b> en el inventario del segundo cerebro (⚙ Ajustes → 🧠 Segundo cerebro): lista los documentos de tu repositorio con PDF en Drive que <b>NO aparecen en el Vector Store</b> — comparando por URL de Drive / DOI / PMID / NBK / título. La causa habitual es un <b>PDF escaneado sin capa de texto</b>: el pipeline no puede extraerlo (0 secciones) y no llega al segundo cerebro, aunque en «Documentos» se vea con una cita bonita (sacada del nombre + web). Así ves de un vistazo qué te falta y puedes conseguir una versión con OCR. (Pulsa antes «Cargar/refrescar inventario»; si acabas de indexar algo, el pipeline corre a diario.)']},
@@ -5044,7 +5045,7 @@ function renderDocumentos(){
       <span style="font-size:12px;color:var(--ink3);flex:1">Vigilando: ${scope} · <button class="btn ghost" id="docToAjustes" style="padding:3px 8px;font-size:11px">cambiar en Ajustes</button></span>
       <button class="btn" id="docRefresh">↻ Refrescar</button>
       <button class="btn primary" id="docConnect">Conectar</button>
-      ${driveTokenValid()?`<button class="btn ghost" id="docSbToken" title="Copia una línea con tu token de Drive para el script de descarga del «segundo cerebro» (secondbrain/download-drive.mjs). El token caduca en ~1h.">⬇ Token 2º cerebro</button>`:''}
+      <button class="btn ghost" id="docSbToken" title="Autoriza Google Drive si hace falta y copia el acceso temporal para Ariadna Indexador Local. El token caduca en aproximadamente una hora.">🔑 Copiar acceso para la app local</button>
     </div>
     <div class="sec-note">Al <b>indexar</b> un documento, la IA lo analiza (nombre + resumen) y le busca DOI/PMID. Para <b>consultar</b> tu documentación por significado, usa el chat «💬 Consultar» (tu <b>segundo cerebro</b>). <b>unido a bibliografía</b> = citado por algún protocolo.</div>
     <div id="docMasterArchive"><div class="loading">Cargando Archivo documental…</div></div>
@@ -5071,11 +5072,18 @@ function renderDocumentos(){
   document.getElementById('docRefresh').addEventListener('click', cargarDriveDocs);
   document.getElementById('docToAjustes').addEventListener('click', openSettings);
   (function(){ const sb=document.getElementById('docSbToken'); if(!sb) return;
-    sb.addEventListener('click', ()=>{ const c=loadCfg();
+    const copyAccess=()=>{ const c=loadCfg();
       const line=`export DRIVE_TOKEN='${_driveToken||''}' DRIVE_FOLDER='${c.driveFolder||''}' DRIVE_SUBFOLDERS='${c.driveSubfolders?'1':'0'}'`;
-      const done=()=>showToast('Copiado. En la carpeta secondbrain, pega la línea y ejecuta: node download-drive.mjs (token válido ~1h)');
+      const done=()=>showToast('Acceso copiado. Pégalo en Ajustes → Google Drive de Ariadna Indexador Local (válido ~1 h).');
       try{ navigator.clipboard.writeText(line).then(done, ()=>{ prompt('Copia esta línea:', line); }); }
       catch(e){ prompt('Copia esta línea:', line); }
+    };
+    sb.addEventListener('click', ()=>{
+      if(driveTokenValid()){ copyAccess(); return; }
+      const tc=ensureDriveTokenClient();
+      if(!tc){ showToast('No se pudo abrir Google Drive. Revisa el Client ID en Ajustes.'); return; }
+      _onDriveToken=copyAccess;
+      tc.requestAccessToken();
     });
   })();
   renderMasterReferenceIssues();
