@@ -526,8 +526,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.0.1';
+const APP_VERSION='3.0.2';
 const CHANGELOG=[
+  {v:'3.0.2',d:'2026-07-17',c:['Documentos vuelve a reconocer la biblioteca: el Catálogo Maestro se lee primero desde su repositorio privado de GitHub, con compatibilidad para la ubicación antigua del segundo cerebro.','La lista de Google Drive enlaza cada archivo por su drive_id exacto con la obra canónica del Catálogo Maestro.','Los archivos ya catalogados dejan de aparecer como pendientes de indexación y se distinguen del índice documental heredado.']},
   {v:'3.0.1', d:'2026-07-17', c:['Drive: el botón <b>«Copiar acceso para la app local»</b> permanece visible en Documentos. Si la autorización ha caducado, abre Google Drive y copia el token nuevo en un solo paso; ya no queda oculto después de pulsar «Conectar».']},
   {v:'3.0.0', d:'2026-07-17', c:['Nuevo Catálogo Maestro bibliográfico: protocolos generales y prenatales, criterios prenatales, seguimiento, documentos, GeneReviews y divulgación comparten obras canónicas con work_id. DOI, PMID, PMCID, NBK e ISBN se muestran de forma homogénea y las coincidencias dudosas pasan a bandejas de revisión asistida.','Segundo cerebro separado: GeneReviews y el archivo documental usan Vector Stores independientes, con carga local reanudable, control de coste y actualización incremental. El almacén mixto anterior se conserva únicamente como rollback.','Archivo documental renovado: búsqueda natural, ordenación por título/nombre o fecha, título canónico antes que autor, año resaltado, metadatos específicos para artículos, libros, capítulos, normas, protocolos, congresos y presentaciones, estados de calidad y miniaturas.','Evidencia original en Consultar: cada cita conserva el pasaje y su localización; el visor lateral abre el PDF o EPUB relacionado. Las tablas y figuras documentales pueden mostrar el JPG exacto de Drive tras verificar asset_id y SHA-256, sin confundir una descripción automática con la imagen original.','GeneReviews 3.0: 888 capítulos, 9.879 apartados, 720 figuras oficiales y 7.464 tablas validadas. Las revisiones nuevas sustituyen a la versión activa solo tras validación y la anterior se conserva fuera de las búsquedas.','Protocolos y prenatal: bibliografía conectada al Catálogo, actualización asistida con segundo cerebro y búsqueda científica, ámbitos adulto/pediatría configurables y edición prenatal con semanas HPO como ventana desde–hasta, fuente bibliográfica e historial. Ninguna propuesta clínica se aplica sin confirmación.','Menor consumo de memoria: el repositorio documental se pagina, los índices reconstruibles pasan a IndexedDB, el log de IA se limita, y visores, búferes y URL temporales se liberan al terminar sin recortar documentos ni prestaciones.','Indexador local para macOS: seguimiento de extracción, OCR, incidencias, GeneReviews, Drive y cargas vectoriales; checkpoints por archivo/página, claves en el Llavero y acciones externas siempre separadas por aprobación.']},
   {v:'2.23.0', d:'2026-07-14', c:['Nueva exportación segura y de solo lectura para construir el <b>Catálogo Maestro</b>: desde ⚙ Ajustes → GitHub, Ariadna reúne en un único JSON las fichas/protocolos, bibliografía prenatal, seguimiento y el índice documental. El archivo <b>no incluye</b> la contraseña de acceso, el PAT de GitHub ni las claves de IA; sirve para auditar y migrar las referencias localmente antes de solicitar una aplicación aprobada. La operación solo lee el repositorio y no modifica GitHub, Drive ni OpenAI.','Nueva <b>bandeja de incidencias bibliográficas</b> en Documentos: muestra las referencias que el Catálogo Maestro no ha podido enlazar de forma segura y permite preparar una decisión auditada — elegir una obra existente, corregir DOI/PMID/PMCID/NBK/ISBN/identificador jurídico o confirmar una obra nueva. Las decisiones quedan como borrador local y se descargan para revisión; <b>no se aplican solas</b> ni escriben en GitHub, Drive u OpenAI.']},
@@ -3957,17 +3958,35 @@ async function masterCacheDelete(key,legacyKey){
   if(db){ try{ await new Promise((resolve,reject)=>{ const req=db.transaction(MASTER_CACHE_STORE,'readwrite').objectStore(MASTER_CACHE_STORE).delete(key); req.onsuccess=()=>resolve(); req.onerror=()=>reject(req.error); }); }catch(e){} }
   try{ localStorage.removeItem(legacyKey); }catch(e){}
 }
+/* El Catálogo Maestro pertenece a la biblioteca privada (el mismo repo en el que se guardan protocolos
+   y documentos), no al repositorio técnico del segundo cerebro. Durante la transición se conserva este
+   último como respaldo de solo lectura para navegadores que todavía usen la ubicación antigua. */
+function masterCatalogRepoCandidates(cfg){
+  cfg=cfg||loadCfg(); const repos=[];
+  const add=value=>{ value=String(value||'').trim().replace(/^\/+|\/+$/g,''); if(/^[^/\s]+\/[^/\s]+$/.test(value)&&!repos.includes(value)) repos.push(value); };
+  add(cfg.gh_owner&&cfg.gh_repo?(cfg.gh_owner+'/'+cfg.gh_repo):'');
+  add(cfg.secondBrainRepo);
+  return repos;
+}
+async function fetchMasterCatalogReadModel(filename){
+  const cfg=loadCfg(), repos=masterCatalogRepoCandidates(cfg); if(!cfg.gh_pat||!repos.length) return {json:null,attempted:false,repo:''};
+  let attempted=false;
+  for(const repo of repos){
+    const [own,rp]=repo.split('/'); attempted=true;
+    try{
+      const r=await fetch('https://api.github.com/repos/'+own+'/'+rp+'/contents/catalog/'+filename,{headers:{Authorization:'token '+cfg.gh_pat,Accept:'application/vnd.github.raw+json'},cache:'no-store'});
+      if(r.ok) return {json:await r.json(),attempted:true,repo};
+      if(r.status===404) continue;
+    }catch(e){}
+  }
+  return {json:null,attempted,repo:''};
+}
 async function loadMasterCatalogIndex(force){
   if(force){ _masterCatalogIndex=null; await masterCacheDelete('catalog','fh_master_catalog'); }
   if(_masterCatalogIndex) return _masterCatalogIndex;
   try{ const c=await masterCacheGet('catalog','fh_master_catalog'); if(c&&Array.isArray(c.works)) _masterCatalogIndex=c; }catch(e){}
-  const cfg=loadCfg(), repo=(cfg.secondBrainRepo||'').trim();
-  if(repo&&cfg.gh_pat){
-    try{ const [own,rp]=repo.split('/'); if(own&&rp){
-      const r=await fetch('https://api.github.com/repos/'+own+'/'+rp+'/contents/catalog/index.json', {headers:{Authorization:'token '+cfg.gh_pat, Accept:'application/vnd.github.raw+json'}, cache:'no-store'});
-      if(r.ok){ const j=await r.json(); if(j&&Array.isArray(j.works)){ _masterCatalogIndex=j; await masterCacheSet('catalog',j,'fh_master_catalog'); } }
-    } }catch(e){}
-  }
+  const loaded=await fetchMasterCatalogReadModel('index.json'), j=loaded.json;
+  if(j&&Array.isArray(j.works)){ _masterCatalogIndex=j; await masterCacheSet('catalog',j,'fh_master_catalog'); }
   return _masterCatalogIndex||{works:[]};
 }
 /* Incidencias bibliográficas publicadas por el proceso local. Se leen aparte del índice porque una
@@ -3977,14 +3996,9 @@ async function loadMasterReferenceIssues(force){
   if(force){ _masterReferenceIssues=null; await masterCacheDelete('reference_issues','fh_master_reference_issues'); }
   if(_masterReferenceIssues) return _masterReferenceIssues;
   try{ const c=await masterCacheGet('reference_issues','fh_master_reference_issues'); if(c&&Array.isArray(c.issues)) _masterReferenceIssues=c; }catch(e){}
-  const cfg=loadCfg(), repo=(cfg.secondBrainRepo||'').trim();
-  if(repo&&cfg.gh_pat){
-    try{ const [own,rp]=repo.split('/'); if(own&&rp){
-      const r=await fetch('https://api.github.com/repos/'+own+'/'+rp+'/contents/catalog/reference-issues.json', {headers:{Authorization:'token '+cfg.gh_pat, Accept:'application/vnd.github.raw+json'}, cache:'no-store'});
-      if(r.ok){ const j=await r.json(); if(j&&Array.isArray(j.issues)){ _masterReferenceIssues=j; await masterCacheSet('reference_issues',j,'fh_master_reference_issues'); } }
-      else if(r.status===404) _masterReferenceIssues={schema:'ariadna-reference-issues-v1',available:true,issues:[]};
-    } }catch(e){}
-  }
+  const loaded=await fetchMasterCatalogReadModel('reference-issues.json'), j=loaded.json;
+  if(j&&Array.isArray(j.issues)){ _masterReferenceIssues=j; await masterCacheSet('reference_issues',j,'fh_master_reference_issues'); }
+  else if(loaded.attempted&&!_masterReferenceIssues) _masterReferenceIssues={schema:'ariadna-reference-issues-v1',available:true,issues:[]};
   return _masterReferenceIssues||{schema:'ariadna-reference-issues-v1',available:false,issues:[]};
 }
 /* Incidencias de calidad de los archivos: clasificación, ubicación, OCR y metadatos. Es un informe
@@ -3994,14 +4008,9 @@ async function loadMasterMetadataIssues(force){
   if(force){ _masterMetadataIssues=null; await masterCacheDelete('metadata_issues','fh_master_metadata_issues'); }
   if(_masterMetadataIssues) return _masterMetadataIssues;
   try{ const c=await masterCacheGet('metadata_issues','fh_master_metadata_issues'); if(c&&Array.isArray(c.issues)) _masterMetadataIssues=c; }catch(e){}
-  const cfg=loadCfg(), repo=(cfg.secondBrainRepo||'').trim();
-  if(repo&&cfg.gh_pat){
-    try{ const [own,rp]=repo.split('/'); if(own&&rp){
-      const r=await fetch('https://api.github.com/repos/'+own+'/'+rp+'/contents/catalog/metadata-issues.json', {headers:{Authorization:'token '+cfg.gh_pat, Accept:'application/vnd.github.raw+json'}, cache:'no-store'});
-      if(r.ok){ const j=await r.json(); if(j&&Array.isArray(j.issues)){ _masterMetadataIssues=j; await masterCacheSet('metadata_issues',j,'fh_master_metadata_issues'); } }
-      else if(r.status===404) _masterMetadataIssues={schema:'ariadna-metadata-issues-v1',available:true,issues:[]};
-    } }catch(e){}
-  }
+  const loaded=await fetchMasterCatalogReadModel('metadata-issues.json'), j=loaded.json;
+  if(j&&Array.isArray(j.issues)){ _masterMetadataIssues=j; await masterCacheSet('metadata_issues',j,'fh_master_metadata_issues'); }
+  else if(loaded.attempted&&!_masterMetadataIssues) _masterMetadataIssues={schema:'ariadna-metadata-issues-v1',available:true,issues:[]};
   return _masterMetadataIssues||{schema:'ariadna-metadata-issues-v1',available:false,issues:[]};
 }
 /* Nueva evidencia detectada al sustituir una revisión completa de GeneReviews. Es independiente de la
@@ -4011,14 +4020,9 @@ async function loadMasterProtocolUpdateReview(force){
   if(force){ _masterProtocolUpdateReview=null; await masterCacheDelete('protocol_update_review','fh_master_protocol_update_review'); }
   if(_masterProtocolUpdateReview) return _masterProtocolUpdateReview;
   try{ const c=await masterCacheGet('protocol_update_review','fh_master_protocol_update_review'); if(c&&Array.isArray(c.items)) _masterProtocolUpdateReview=c; }catch(e){}
-  const cfg=loadCfg(), repo=(cfg.secondBrainRepo||'').trim();
-  if(repo&&cfg.gh_pat){
-    try{ const [own,rp]=repo.split('/'); if(own&&rp){
-      const r=await fetch('https://api.github.com/repos/'+own+'/'+rp+'/contents/catalog/protocol-update-review.json', {headers:{Authorization:'token '+cfg.gh_pat, Accept:'application/vnd.github.raw+json'}, cache:'no-store'});
-      if(r.ok){ const j=await r.json(); if(j&&Array.isArray(j.items)){ _masterProtocolUpdateReview=j; await masterCacheSet('protocol_update_review',j,'fh_master_protocol_update_review'); } }
-      else if(r.status===404) _masterProtocolUpdateReview={schema:'ariadna-protocol-update-review-v1',available:true,items:[],requests:[]};
-    } }catch(e){}
-  }
+  const loaded=await fetchMasterCatalogReadModel('protocol-update-review.json'), j=loaded.json;
+  if(j&&Array.isArray(j.items)){ _masterProtocolUpdateReview=j; await masterCacheSet('protocol_update_review',j,'fh_master_protocol_update_review'); }
+  else if(loaded.attempted&&!_masterProtocolUpdateReview) _masterProtocolUpdateReview={schema:'ariadna-protocol-update-review-v1',available:true,items:[],requests:[]};
   return _masterProtocolUpdateReview||{schema:'ariadna-protocol-update-review-v1',available:false,items:[],requests:[]};
 }
 /* Informe de copias binarias exactas. Se mantiene separado de los parecidos por título/identificador:
@@ -4028,14 +4032,9 @@ async function loadMasterDuplicateReview(force){
   if(force){ _masterDuplicateReview=null; await masterCacheDelete('duplicate_review','fh_master_duplicate_review'); }
   if(_masterDuplicateReview) return _masterDuplicateReview;
   try{ const c=await masterCacheGet('duplicate_review','fh_master_duplicate_review'); if(c&&Array.isArray(c.groups)) _masterDuplicateReview=Object.assign({schema:'ariadna-duplicate-review-v1',available:true},c); }catch(e){}
-  const cfg=loadCfg(), repo=(cfg.secondBrainRepo||'').trim();
-  if(repo&&cfg.gh_pat){
-    try{ const [own,rp]=repo.split('/'); if(own&&rp){
-      const r=await fetch('https://api.github.com/repos/'+own+'/'+rp+'/contents/catalog/duplicate-review.json', {headers:{Authorization:'token '+cfg.gh_pat, Accept:'application/vnd.github.raw+json'}, cache:'no-store'});
-      if(r.ok){ const j=await r.json(); if(j&&Array.isArray(j.groups)){ _masterDuplicateReview=Object.assign({schema:'ariadna-duplicate-review-v1',available:true},j); await masterCacheSet('duplicate_review',_masterDuplicateReview,'fh_master_duplicate_review'); } }
-      else if(r.status===404) _masterDuplicateReview={schema:'ariadna-duplicate-review-v1',available:true,groups:[],summary:{}};
-    } }catch(e){}
-  }
+  const loaded=await fetchMasterCatalogReadModel('duplicate-review.json'), j=loaded.json;
+  if(j&&Array.isArray(j.groups)){ _masterDuplicateReview=Object.assign({schema:'ariadna-duplicate-review-v1',available:true},j); await masterCacheSet('duplicate_review',_masterDuplicateReview,'fh_master_duplicate_review'); }
+  else if(loaded.attempted&&!_masterDuplicateReview) _masterDuplicateReview={schema:'ariadna-duplicate-review-v1',available:true,groups:[],summary:{}};
   return _masterDuplicateReview||{schema:'ariadna-duplicate-review-v1',available:false,groups:[],summary:{}};
 }
 function masterFileIssueLabel(code){
@@ -4408,6 +4407,16 @@ function masterFileHashForDriveId(driveId){
   const work=masterWorkForDriveId(driveId); if(!work) return '';
   const index=(work.drive_file_ids||[]).map(String).indexOf(String(driveId));
   return index>=0?String((work.drive_file_hashes||[])[index]||'').toLowerCase():'';
+}
+function masterDocumentRegistrationForDriveFile(file){
+  const work=masterWorkForDriveId(file&&file.id); if(!work) return null;
+  const ids=work.external_ids||{}, bib=work.bibliographic||{}, state=work.state||{};
+  return {id:'master:'+String(work.work_id||file.id),work_id:work.work_id,driveId:file.id,
+    titulo:work.title||file.name||'',cita:work.title||file.name||'',nombreIA:work.short_title||'',
+    descripcion:bib.summary||bib.abstract||'',tipo:masterArchiveTypeLabel(work.type),anio:work.year||'',
+    doi:ids.doi||'',pmid:ids.pmid||'',pmcid:ids.pmcid||'',nbk:ids.nbk||'',isbn:ids.isbn||'',legal_id:ids.legal_id||'',
+    url:bib.official_url||file.webViewLink||'',enlace:file.webViewLink||('https://drive.google.com/open?id='+encodeURIComponent(file.id)),
+    _masterCatalog:true,_masterWork:work,_catalogCited:state.cited===true,_catalogSecondBrain:state.in_second_brain===true};
 }
 function canonicalBibliographyReference(ref){
   ref=ref||{}; const work=masterWorkForReference(ref); if(!work) return ref;
@@ -5154,12 +5163,14 @@ function sortDriveDocumentFiles(files, regOf, mode){
 async function renderDriveList(files){
   const list=document.getElementById('docList'); if(!list) return;
   if(!files.length){ list.innerHTML='<div class="placeholder">No se encontraron PDFs en Drive (o en esa carpeta).</div>'; return; }
+  await loadMasterCatalogIndex();
   let docsIdx=await getDocsIndex();
   try{ const cleaned=await reconcileRepo(docsIdx); if(cleaned) docsIdx=cleaned; }catch(e){}   // quita referencias sin PDF que ya cubre un PDF de Drive
   try{ const fixed=await repairGeneReviewsPmids(docsIdx); if(fixed) docsIdx=fixed; }catch(e){}   // PMID de GeneReviews SIEMPRE verificados contra su NBK (NCBI)
   const docs=docsIdx.docs||[];
   const refset=await fichaRefSet();
-  const regOf=(f)=> docs.find(d=>d.driveId===f.id) || matchDoc({url:f.webViewLink, titulo:f.name}, docs);
+  const legacyRegOf=(f)=> docs.find(d=>d.driveId===f.id) || matchDoc({url:f.webViewLink, titulo:f.name}, docs);
+  const regOf=(f)=> legacyRegOf(f) || masterDocumentRegistrationForDriveFile(f);
   // Entradas del índice cuyo fichero YA NO está en Drive (borrado/movido): driveId que no está en la lista actual.
   const driveIdSet=new Set(files.map(f=>f.id));
   const orphans=docs.filter(d=>d.driveId && !driveIdSet.has(d.driveId));
@@ -5168,9 +5179,11 @@ async function renderDriveList(files){
   const dupKeys=new Set(Object.keys(byStrong).filter(k=>byStrong[k].length>1));
   const isDup=(reg)=>{ const k=reg&&docDupKey(reg); return !!k && dupKeys.has(k); };
   const flag=(on,label,title)=> `<span class="dx-meta hastip" style="color:${on?'var(--ok)':'var(--ink3)'}">${on?'✓':'–'} ${label}<span class="tooltip">${escHtml(title)}</span></span>`;
-  const nIdx=files.filter(f=>!!regOf(f)).length;
-  const pendCount=files.length-nIdx;   // PDFs de Drive aún sin indexar
-  const reidxPend=files.filter(f=>{ const r=regOf(f); return r && r.textLen===undefined; }).length;   // indexados en versión anterior (texto sin medir → posiblemente truncado)
+  const nKnown=files.filter(f=>!!regOf(f)).length;
+  const nLegacy=files.filter(f=>!!legacyRegOf(f)).length;
+  const nCatalog=Math.max(0,nKnown-nLegacy);
+  const pendCount=files.length-nKnown;   // no reconocido ni por el Catálogo Maestro ni por el índice heredado
+  const reidxPend=files.filter(f=>{ const r=legacyRegOf(f); return r && r.textLen===undefined; }).length;
   // Filtro por tipo (pestañas) + buscador de texto. Las pestañas se pintan en #docTypeFilter (persistente) con su conteo.
   const q=accLower((document.getElementById('docSearch')||{}).value||'');
   const counts={}; DOC_CATS.forEach(c=>counts[c.k]=0);
@@ -5183,12 +5196,12 @@ async function renderDriveList(files){
   const shown=sortDriveDocumentFiles(files.filter(f=>{ const reg=regOf(f); const catOk = _docCat==='duplicados' ? isDup(reg) : (_docCat==='all'||docCategoria(reg)===_docCat); return catOk && docMatchesSearch(f, reg, q); }),regOf,_docSort);
   const visible=shown.slice(0,_docVisibleLimit);
   const filtrando=(_docCat!=='all'||q);
-  const head=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} PDF(s) · ${nIdx} indexado(s) (en el contexto de la IA)${filtrando?` · <b>mostrando ${shown.length}</b>`:''} · <span class="dx-meta">flag: unido a bibliografía = citado por un protocolo</span>${pendCount?` · <button class="btn" id="docReconcile" style="padding:2px 9px;font-size:11px" title="SIN IA: para cada PDF sin indexar saca el identificador del nombre o de la 1ª página y, si ya está en tus referencias/biblioteca, lo enlaza (queda «bibliografía»). Gratis; descarga la 1ª página de algunos.">🔗 Reconciliar pendientes (${pendCount})</button>`:''}${pendCount?` · <button class="btn" id="docIndexPend" style="padding:2px 9px;font-size:11px" title="Indexa con IA todos los PDFs de Drive que aún NO están indexados (analiza nombre/resumen + busca DOI/PMID). Puede tardar y consume IA.">✨ Indexar pendientes (${pendCount})</button>`:''}${nIdx?` · <button class="btn" id="docReindexTodos" style="padding:2px 9px;font-size:11px" title="Vuelve a leer y re-analizar TODOS los documentos ya indexados (actualiza cita/resumen/identificadores). Puede tardar bastante y consume IA.">↻ Reindexar indexados (${nIdx})</button>`:''}${reidxPend?` · <button class="btn" id="docReidxAll" style="padding:2px 9px;font-size:11px" title="Vuelve a leer el PDF ENTERO solo de los documentos indexados en una versión anterior (para completar los que quedaron recortados a las primeras páginas).">↻ Re-indexar incompletos (${reidxPend})</button>`:''}${orphans.length?` · <button class="btn" id="docCleanOrphans" style="padding:2px 9px;font-size:11px" title="Quita del índice las entradas cuyo fichero ya NO está en tu carpeta vigilada de Drive (lo borraste o moviste). Sin IA. No borra nada de Drive; sus citas de protocolo vuelven a «Referencias sin PDF» si aún se citan.">🧹 Limpiar borrados de Drive (${orphans.length})</button>`:''}</div>`;
+  const head=`<div style="font-size:12px;color:var(--ink3);margin-bottom:8px">${files.length} archivo(s) de Drive · ${nKnown} identificado(s)${nCatalog?` · ${nCatalog} reconocido(s) directamente por el Catálogo Maestro`:''}${filtrando?` · <b>mostrando ${shown.length}</b>`:''} · <span class="dx-meta">bibliografía = citado por un protocolo</span>${pendCount?` · <button class="btn" id="docReconcile" style="padding:2px 9px;font-size:11px" title="SIN IA: reconcilia únicamente los archivos que no reconoce ni el Catálogo Maestro ni el índice anterior.">🔗 Reconciliar desconocidos (${pendCount})</button>`:''}${pendCount?` · <button class="btn" id="docIndexPend" style="padding:2px 9px;font-size:11px" title="Analiza con IA solo los archivos realmente desconocidos.">✨ Identificar desconocidos (${pendCount})</button>`:''}${nLegacy?` · <button class="btn" id="docReindexTodos" style="padding:2px 9px;font-size:11px" title="Reanaliza únicamente los registros del índice documental anterior; no toca el Catálogo Maestro.">↻ Reindexar índice anterior (${nLegacy})</button>`:''}${reidxPend?` · <button class="btn" id="docReidxAll" style="padding:2px 9px;font-size:11px" title="Vuelve a leer solo documentos del índice anterior cuyo texto no se midió.">↻ Re-indexar incompletos (${reidxPend})</button>`:''}${orphans.length?` · <button class="btn" id="docCleanOrphans" style="padding:2px 9px;font-size:11px" title="Limpia solo entradas huérfanas del índice anterior. No borra Drive ni modifica el Catálogo Maestro.">🧹 Limpiar borrados del índice anterior (${orphans.length})</button>`:''}</div>`;
   // Cablea los botones de la cabecera (operan sobre TODOS los ficheros, no solo los filtrados). Se llama en ambas ramas.
   const wireHead=()=>{
     const reidxAllBtn=list.querySelector('#docReidxAll');
     if(reidxAllBtn) reidxAllBtn.addEventListener('click', async ()=>{
-      const pend=files.filter(f=>{ const r=regOf(f); return r && r.textLen===undefined; });
+      const pend=files.filter(f=>{ const r=legacyRegOf(f); return r && r.textLen===undefined; });
       if(!pend.length){ showToast('No hay documentos incompletos'); return; }
       reidxAllBtn.disabled=true; let done=0, err=0;
       for(const f of pend){ showToast('↻ Re-indexando '+(done+1)+'/'+pend.length+'… '+(f.name||'').slice(0,40));
@@ -5207,8 +5220,8 @@ async function renderDriveList(files){
         _fichaRefSet=null; showToast(label+': '+done+' hecho(s)'+(err?(' · '+err+' con error'):'')); renderDriveList(files);
       });
     };
-    runLote('docIndexPend', f=>!regOf(f), '✨ Indexar pendientes');
-    runLote('docReindexTodos', f=>!!regOf(f), '↻ Reindexar todos');
+    runLote('docIndexPend', f=>!regOf(f), '✨ Identificar desconocidos');
+    runLote('docReindexTodos', f=>!!legacyRegOf(f), '↻ Reindexar índice anterior');
     // Limpiar del índice las entradas cuyo fichero ya no está en Drive (borrado/movido). SIN IA.
     const co=list.querySelector('#docCleanOrphans');
     if(co) co.addEventListener('click', async ()=>{
@@ -5236,8 +5249,9 @@ async function renderDriveList(files){
   if(!shown.length){ list.innerHTML=head+'<div class="placeholder">Sin documentos en esta categoría/búsqueda.</div>'; wireHead(); renderExternalRefs(); return; }
   list.innerHTML=head+`<div class="lib-grid">`+visible.map((f,i)=>{
     const reg=regOf(f);
+    const catalogOnly=!!(reg&&reg._masterCatalog);
     const indexado=!!reg;
-    const enBib=!!(reg && docUsedInFicha(reg, refset));
+    const enBib=!!(reg && (reg._catalogCited||docUsedInFicha(reg, refset)));
     // Tooltip = nombre-resumen (nombreIA) + resumen (descripción). Coherente: aparece siempre que haya uno u otro.
     const tipHead=(reg&&(reg.nombreIA||reg.titulo))||f.name;
     const descTip=(reg&&(reg.descripcion||reg.nombreIA))?(' <span class="hastip dx-meta" style="color:var(--accent)">ⓘ<span class="tooltip">'+escHtml(tipHead)+(reg.descripcion?'<br><span class=dx-meta>'+escHtml(reg.descripcion)+'</span>':'')+'</span></span>'):'';
@@ -5254,7 +5268,7 @@ async function renderDriveList(files){
     // se muestra: solo afecta a la extracción interna (autodetección de DOI/PMID); el pipeline sube el documento ENTERO
     // al Vector Store (lee todas las páginas y trocea por capítulos, sin ese límite), así que el libro no está a medias.
     let idxInfo='', needReidx=false;
-    if(reg){
+    if(reg&&!catalogOnly){
       const tl=reg.textLen;
       if(tl===undefined){ idxInfo='<span class="dx-meta hastip" style="color:#e0a53f">⚠ texto sin medir (indexado en versión anterior)<span class="tooltip">Se indexó antes de poder medir el texto; puede estar recortado a las primeras páginas. Pulsa «↻ Re-indexar» para leer el PDF entero.</span></span>'; needReidx=true; }
       else if(tl<500){ idxInfo='<span class="dx-meta hastip" style="color:#e0704f">⚠ casi sin texto — ¿PDF escaneado?<span class="tooltip">Se extrajeron '+tl+' caracteres. Si es un PDF escaneado (imágenes sin capa de texto) no sirve: el segundo cerebro necesita texto. Necesitaría OCR.</span></span>'; needReidx=true; }
@@ -5266,7 +5280,7 @@ async function renderDriveList(files){
       <div class="meta">${(f.modifiedTime||'').slice(0,10)} · ${flag(enBib,'bibliografía','¿Citado por alguna referencia/protocolo?')}${dupBadge?' · '+dupBadge:''}${idxInfo?' · '+idxInfo:''}</div>
       <div class="acts">
         ${f.webViewLink?`<a class="drive-ico" href="${f.webViewLink}" target="_blank" rel="noopener" title="Abrir en Google Drive">${DRIVE_ICON}</a>`:''}${papersBadge}
-        ${indexado ? `${needReidx?`<button class="btn" data-reindex="${i}" title="Vuelve a leer el PDF ENTERO y re-analizarlo (completa libros o documentos indexados en una versión anterior)">↻ Re-indexar</button>`:''}<button class="btn" data-editmeta="${i}" title="Editar el nombre y la descripción a mano, o regenerarlos con IA leyendo el PDF">✏ Editar</button><button class="btn ghost" data-unreg="${reg.id}" title="Quitar del índice (deja de estar indexado: la IA ya no lo tiene en cuenta ni se puede citar; el PDF NO se borra de tu Drive)">Quitar del índice</button>` : `<button class="btn primary" data-index="${i}" title="La IA lo analiza una vez y queda en el contexto para crear protocolos">✨ Indexar (IA)</button>`}
+        ${catalogOnly?`<span class="pill ok" title="Coincidencia exacta por el identificador interno de Google Drive">✓ Catálogo Maestro</span>`:(indexado ? `${needReidx?`<button class="btn" data-reindex="${i}" title="Vuelve a leer el PDF ENTERO y re-analizarlo (completa libros o documentos indexados en una versión anterior)">↻ Re-indexar</button>`:''}<button class="btn" data-editmeta="${i}" title="Editar el nombre y la descripción del índice anterior">✏ Editar índice anterior</button><button class="btn ghost" data-unreg="${reg.id}" title="Quitar solo del índice anterior; el PDF no se borra de Drive y el Catálogo Maestro no se modifica">Quitar del índice anterior</button>` : `<button class="btn primary" data-index="${i}" title="La IA intenta identificar este archivo desconocido">✨ Identificar (IA)</button>`)}
       </div>
     </div>`;
   }).join('')+'</div>'+(shown.length>visible.length?`<div style="display:flex;justify-content:center;align-items:center;gap:10px;margin:12px 0"><button class="btn" id="docShowMore">Mostrar ${Math.min(DOC_PAGE_SIZE,shown.length-visible.length)} más</button><span class="dx-meta">${visible.length} de ${shown.length}</span></div>`:'');
@@ -5463,8 +5477,9 @@ function editarDocMeta(f, reg, onDone){
    fichero (una cita de protocolo), enlaza el PDF a ella: registrarDoc la FUSIONA (hereda cita/ReadCube/alias/id) y queda
    marcada «bibliografía». NO crea entradas para los que no casen (siguen pendientes para «Indexar pendientes»). */
 async function reconcilePendientes(files, onProgress){
+  await loadMasterCatalogIndex();
   const idx=await getDocsIndex(); const docs=idx.docs||[];
-  const regOf=(f)=> docs.find(d=>d.driveId===f.id) || matchDoc({url:f.webViewLink, titulo:f.name}, docs);
+  const regOf=(f)=> docs.find(d=>d.driveId===f.id) || matchDoc({url:f.webViewLink, titulo:f.name}, docs) || masterDocumentRegistrationForDriveFile(f);
   const pend=(files||[]).filter(f=>!regOf(f));
   let linked=0, done=0;
   for(const f of pend){
