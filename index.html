@@ -526,8 +526,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.0.3';
+const APP_VERSION='3.0.4';
 const CHANGELOG=[
+  {v:'3.0.4',d:'2026-07-17',c:['Consultar descompone cada pregunta en todas sus necesidades de evidencia y busca cada una en los dos Vector Store completos; una misma cuestión puede integrar varias fuentes y la respuesta debe cubrir todos los apartados planteados.','Las referencias mostradas bajo cada respuesta son únicamente las fuentes realmente utilizadas. Los cálculos derivados distinguen el documento que aporta los datos del que aporta el método, y nunca presentan el resultado calculado como si fuera una cifra publicada.','Nuevo modo «Máxima profundidad»: GPT-5.6 Sol con razonamiento alto, seleccionable dentro de cada conversación sin cambiar el modo predeterminado de las demás.','Las conversaciones de Consultar conservan una copia local y se sincronizan de forma segura con el repositorio privado de GitHub, por conversación, para recuperarlas en otros navegadores o dispositivos.','GeneReviews ya incorporadas al Catálogo Maestro dejan de ofrecerse erróneamente como referencias por añadir y se identifican como recursos indexados.']},
   {v:'3.0.3',d:'2026-07-17',c:['Consultar abre los PDF propios directamente en la página que contiene el pasaje y resalta el texto recuperado. El lector usa descargas parciales autenticadas de Google Drive para no cargar libros completos en memoria; el visor convencional de Drive queda como alternativa manual.','Las fuentes del chat y el resto de referencias bibliográficas muestran los accesos de Google Drive y ReadCube Papers, uno o ambos, según su disponibilidad real en el Catálogo Maestro y en tus bibliotecas.','Los tres modos de Consultar comparten ahora una única recuperación semántica reproducible; Rápido, Estándar y Profundo solo cambian la redacción y el razonamiento, no los documentos encontrados.','Ajustes deja de presentar como activa la transición cuando los dos Vector Store nuevos están completos, y el inventario bibliográfico usa el Catálogo Maestro en vez del sources.json histórico.','GeneReviews, Genotipia y otras fuentes web dejan de aparecer como PDF pendiente: se distinguen como recursos web que no necesitan archivo.']},
   {v:'3.0.2',d:'2026-07-17',c:['Documentos vuelve a reconocer la biblioteca: el Catálogo Maestro se lee primero desde su repositorio privado de GitHub, con compatibilidad para la ubicación antigua del segundo cerebro.','La lista de Google Drive enlaza cada archivo por su drive_id exacto con la obra canónica del Catálogo Maestro.','Los archivos ya catalogados dejan de aparecer como pendientes de indexación y se distinguen del índice documental heredado.']},
   {v:'3.0.1', d:'2026-07-17', c:['Drive: el botón <b>«Copiar acceso para la app local»</b> permanece visible en Documentos. Si la autorización ha caducado, abre Google Drive y copia el token nuevo en un solo paso; ya no queda oculto después de pulsar «Conectar».']},
@@ -1302,6 +1303,7 @@ const AI_OPERATION_POLICIES={
   chat_quick:{label:'Consultar · rápido',group:'chat',choices:[M('openai','gpt-5.6-luna','low'),M('openai','gpt-5.6-terra','low')]},
   chat_standard:{label:'Consultar · estándar',group:'chat',choices:[M('anthropic','claude-sonnet-5','medium'),M('openai','gpt-5.6-terra','medium')]},
   chat_deep:{label:'Consultar · profundo',group:'chat',choices:[M('anthropic','claude-opus-4-8','high'),M('openai','gpt-5.6-sol','high')]},
+  chat_max:{label:'Consultar · máxima profundidad',group:'chat',choices:[M('openai','gpt-5.6-sol','high')]},
   activity_table:{label:'Extraer tabla de actividad desde PDF',group:'vision',choices:[M('anthropic','claude-haiku-4-5'),M('openai','gpt-5.6-luna','low'),M('anthropic','claude-sonnet-5','medium')]},
   pdf_visual_quick:{label:'Inspección rápida de página/figura',group:'vision',choices:[M('anthropic','claude-haiku-4-5'),M('anthropic','claude-sonnet-5','medium')]},
   pdf_visual_deep:{label:'Interpretación científica de figura/tabla',group:'vision',choices:[M('anthropic','claude-opus-4-8','high'),M('openai','gpt-5.6-sol','high')]}
@@ -1310,10 +1312,11 @@ const LEGACY_TASK_OPERATION={assign:'catalog_identify_text',extract:'report_hpo_
 const CHAT_MODES={
   quick:{label:'Rápido',operation:'chat_quick'},
   standard:{label:'Estándar',operation:'chat_standard'},
-  deep:{label:'Profundo',operation:'chat_deep'} };
+  deep:{label:'Profundo',operation:'chat_deep'},
+  max:{label:'Máxima profundidad',operation:'chat_max'} };
 function normalizedChatMode(mode){ return ({'openai-fast':'quick','hybrid-fast':'standard','openai-deep':'deep','hybrid-deep':'deep'})[mode] || (CHAT_MODES[mode]?mode:'quick'); }
-function chatModeInfo(){
-  const mode=normalizedChatMode(loadCfg().chatMode); const def=CHAT_MODES[mode];
+function chatModeInfo(modeOverride){
+  const mode=normalizedChatMode(modeOverride||loadCfg().chatMode); const def=CHAT_MODES[mode];
   const answer=modelPlanForOperation(def.operation), answerPick=answer&&answer.primary;
   const hybrid=!!(answerPick&&answerPick.provider==='anthropic');
   return {mode,label:def.label,hybrid,retrieveModel:'OpenAI Retrieval API',answerModel:answerPick&&answerPick.model,
@@ -1356,7 +1359,7 @@ function modelPlanForOperation(input){
 /* Compatibilidad pública: pickModel acepta el task antiguo o el identificador exacto de operación. */
 function pickModel(taskOrOperation){ const p=modelPlanForOperation(taskOrOperation); return p&&p.primary?{...p.primary,operation:p.operation,group:p.group}:null; }
 function modelRouting(){
-  const ops=['protocol_create','chat_quick','chat_standard','chat_deep','catalog_identify_text','report_hpo_simple','activity_table'];
+  const ops=['protocol_create','chat_quick','chat_standard','chat_deep','chat_max','catalog_identify_text','report_hpo_simple','activity_table'];
   return {mode:'policy',policyVersion:AI_POLICY_VERSION,evaluatedAt:AI_POLICY_EVALUATED_AT,
     ops:ops.map(operation=>{ const plan=modelPlanForOperation(operation), p=plan&&plan.primary; return {operation,label:plan&&plan.label,model:p?prettyModel(p.provider,p.model):'—',provider:p&&p.provider,override:plan&&plan.override}; })};
 }
@@ -2609,7 +2612,7 @@ function openSettings(){
       <select id="cfgChatMode" style="width:100%; padding:8px 9px; border:1px solid var(--line); border-radius:8px; background:var(--panel2); color:var(--ink)">
         ${chatModeOptionsHtml(c.chatMode||'quick')}
       </select>
-      <div class="dx-meta" style="margin-top:5px;font-size:11px;line-height:1.5"><b>Rápido</b> prioriza latencia y coste; <b>Estándar</b> equilibra calidad; <b>Profundo</b> reserva el máximo razonamiento para consultas complejas. Los tres reciben exactamente la misma búsqueda semántica; solo cambia el modelo que interpreta los pasajes.</div></div>
+      <div class="dx-meta" style="margin-top:5px;font-size:11px;line-height:1.5"><b>Rápido</b> prioriza latencia y coste; <b>Estándar</b> equilibra calidad; <b>Profundo</b> usa autoría clínica avanzada; <b>Máxima profundidad</b> fuerza GPT-5.6 Sol con razonamiento alto. Los cuatro revisan las mismas necesidades de evidencia en los dos Vector Store; cambia el modelo que integra los pasajes.</div></div>
     <div class="field"><label>Documentos al CREAR protocolos</label>
       <div class="dx-meta" style="margin-top:2px;font-size:11px;line-height:1.5">Al crear o actualizar un protocolo, tus documentos + GeneReviews salen del <b>segundo cerebro</b>; la web aporta evidencia nueva y la redacción usa la política de <b>autoría de protocolos</b>. Actualmente: ${escHtml((modelPlanForOperation('protocol_create').primary&&prettyModel(modelPlanForOperation('protocol_create').primary.provider,modelPlanForOperation('protocol_create').primary.model))||'sin modelo disponible')}.</div></div>
     <div class="field"><label>Cobertura documental <span class="dx-meta">(Catálogo Maestro + estado real de los Vector Store)</span></label>
@@ -3870,16 +3873,48 @@ async function ragContext(maxDocs, query){ return query ? (await sbRetrieveConte
 /* ===========================================================================
    Consultar — chatbot que responde SOLO con el SEGUNDO CEREBRO (Vector Store), grounding estricto
    =========================================================================== */
-/* Conversaciones del chat: se guardan en localStorage (para siempre, salvo que se borren). _chatMsgs apunta a
-   los mensajes de la conversación ACTIVA (misma referencia que su .msgs). */
-let _convos=null, _activeId=null, _chatMsgs=[];
+/* Conversaciones del chat: copia local inmediata + sincronización con el GitHub privado configurado.
+   Cada conversación vive en su propio JSON para no crear un único fichero enorme; el índice remoto solo
+   guarda metadatos y tombstones. Nunca se incluyen API keys, PAT ni configuración. */
+let _convos=null, _activeId=null, _chatMsgs=[], _convoDeleted=null, _convoSyncTimer=null, _convoSyncing=false, _convoRemoteLoaded=false;
 function loadConvos(){ if(!_convos){ try{ _convos=JSON.parse(localStorage.getItem('fh_convos'))||[]; }catch(e){ _convos=[]; } } return _convos; }
-function persistConvos(){ try{ safeLocalSet('fh_convos', JSON.stringify(loadConvos())); }catch(e){} }
-function newConvo(){ const c={id:'c'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), title:'', msgs:[], created:Date.now(), updated:Date.now()}; loadConvos().unshift(c); _activeId=c.id; _chatMsgs=c.msgs; persistConvos(); return c; }
-function activeConvo(){ const list=loadConvos(); let c=list.find(x=>x.id===_activeId); if(!c){ c=list[0]||newConvo(); _activeId=c.id; _chatMsgs=c.msgs; } return c; }
+function loadConvoDeleted(){ if(!_convoDeleted){ try{ _convoDeleted=JSON.parse(localStorage.getItem('fh_convos_deleted'))||{}; }catch(e){ _convoDeleted={}; } } return _convoDeleted; }
+function scheduleConvoSync(){ if(!ghConfigured()||_convoSyncing) return; clearTimeout(_convoSyncTimer); _convoSyncTimer=setTimeout(()=>syncChatConversationsNow().catch(()=>{}),1400); }
+function persistConvos(sync=true){ try{ safeLocalSet('fh_convos', JSON.stringify(loadConvos())); safeLocalSet('fh_convos_deleted',JSON.stringify(loadConvoDeleted())); }catch(e){} if(sync) scheduleConvoSync(); }
+function newConvo(){ const now=Date.now(), c={id:'c'+now.toString(36)+Math.random().toString(36).slice(2,5), title:'', mode:normalizedChatMode(loadCfg().chatMode), msgs:[], created:now, updated:now}; loadConvos().unshift(c); _activeId=c.id; _chatMsgs=c.msgs; persistConvos(); return c; }
+function activeConvo(){ const list=loadConvos(); let c=list.find(x=>x.id===_activeId); if(!c){ c=list[0]||newConvo(); _activeId=c.id; _chatMsgs=c.msgs; } c.mode=normalizedChatMode(c.mode||loadCfg().chatMode); return c; }
+function activeChatMode(){ return normalizedChatMode(activeConvo().mode||loadCfg().chatMode); }
 function setActiveConvo(id){ const c=loadConvos().find(x=>x.id===id); if(c){ _activeId=c.id; _chatMsgs=c.msgs; } }
-function deleteConvo(id){ _convos=loadConvos().filter(x=>x.id!==id); if(_activeId===id){ _activeId=null; activeConvo(); } persistConvos(); }
+function deleteConvo(id){ const old=loadConvos().find(x=>x.id===id); loadConvoDeleted()[id]=Math.max(Date.now(),Number(old&&old.updated)||0); _convos=loadConvos().filter(x=>x.id!==id); if(_activeId===id){ _activeId=null; activeConvo(); } persistConvos(); }
 function touchConvo(){ const c=activeConvo(); c.updated=Date.now(); persistConvos(); }
+function chatConvoIndexEntry(c){ return {id:c.id,title:c.title||'',mode:normalizedChatMode(c.mode),created:Number(c.created)||Date.now(),updated:Number(c.updated)||Date.now()}; }
+async function syncChatConversationsNow(){
+  if(!ghConfigured()||_convoSyncing) return false; _convoSyncing=true;
+  try{
+    let remote={}, indexSha=null; try{ const r=await ghGetFile('chat/conversations/index.json'); remote=r.json||{}; indexSha=r.sha||null; }catch(e){}
+    const remoteEntries=Array.isArray(remote.conversations)?remote.conversations:[], deleted=loadConvoDeleted(), remoteDeleted=(remote.deleted&&typeof remote.deleted==='object')?remote.deleted:{};
+    for(const [id,ts] of Object.entries(remoteDeleted)) deleted[id]=Math.max(Number(deleted[id])||0,Number(ts)||0);
+    const localBy=new Map(loadConvos().map(c=>[c.id,c]));
+    for(const meta of remoteEntries){
+      if(!meta||!meta.id||(Number(deleted[meta.id])||0)>=Number(meta.updated||0)) continue;
+      const local=localBy.get(meta.id); if(local&&Number(local.updated||0)>=Number(meta.updated||0)) continue;
+      try{ const r=await ghGetFile('chat/conversations/'+encodeURIComponent(meta.id)+'.json'), c=r.json&&r.json.conversation; if(c&&c.id===meta.id){ c.mode=normalizedChatMode(c.mode||meta.mode); localBy.set(c.id,c); } }catch(e){}
+    }
+    for(const [id,c] of [...localBy]) if((Number(deleted[id])||0)>=Number(c.updated||0)) localBy.delete(id);
+    const remoteBy=new Map(remoteEntries.map(x=>[x.id,x]));
+    for(const c of localBy.values()){
+      const meta=remoteBy.get(c.id); if(meta&&Number(meta.updated||0)>=Number(c.updated||0)) continue;
+      let sha=null; try{ sha=(await ghGetFile('chat/conversations/'+encodeURIComponent(c.id)+'.json')).sha||null; }catch(e){}
+      await ghPutFile('chat/conversations/'+encodeURIComponent(c.id)+'.json',{schema:'ariadna_chat_conversation_v1',conversation:c},'chat: sincronizar '+(c.title||c.id),sha);
+    }
+    _convos=[...localBy.values()].sort((a,b)=>Number(b.updated||0)-Number(a.updated||0));
+    const payload={schema:'ariadna_chat_index_v1',updated_at:new Date().toISOString(),conversations:_convos.map(chatConvoIndexEntry),deleted};
+    await ghPutFile('chat/conversations/index.json',payload,'chat: actualizar índice de conversaciones',indexSha);
+    _convoRemoteLoaded=true; persistConvos(false); const current=_convos.find(x=>x.id===_activeId)||_convos[0]; if(current){ _activeId=current.id; _chatMsgs=current.msgs||[]; }
+    try{ if(document.getElementById('convoList')){ renderConvoList(); renderChatMsgs(); updateChatModeControl(); } }catch(e){}
+    return true;
+  } finally { _convoSyncing=false; }
+}
 /* Título de la conversación por IA tras el primer intercambio (pregunta+respuesta). */
 async function maybeTitleConvo(){ const c=activeConvo(); if(c.title) return;
   const done=c.msgs.filter(m=>!m.pending&&m.text); if(done.length<2) return;
@@ -5031,7 +5066,7 @@ function chatSourceFuente(name){
   if(nbk) return {titulo:grRefTitle(nbk, ''), url:'https://www.ncbi.nlm.nih.gov/books/'+nbk.toUpperCase()+'/', nbk:nbk.toUpperCase(), _src:'GeneReviews'};
   return {titulo:String(name).replace(/\.(md|txt|pdf)$/i,'').replace(/__/g,' · ')};
 }
-const _CHAT_RULES=' REGLAS ESTRICTAS: (1) PROHIBIDO usar conocimiento general, externo o de memoria. (2) Si la respuesta no está en los pasajes, o tratan de OTRA enfermedad/gen/tema distinto al preguntado, responde EXACTAMENTE con la palabra NO_ENCONTRADO y nada más. (3) Nunca menciones un documento que no trate específicamente lo preguntado. Cuando SÍ esté en los pasajes: responde a NIVEL ESPECIALISTA (preciso, técnico, terminología y matices propios de un genetista clínico; SIN definiciones elementales). Si VARIAS fuentes tratan lo preguntado, INTEGRA TODAS en UNA sola respuesta coherente apoyándote en todas ellas (contrasta y combina). CONTEXTO TEMPORAL: fíjate en las FECHAS de las fuentes; si una guía/ley/documento ha sido SUSTITUIDA o actualizada por otra más reciente entre los pasajes, prioriza la vigente y AVISA de que la anterior quedó desfasada o derogada (no des como vigente algo superado). NO escribas una sección de «Fuentes» ni nombres de fichero: la app muestra por su cuenta TODAS las referencias utilizadas. Responde en español, con precisión, sin inventar.';
+const _CHAT_RULES=' REGLAS ESTRICTAS: (1) PROHIBIDO usar conocimiento general, externo o de memoria. (2) Debes responder TODAS las NECESIDADES planteadas; una necesidad puede y debe integrar VARIAS fuentes cuando aporten evidencia complementaria. (3) Si no existe ningún pasaje pertinente responde NO_ENCONTRADO. Si solo falta evidencia para una parte, responde lo sustentado e identifica de forma explícita qué parte no está documentada. (4) Nunca menciones un documento que no trate específicamente lo preguntado. (5) Un cálculo solicitado solo puede hacerse cuando los pasajes documenten tanto sus datos de entrada como el método; preséntalo como «Cálculo derivado por Ariadna», muestra la operación y no atribuyas el resultado calculado a una publicación. Cuando SÍ esté en los pasajes: responde a NIVEL ESPECIALISTA (preciso, técnico, terminología y matices propios de un genetista clínico; SIN definiciones elementales). CONTEXTO TEMPORAL: fíjate en las FECHAS; si una guía/ley/documento ha sido SUSTITUIDA o actualizada, prioriza la vigente y AVISA. NO escribas una sección de «Fuentes» ni nombres de fichero: la app muestra por su cuenta TODAS las referencias realmente utilizadas. Responde en español, con precisión, sin inventar.';
 const CHAT_SYSTEM_STORE='Eres un asistente documental para un GENETISTA CLÍNICO EXPERIMENTADO. Respondes SOLO con lo que aparezca en los PASAJES recuperados mediante búsqueda semántica de SU documentación.'+_CHAT_RULES;
 const CHAT_SYSTEM_HYBRID='Eres un asistente documental para un GENETISTA CLÍNICO EXPERIMENTADO. A continuación te doy PASAJES recuperados de SU documentación; respondes SOLO con lo que aparezca en ellos.'+_CHAT_RULES;
 /* Redacta con Claude (síntesis) a partir de los pasajes que recuperó OpenAI. Modo híbrido. */
@@ -5046,10 +5081,29 @@ async function synthWithClaude(question, passages, model){
   const d=await r.json();
   return (d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').trim();
 }
-async function searchVectorStores(query,ids){
+function deterministicEvidenceNeeds(input){
+  input=String(input||'').trim(); const marker=input.lastIndexOf('PREGUNTA:'), question=(marker>=0?input.slice(marker+9):input).trim();
+  const needs=[{id:'N1',label:'Pregunta completa',query:question||input,required:true}];
+  const clauses=(question||'').split(/(?:[;?]\s*|\n+|\bademás\b|\bpor otro lado\b|\bsi no\b|\by calcula(?:r|la|lo)?\b)/i).map(x=>x.replace(/^[,.:\s]+|[,.:\s]+$/g,'').trim()).filter(x=>x.length>=12);
+  for(const clause of clauses){ if(needs.length>=6) break; if(needs.some(n=>normTxt(n.query)===normTxt(clause))) continue; needs.push({id:'N'+(needs.length+1),label:'Aspecto '+needs.length,query:clause,required:true}); }
+  if(/hardy[\s-]*weinberg/i.test(question)&&!needs.some(n=>/equilibrio.*2pq|2pq.*equilibrio/i.test(n.query))) needs.push({id:'N'+(needs.length+1),label:'Método de cálculo',query:'equilibrio de Hardy-Weinberg cálculo de heterocigotos portadores 2pq frecuencia alélica genética clínica',required:true});
+  return needs.slice(0,6);
+}
+async function planEvidenceNeeds(input){
+  const fallback=deterministicEvidenceNeeds(input), full=String(input||'').trim();
+  const system='Actúas SOLO como planificador de recuperación documental. No contestes la pregunta ni aportes conocimiento. Divide la consulta en todas las necesidades de evidencia independientes: hechos, cifras, método o fórmula, comparación, vigencia y cálculo. Incluso una única cuestión puede requerir varias fuentes. Resuelve pronombres usando la conversación incluida. Devuelve JSON válido y nada más: {"needs":[{"label":"...","query":"consulta semántica autónoma y específica","required":true}]}. Entre 1 y 6 necesidades, sin duplicados.';
+  try{
+    const raw=await callLLM({operation:'file_search_retrieve',system,user:full,maxTokens:500}), parsed=extractJSON(raw), rows=parsed&&Array.isArray(parsed.needs)?parsed.needs:[];
+    const planned=[]; for(const row of rows){ const query=String(row&&row.query||'').trim(), label=String(row&&row.label||'Necesidad de evidencia').trim(); if(query.length<5||query.length>500||planned.some(n=>normTxt(n.query)===normTxt(query))) continue; planned.push({id:'N'+(planned.length+1),label:label.slice(0,100),query,required:row.required!==false}); if(planned.length>=6) break; }
+    if(planned.length) return planned;
+  }catch(e){}
+  return fallback;
+}
+async function searchVectorStores(needs,ids){
   const c=loadCfg(), requested=[...new Set((ids||[]).filter(validVectorStoreId))];
-  const searchOne=async id=>{
-    const body={query,max_num_results:12,rewrite_query:true,ranking_options:{ranker:'auto',score_threshold:0.2}};
+  needs=(Array.isArray(needs)?needs:[{id:'N1',label:'Pregunta completa',query:String(needs||''),required:true}]).filter(n=>n&&String(n.query||'').trim()).slice(0,6);
+  const searchOne=async task=>{
+    const id=task.storeId, need=task.need, body={query:need.query,max_num_results:20,rewrite_query:true,ranking_options:{ranker:'auto',score_threshold:0.08}};
     let r, err='';
     for(let attempt=1;;attempt++){
       r=await fetch('https://api.openai.com/v1/vector_stores/'+encodeURIComponent(id)+'/search',{method:'POST',headers:{Authorization:'Bearer '+c.openaiKey,'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -5058,32 +5112,45 @@ async function searchVectorStores(query,ids){
       throw new Error('OpenAI Retrieval '+r.status+' '+err);
     }
     const d=await r.json();
-    return (d.data||[]).map(item=>({storeId:id,fileId:item.file_id||'',filename:item.filename||item.file_name||item.file_id||'documento',score:Number(item.score)||0,
+    return (d.data||[]).map(item=>({storeId:id,needId:need.id,needLabel:need.label,query:need.query,fileId:item.file_id||'',filename:item.filename||item.file_name||item.file_id||'documento',score:Number(item.score)||0,
       text:(item.content||[]).filter(part=>part&&part.type==='text').map(part=>part.text||'').join('\n').trim()})).filter(item=>item.text);
   };
-  const groups=await Promise.all(requested.map(searchOne)), merged=[];
-  for(const item of groups.flat()){
-    const key=(item.fileId||item.filename)+'\n'+item.text; if(merged.some(x=>((x.fileId||x.filename)+'\n'+x.text)===key)) continue; merged.push(item);
+  const tasks=[]; for(const need of needs) for(const storeId of requested) tasks.push({need,storeId});
+  const groups=await mapWithLimit(tasks,4,searchOne), chosen=[];
+  for(const need of needs){
+    const rows=groups.flat().filter(x=>x.needId===need.id).sort((a,b)=>b.score-a.score), take=[];
+    for(const storeId of requested) take.push(...rows.filter(x=>x.storeId===storeId).slice(0,2));
+    for(const row of rows){ if(take.length>=10) break; if(!take.includes(row)) take.push(row); }
+    chosen.push(...take);
   }
-  merged.sort((a,b)=>b.score-a.score);
-  return merged.slice(0,18);
+  const merged=[];
+  for(const item of chosen){ const key=(item.fileId||item.filename)+'\n'+item.text, prev=merged.find(x=>x._key===key); if(prev){ if(!prev.needIds.includes(item.needId)) prev.needIds.push(item.needId); if(item.score>prev.score) prev.score=item.score; continue; } merged.push({...item,_key:key,needIds:[item.needId]}); }
+  return merged.sort((a,b)=>b.score-a.score).slice(0,36).map(({_key,...item})=>item);
 }
-async function synthGroundedAnswer(question,passages){
-  const ctx=passages.map((p,i)=>'[Pasaje '+(i+1)+' · '+(p.filename||'?')+' · relevancia '+Number(p.score||0).toFixed(3)+']\n'+p.text).join('\n\n---\n\n');
-  return callLLM({operation:CHAT_MODES[chatModeInfo().mode].operation,system:CHAT_SYSTEM_HYBRID,user:'PASAJES:\n\n'+ctx+'\n\nPREGUNTA: '+question,maxTokens:1800});
+async function synthGroundedAnswer(question,passages,needs){
+  const ctx=passages.map((p,i)=>'[P'+(i+1)+' · necesidades '+(p.needIds||[p.needId]).join(',')+' · '+(p.filename||'?')+' · relevancia '+Number(p.score||0).toFixed(3)+']\n'+p.text).join('\n\n---\n\n');
+  const needText=needs.map(n=>n.id+' · '+n.label+': '+n.query).join('\n');
+  const schema='Devuelve EXCLUSIVAMENTE JSON válido: {"answer":"respuesta final en Markdown o NO_ENCONTRADO","used_passages":["P1","P2"],"coverage":[{"need_id":"N1","status":"answered|missing","used_passages":["P1"]}]}. used_passages debe contener SOLO pasajes realmente empleados en alguna afirmación; coverage debe incluir TODAS las necesidades.';
+  const mode=activeChatMode(); return callLLM({operation:CHAT_MODES[mode].operation,system:CHAT_SYSTEM_HYBRID+' '+schema,user:'NECESIDADES DE EVIDENCIA:\n'+needText+'\n\nPASAJES:\n\n'+ctx+'\n\nPREGUNTA: '+question,maxTokens:(mode==='max'||mode==='deep')?3000:2200});
+}
+function parseGroundedSynthesis(raw,passages,needs){
+  const parsed=extractJSON(raw); if(parsed&&typeof parsed.answer==='string'){
+    const ids=[...new Set((parsed.used_passages||[]).map(x=>String(x).toUpperCase()).filter(x=>/^P\d+$/.test(x)))], used=ids.map(x=>passages[Number(x.slice(1))-1]).filter(Boolean);
+    return {text:parsed.answer.trim(),passages:used,sources:[...new Set(used.map(p=>p.filename).filter(Boolean))],coverage:Array.isArray(parsed.coverage)?parsed.coverage:[]};
+  }
+  return {text:String(raw||'').trim(),passages,sources:[...new Set(passages.map(p=>p.filename).filter(Boolean))],coverage:needs.map(n=>({need_id:n.id,status:'answered'})),legacy:true};
 }
 /* La Retrieval API busca de forma determinista en cada Vector Store y devuelve pasajes, puntuación y fichero.
    Solo después se redacta. Por ello los tres modos parten de la misma evidencia y no pueden discrepar por haber
    decidido invocar (o no) la herramienta de búsqueda. */
 async function askRepoStore(input, ids){
   const notFound=()=>({ text:'No encuentro esto en tu documentación. El chat responde solo con tus documentos y las GeneReviews indexadas — si acabas de lanzar el segundo cerebro, puede que aún se esté cargando.', sources:[], notFound:true });
-  const passages=await searchVectorStores(input,ids);
+  const needs=await planEvidenceNeeds(input), passages=await searchVectorStores(needs,ids);
   if(!passages.length) return notFound();
-  let text=''; try{ text=await synthGroundedAnswer(input,passages); }
+  let raw=''; try{ raw=await synthGroundedAnswer(input,passages,needs); }
   catch(e){ throw new Error('La recuperación documental terminó, pero falló la interpretación de los pasajes: '+e.message); }
-  if(/^NO_ENCONTRADO/i.test(text) || !text) return notFound();
-  const sources=[...new Set(passages.map(p=>p.filename).filter(Boolean))].slice(0,10);
-  return {text,sources,passages};
+  const answer=parseGroundedSynthesis(raw,passages,needs); if(/^NO_ENCONTRADO/i.test(answer.text)||!answer.text) return notFound();
+  return {...answer,needs};
 }
 async function askRepo(q){
   q=(q||'').trim(); if(!q) return;
@@ -5136,9 +5203,14 @@ function renderChatMsgs(){
       src='<div class="dx-meta" style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px">📎 Fuentes:<div style="margin-top:3px">'
         + fuentes.map(({f,key})=>{ const enc=encodeURIComponent(JSON.stringify(f));
             const isPdf = f._src==='PDF';   // documento TUYO (de Drive): ya lo tienes → icono Drive + Papers, no «añadir»
+            const catalogWork=masterWorkForReference(f);
             let act;
             if(isPdf){
               act = '<span class="dx-meta" style="color:var(--ok);margin-left:6px" title="Documento de tu Drive, ya en tu biblioteca">✓ en tu biblioteca</span>';
+            } else if(catalogWork){
+              act = '<span class="dx-meta" style="color:var(--ok);margin-left:6px" title="Referencia canónica ya registrada">✓ en Catálogo Maestro</span>';
+            } else if(f._src==='GeneReviews'){
+              act = '<span class="dx-meta" style="color:var(--ok);margin-left:6px" title="GeneReview oficial ya indexada en el segundo cerebro">✓ indexada</span>';
             } else {
               const inRepo=!!matchDoc(f, repoDocs);   // ya en tu biblioteca (por NBK/PMID/DOI/URL/alias) → no ofrecer «añadir»
               act = inRepo ? '<span class="dx-meta" style="color:var(--ok)" title="Ya está en tu biblioteca">✓ en tu biblioteca</span>'
@@ -5178,6 +5250,7 @@ function renderConvoList(){
     </div>`;
   }).join('');
 }
+function updateChatModeControl(){ const sel=document.getElementById('chatModeCurrent'); if(sel){ sel.innerHTML=chatModeOptionsHtml(activeChatMode()); sel.value=activeChatMode(); } }
 function renderConsultar(){
   const box=document.getElementById('consultarView'); if(!box) return;
   activeConvo();   // asegura que _chatMsgs apunta a la conversación activa (crea una si no hay ninguna)
@@ -5188,8 +5261,12 @@ function renderConsultar(){
         <div id="convoList" style="overflow-y:auto;flex:1"></div>
       </aside>
       <div style="flex:1;min-width:0;display:flex;flex-direction:column">
-        <div class="lib-head"><h2 style="margin:0">💬 Consultar tu documentación</h2></div>
-        <div class="sec-note">Respondo <b>solo</b> con la información de tu documentación${secondBrainStores().length?' — conectado a '+escHtml(secondBrainStoreDescription())+' mediante el <b>segundo cerebro</b>':' (configura los Vector Store en ⚙ Ajustes → Segundo cerebro)'}, citando de qué documento sale. Si algo no está, te lo digo — <b>no uso conocimiento externo</b>. Tus conversaciones se guardan (puedes borrarlas). Consume IA.</div>
+        <div class="lib-head" style="gap:8px;flex-wrap:wrap"><h2 style="margin:0;flex:1">💬 Consultar tu documentación</h2>
+          <label class="dx-meta" for="chatModeCurrent">Modo de esta conversación</label>
+          <select id="chatModeCurrent" style="max-width:360px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink)">${chatModeOptionsHtml(activeChatMode())}</select>
+          ${ghConfigured()?'<button class="btn ghost" id="chatSyncNow" title="Guardar y recuperar conversaciones desde tu repositorio privado">↻ GitHub</button>':''}
+        </div>
+        <div class="sec-note">Respondo <b>solo</b> con la información de tu documentación${secondBrainStores().length?' — conectado a '+escHtml(secondBrainStoreDescription())+' mediante el <b>segundo cerebro</b>':' (configura los Vector Store en ⚙ Ajustes → Segundo cerebro)'}. Descompongo cada pregunta, reviso cada necesidad en <b>los dos almacenes completos</b> y cito todas las fuentes realmente usadas. Si algo no está, te lo digo — <b>no uso conocimiento externo</b>. Las conversaciones se guardan localmente${ghConfigured()?' y en tu GitHub privado':' (configura GitHub para sincronizarlas entre dispositivos)'}. Consume IA.</div>
         <div id="chatMsgs" style="flex:1;min-height:200px;margin:12px 0"></div>
         <div style="display:flex;gap:8px;position:sticky;bottom:0;padding:10px 0;background:var(--bg)">
           <textarea id="chatInput" rows="2" placeholder="Escribe tu pregunta y pulsa Enter (Shift+Enter = salto de línea). Puedes repreguntar y seguir la conversación." style="flex:1;box-sizing:border-box;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);color:var(--ink);font-size:13.5px;resize:vertical"></textarea>
@@ -5205,11 +5282,13 @@ function renderConsultar(){
   if(send) send.addEventListener('click', go);
   if(inp) inp.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); go(); } });   // Enter envía · Shift+Enter salta de línea
   // Nueva conversación: si la activa ya está vacía, no crea otra (evita duplicados vacíos).
-  const nb=box.querySelector('#convoNew'); if(nb) nb.addEventListener('click', ()=>{ if(activeConvo().msgs.length) newConvo(); renderConvoList(); renderChatMsgs(); if(inp) inp.focus(); });
+  const modeSel=box.querySelector('#chatModeCurrent'); if(modeSel) modeSel.addEventListener('change',()=>{ const c=activeConvo(); c.mode=normalizedChatMode(modeSel.value); c.updated=Date.now(); persistConvos(); updateChatModeControl(); });
+  const syncBtn=box.querySelector('#chatSyncNow'); if(syncBtn) syncBtn.addEventListener('click',async()=>{ syncBtn.disabled=true; syncBtn.textContent='Sincronizando…'; try{ await syncChatConversationsNow(); showToast('Conversaciones sincronizadas con GitHub'); }catch(e){ showToast('No se pudieron sincronizar: '+e.message); } finally{ syncBtn.disabled=false; syncBtn.textContent='↻ GitHub'; } });
+  const nb=box.querySelector('#convoNew'); if(nb) nb.addEventListener('click', ()=>{ if(activeConvo().msgs.length) newConvo(); renderConvoList(); renderChatMsgs(); updateChatModeControl(); if(inp) inp.focus(); });
   const cl=box.querySelector('#convoList'); if(cl) cl.addEventListener('click', e=>{
     const del=e.target.closest('.convo-del');
     if(del){ e.stopPropagation(); if(confirm('¿Borrar esta conversación? No se puede deshacer.')){ deleteConvo(del.dataset.id); renderConvoList(); renderChatMsgs(); } return; }
-    const it=e.target.closest('.convo-item'); if(it){ setActiveConvo(it.dataset.id); renderConvoList(); renderChatMsgs(); }
+    const it=e.target.closest('.convo-item'); if(it){ setActiveConvo(it.dataset.id); renderConvoList(); renderChatMsgs(); updateChatModeControl(); }
   });
   // «➕ a mi biblioteca» en las fuentes citadas → añade la referencia al repositorio (igual que el resto).
   const cm=box.querySelector('#chatMsgs');
@@ -5219,6 +5298,7 @@ function renderConsultar(){
     ensureFuentesInRepo([f]).then(n=>{ showToast(n?('Añadida a tu biblioteca'):'Ya estaba en tu biblioteca'); a.textContent='✓ en tu biblioteca'; a.style.pointerEvents='none'; a.style.opacity='.6'; _fichaRefSet=null; }).catch(err=>showToast('Error: '+err.message));
   });
   Promise.all([loadSbSources(), loadSbFigures(), loadMasterCatalogIndex()]).then(()=>{ if(document.getElementById('chatMsgs')) renderChatMsgs(); });   // referencias canónicas + figuras
+  if(ghConfigured()&&!_convoRemoteLoaded&&!_convoSyncing) syncChatConversationsNow().catch(()=>{});
 }
 
 function renderDocumentos(){
