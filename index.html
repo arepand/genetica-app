@@ -532,8 +532,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.0.6';
+const APP_VERSION='3.0.7';
 const CHANGELOG=[
+  {v:'3.0.7',d:'2026-07-18',c:['Corrección crítica de persistencia prenatal: las versiones personalizadas de los protocolos integrados ya no se confunden con duplicados ni se eliminan al recargar. La copia revisada sustituye al protocolo de serie, conserva HPO, bibliografía, validación e historial y aparece una sola vez.','Las versiones de Deleción 17q12 y Walker-Warburg guardadas antes de esta corrección se recuperan desde el historial del repositorio privado después de activar el parche.']},
   {v:'3.0.6',d:'2026-07-18',c:['Consultar ocupa ahora todo el ancho útil de la ventana. Al abrir el visor lateral, el PDF conserva su tamaño amplio y la conversación deja de quedar comprimida por el límite general de 1.100 píxeles.','Los pasajes de GeneReviews se abren en el mismo panel derecho que los PDF: Ariadna reconstruye una vista de lectura local, identifica capítulo y apartado y marca en amarillo el texto exacto recuperado y utilizado. El enlace al capítulo oficial de NCBI se conserva como comprobación secundaria.','El editor «Ventanas de visibilidad ecográfica y fuentes» puede investigar con IA las filas seleccionadas o todas las visibles tras aplicar un filtro. Cada HPO permite además una búsqueda individual. Ariadna contrasta el Segundo Cerebro con literatura científica web, distingue visibilidad ecográfica de desarrollo embriológico, exige fuentes comprobables y mantiene cada resultado como propuesta hasta la confirmación manual.']},
   {v:'3.0.5',d:'2026-07-17',c:['Los HPO del editor prenatal son interactivos como los de los protocolos normales: muestran el nombre oficial de la ontología y, al pulsarlos, permiten buscar, comprobar o corregir el código. Al guardar una regeneración, cualquier HPO nuevo se incorpora también al selector prenatal y se repinta inmediatamente.','El diferencial prenatal deja de presentar una búsqueda genérica de GeneReviews como si fuera bibliografía. Las fuentes reales se muestran con el render común del Catálogo Maestro; los protocolos iniciales sin referencias quedan señalados como pendientes y permiten actualizar su evidencia antes de confirmar la recomendación de estudio.','Las fuentes GeneReviews de Consultar abren ahora la revisión oficial de NCBI en el pasaje literal utilizado e intentan seleccionarlo y resaltarlo automáticamente. Si NCBI ha modificado el texto o el navegador no admite fragmentos de texto, el mismo enlace conserva como alternativa la apertura del capítulo oficial.','Las citas documentales antiguas que solo conservaban un bloque —por ejemplo, «chunk 004»— resuelven bajo demanda la página exacta dentro del archivo ya indexado y abren el PDF en esa página con el pasaje resaltado, sin descargar ni volver a vectorizar el libro completo.','Los títulos bibliográficos con codificación heredada rota se reparan al mostrarse: «Bases genÃ©ticas de la conducta» vuelve a verse correctamente como «Bases genéticas de la conducta», sin modificar el archivo original.','Consultar permite plegar la columna de conversaciones, recuerda la preferencia y dedica todo el ancho disponible a la conversación y al documento original.','Las repreguntas conservan un contexto más amplio de la misma conversación para entender expresiones como «eso» o «el anterior», sin convertir el historial en evidencia clínica.','Incidencias y duplicados distinguen ahora claramente un borrador local de una resolución aplicada; la app local incorpora los paquetes confirmados y regenera la propuesta del Catálogo con cero borrados automáticos.']},
   {v:'3.0.4',d:'2026-07-17',c:['Consultar descompone cada pregunta en todas sus necesidades de evidencia y busca cada una en los dos Vector Store completos; una misma cuestión puede integrar varias fuentes y la respuesta debe cubrir todos los apartados planteados.','Las referencias mostradas bajo cada respuesta son únicamente las fuentes realmente utilizadas. Los cálculos derivados distinguen el documento que aporta los datos del que aporta el método, y nunca presentan el resultado calculado como si fuera una cifra publicada.','Nuevo modo «Máxima profundidad»: GPT-5.6 Sol con razonamiento alto, seleccionable dentro de cada conversación sin cambiar el modo predeterminado de las demás.','Las conversaciones de Consultar conservan una copia local y se sincronizan de forma segura con el repositorio privado de GitHub, por conversación, para recuperarlas en otros navegadores o dispositivos.','GeneReviews ya incorporadas al Catálogo Maestro dejan de ofrecerse erróneamente como referencias por añadir y se identifican como recursos indexados.']},
@@ -8021,9 +8022,18 @@ function prenatalEvidencePending(s){ return !!s && s.revision_evidencia!=='revis
 function applyPrenatalCustom(c){
   if(!c) return;
   let syn=c.syndromes||[]; let find=c.findings||[];
-  const builtin=new Set(PRENATAL_SYNDROMES.map(s=>normSyndName(s.name)));
-  const seen=new Set();
-  syn=syn.filter(s=>{ const n=normSyndName(s.name); if(!n||builtin.has(n)||seen.has(n)) return false; seen.add(n); return true; }); // dedupe vs integrados y entre sí
+  // Una copia personalizada con el mismo nombre que un protocolo integrado NO es un
+  // duplicado: es su versión editable y allPrenatalSyndromes() la usa como sustituta.
+  // El saneo anterior la eliminaba al recargar y podía borrar una edición ya guardada
+  // en GitHub. Solo se deduplican copias personalizadas entre sí, conservando la última.
+  const byProtocol=new Map();
+  syn.forEach(s=>{
+    if(!s) return;
+    const key=String(s.id||'').trim() || normSyndName(s.name);
+    if(!key) return;
+    byProtocol.set(key,s);
+  });
+  syn=[...byProtocol.values()];
   // Poda de hallazgos huérfanos: se conservan los referenciados por algún síndrome O ya validados.
   const used=new Set([...PRENATAL_SYNDROMES, ...syn].flatMap(s=>s.findings||[]));
   find=(find||[]).filter(t=>t&&t.id&&(used.has(t.id)||t.verified));
