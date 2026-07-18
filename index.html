@@ -364,9 +364,16 @@
   .drive-have{display:inline-block; text-decoration:none; line-height:1; vertical-align:middle;}
   .drive-ico{display:inline-block; text-decoration:none; line-height:1; vertical-align:middle;}
   .drive-ico:hover{filter:brightness(1.12);}
-  .gr-badge{vertical-align:middle;}
-  .gr-badge>a{display:inline-block; font-size:10.5px; font-weight:700; padding:1px 8px; border-radius:999px; background:#2a2140; color:#c7b3ff; border:1px solid #4a3d73; text-decoration:none; white-space:nowrap;}
-  .gr-badge>a:hover{border-color:#7e63c9;}
+  .gr-badge,.bookshelf-badge{vertical-align:middle;}
+  .gr-badge>a,.bookshelf-badge>a{display:inline-block; font-size:10.5px; font-weight:700; padding:1px 8px; border-radius:999px; text-decoration:none; white-space:nowrap;}
+  .gr-badge>a,.bookshelf-badge.bs-genereviews>a{background:#2a2140; color:#c7b3ff; border:1px solid #4a3d73;}
+  .bookshelf-badge.bs-statpearls>a{background:#15333a;color:#8fe3ee;border:1px solid #2c6670;}
+  .bookshelf-badge.bs-medical-genetics-summaries>a{background:#173526;color:#9ce0b1;border:1px solid #356a48;}
+  .bookshelf-badge.bs-endotext>a{background:#382b15;color:#f2cc83;border:1px solid #745a2c;}
+  .bookshelf-badge.bs-mothertobaby>a{background:#3b2133;color:#f0add8;border:1px solid #784666;}
+  .bookshelf-badge.bs-nice-guidance>a{background:#182f43;color:#a7d7ff;border:1px solid #365f80;}
+  .bookshelf-badge.bs-bookshelf>a{background:#252c35;color:#c5d0dc;border:1px solid #4b5968;}
+  .gr-badge>a:hover,.bookshelf-badge>a:hover{filter:brightness(1.18);}
   .gr-stale{display:inline-block; font-size:11px; font-weight:600; color:#e8a13a; margin-left:6px;}
   .dx-src{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--accent); margin:4px 0 5px;}
   .prenatal-layout{display:grid; grid-template-columns:minmax(0,1fr) 380px; gap:0; align-items:start;}
@@ -448,6 +455,10 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <!-- pdf.js para leer PDFs de guías (Módulo autoría con guía aportada) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" integrity="sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<!-- Actividad 3.1: OCR y protección se sirven desde Ariadna; nunca desde una API externa. -->
+<script src="vendor/activity/tesseract/tesseract.min.js"></script>
+<script src="actividad-core.js"></script>
+<script src="actividad-local.js"></script>
 <!-- Google Identity Services (first-party Google; no admite SRI por ser cargador dinámico) -->
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
@@ -532,9 +543,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.0.7';
+const APP_VERSION='3.1.0';
 const CHANGELOG=[
-  {v:'3.0.7',d:'2026-07-18',c:['Corrección crítica de persistencia prenatal: las versiones personalizadas de los protocolos integrados ya no se confunden con duplicados ni se eliminan al recargar. La copia revisada sustituye al protocolo de serie, conserva HPO, bibliografía, validación e historial y aparece una sola vez.','Las versiones de Deleción 17q12 y Walker-Warburg guardadas antes de esta corrección se recuperan desde el historial del repositorio privado después de activar el parche.']},
+  {v:'3.1.0',d:'2026-07-18',c:['Nuevo asistente privado de actividad de consulta: procesa en el navegador PDF escaneados de hasta 10 páginas, un solo médico por lote y una agenda confirmada por página. El PDF, las imágenes, los nombres, los NREG, las horas y las filas individuales nunca salen del navegador.','OCR completamente local y autocontenido con PDF.js y Tesseract.js: incluye enmascarado ajustable de la zona de nombres, giro, corrección de inclinación, contraste y umbral. No utiliza OpenAI, Anthropic, CDN ni servicios externos.','Revisión obligatoria y cierre seguro: Ariadna conserva las filas ambiguas, exige reconciliar todas las bandas visibles, permite corregir o añadir filas omitidas y no prepara el lote hasta que fechas, horas, prestaciones, estados, NREG y altas estén validados.','Persistencia mínima y auditable: solo guarda agregados diarios, metadatos del lote y HMAC irreversibles para evitar duplicados. Los catálogos versionados de médicos, agendas y prestaciones son editables, y los lotes erróneos se anulan mediante un registro nuevo sin reescribir el historial.','El proceso conserva un checkpoint local por página y puede reanudarse tras recargar o cerrar el navegador. El cuadro de mando parte de cero y no migra automáticamente las tres entradas antiguas que se consideraron erróneas.','Las figuras y tablas documentales se leen desde el bucket privado de Backblaze B2 con una clave web independiente de solo lectura guardada en este navegador. Ariadna utiliza enlaces firmados de cinco minutos y verifica la huella de cada recurso; la clave del Mac que permite escribir o borrar nunca se entrega a la web.']},
   {v:'3.0.6',d:'2026-07-18',c:['Consultar ocupa ahora todo el ancho útil de la ventana. Al abrir el visor lateral, el PDF conserva su tamaño amplio y la conversación deja de quedar comprimida por el límite general de 1.100 píxeles.','Los pasajes de GeneReviews se abren en el mismo panel derecho que los PDF: Ariadna reconstruye una vista de lectura local, identifica capítulo y apartado y marca en amarillo el texto exacto recuperado y utilizado. El enlace al capítulo oficial de NCBI se conserva como comprobación secundaria.','El editor «Ventanas de visibilidad ecográfica y fuentes» puede investigar con IA las filas seleccionadas o todas las visibles tras aplicar un filtro. Cada HPO permite además una búsqueda individual. Ariadna contrasta el Segundo Cerebro con literatura científica web, distingue visibilidad ecográfica de desarrollo embriológico, exige fuentes comprobables y mantiene cada resultado como propuesta hasta la confirmación manual.']},
   {v:'3.0.5',d:'2026-07-17',c:['Los HPO del editor prenatal son interactivos como los de los protocolos normales: muestran el nombre oficial de la ontología y, al pulsarlos, permiten buscar, comprobar o corregir el código. Al guardar una regeneración, cualquier HPO nuevo se incorpora también al selector prenatal y se repinta inmediatamente.','El diferencial prenatal deja de presentar una búsqueda genérica de GeneReviews como si fuera bibliografía. Las fuentes reales se muestran con el render común del Catálogo Maestro; los protocolos iniciales sin referencias quedan señalados como pendientes y permiten actualizar su evidencia antes de confirmar la recomendación de estudio.','Las fuentes GeneReviews de Consultar abren ahora la revisión oficial de NCBI en el pasaje literal utilizado e intentan seleccionarlo y resaltarlo automáticamente. Si NCBI ha modificado el texto o el navegador no admite fragmentos de texto, el mismo enlace conserva como alternativa la apertura del capítulo oficial.','Las citas documentales antiguas que solo conservaban un bloque —por ejemplo, «chunk 004»— resuelven bajo demanda la página exacta dentro del archivo ya indexado y abren el PDF en esa página con el pasaje resaltado, sin descargar ni volver a vectorizar el libro completo.','Los títulos bibliográficos con codificación heredada rota se reparan al mostrarse: «Bases genÃ©ticas de la conducta» vuelve a verse correctamente como «Bases genéticas de la conducta», sin modificar el archivo original.','Consultar permite plegar la columna de conversaciones, recuerda la preferencia y dedica todo el ancho disponible a la conversación y al documento original.','Las repreguntas conservan un contexto más amplio de la misma conversación para entender expresiones como «eso» o «el anterior», sin convertir el historial en evidencia clínica.','Incidencias y duplicados distinguen ahora claramente un borrador local de una resolución aplicada; la app local incorpora los paquetes confirmados y regenera la propuesta del Catálogo con cero borrados automáticos.']},
   {v:'3.0.4',d:'2026-07-17',c:['Consultar descompone cada pregunta en todas sus necesidades de evidencia y busca cada una en los dos Vector Store completos; una misma cuestión puede integrar varias fuentes y la respuesta debe cubrir todos los apartados planteados.','Las referencias mostradas bajo cada respuesta son únicamente las fuentes realmente utilizadas. Los cálculos derivados distinguen el documento que aporta los datos del que aporta el método, y nunca presentan el resultado calculado como si fuera una cifra publicada.','Nuevo modo «Máxima profundidad»: GPT-5.6 Sol con razonamiento alto, seleccionable dentro de cada conversación sin cambiar el modo predeterminado de las demás.','Las conversaciones de Consultar conservan una copia local y se sincronizan de forma segura con el repositorio privado de GitHub, por conversación, para recuperarlas en otros navegadores o dispositivos.','GeneReviews ya incorporadas al Catálogo Maestro dejan de ofrecerse erróneamente como referencias por añadir y se identifican como recursos indexados.']},
@@ -1291,8 +1302,12 @@ function resetPatient(){
 
 /* ---- Config en localStorage ---- */
 const CFG_KEY='fh_cfg';
+const B2_BROWSER_INDEX_VERSION='e885d859887f8337a9d62f9f2bd6778e40dc0ee2956f8480f0bcccfe31c1ccce';
+const B2_BROWSER_INDEX_SHA256='954374fb91ab7256ec79a1130cc248596ea4d74cd16146cd397426b80d45a01b';
 const CFG_DEFAULTS={ anthropicKey:'', openaiKey:'', modelOverrides:{}, gh_owner:'', gh_repo:'', gh_branch:'main', gh_pat:'',
   driveClientId:'672017094614-goqdjb7159poff6jieh7rgjtop06askb.apps.googleusercontent.com', driveFolder:'', driveSubfolders:false,
+  b2Endpoint:'https://s3.us-west-001.backblazeb2.com', b2Bucket:'ariadnadatos', b2Prefix:'ariadna-data',
+  b2IndexVersion:B2_BROWSER_INDEX_VERSION, b2IndexSha256:B2_BROWSER_INDEX_SHA256, b2ReadKeyId:'', b2ReadKey:'',
   /* Stores validados para el corte 3.0. El almacén mixto histórico se conserva solo en la configuración
      local previa de cada navegador y nunca se borra automáticamente. */
   geneReviewsStore:'vs_6a57c13601fc819193fdbf3a98603fed',
@@ -1329,11 +1344,10 @@ const AI_OPERATION_POLICIES={
   chat_standard:{label:'Consultar · estándar',group:'chat',choices:[M('anthropic','claude-sonnet-5','medium'),M('openai','gpt-5.6-terra','medium')]},
   chat_deep:{label:'Consultar · profundo',group:'chat',choices:[M('anthropic','claude-opus-4-8','high'),M('openai','gpt-5.6-sol','high')]},
   chat_max:{label:'Consultar · máxima profundidad',group:'chat',choices:[M('openai','gpt-5.6-sol','high')]},
-  activity_table:{label:'Extraer tabla de actividad desde PDF',group:'vision',choices:[M('anthropic','claude-haiku-4-5'),M('openai','gpt-5.6-luna','low'),M('anthropic','claude-sonnet-5','medium')]},
   pdf_visual_quick:{label:'Inspección rápida de página/figura',group:'vision',choices:[M('anthropic','claude-haiku-4-5'),M('anthropic','claude-sonnet-5','medium')]},
   pdf_visual_deep:{label:'Interpretación científica de figura/tabla',group:'vision',choices:[M('anthropic','claude-opus-4-8','high'),M('openai','gpt-5.6-sol','high')]}
 };
-const LEGACY_TASK_OPERATION={assign:'catalog_identify_text',extract:'report_hpo_simple',deepen:'anamnesis_expand',author:'protocol_create',freshness:'protocol_freshness',eval:'catalog_identify_web',chat:'chat_standard',actividad:'activity_table'};
+const LEGACY_TASK_OPERATION={assign:'catalog_identify_text',extract:'report_hpo_simple',deepen:'anamnesis_expand',author:'protocol_create',freshness:'protocol_freshness',eval:'catalog_identify_web',chat:'chat_standard'};
 const CHAT_MODES={
   quick:{label:'Rápido',operation:'chat_quick'},
   standard:{label:'Estándar',operation:'chat_standard'},
@@ -1384,7 +1398,7 @@ function modelPlanForOperation(input){
 /* Compatibilidad pública: pickModel acepta el task antiguo o el identificador exacto de operación. */
 function pickModel(taskOrOperation){ const p=modelPlanForOperation(taskOrOperation); return p&&p.primary?{...p.primary,operation:p.operation,group:p.group}:null; }
 function modelRouting(){
-  const ops=['protocol_create','chat_quick','chat_standard','chat_deep','chat_max','catalog_identify_text','report_hpo_simple','activity_table'];
+  const ops=['protocol_create','chat_quick','chat_standard','chat_deep','chat_max','catalog_identify_text','report_hpo_simple'];
   return {mode:'policy',policyVersion:AI_POLICY_VERSION,evaluatedAt:AI_POLICY_EVALUATED_AT,
     ops:ops.map(operation=>{ const plan=modelPlanForOperation(operation), p=plan&&plan.primary; return {operation,label:plan&&plan.label,model:p?prettyModel(p.provider,p.model):'—',provider:p&&p.provider,override:plan&&plan.override}; })};
 }
@@ -1823,7 +1837,7 @@ function docSharesId(a, b){
   const ad=normDoi(a.doi||doiFromUrl(a.url)), bd=normDoi(b.doi||doiFromUrl(b.url)); if(ad&&bd&&ad===bd) return true;
   const ap=String(a.pmid||pmidFromUrl(a.url)||'').trim(), bp=String(b.pmid||pmidFromUrl(b.url)||'').trim(); if(ap&&bp&&ap===bp) return true;
   const ac=String(a.pmcid||'').toUpperCase().trim(), bc=String(b.pmcid||'').toUpperCase().trim(); if(ac&&bc&&ac===bc) return true;
-  const an=String(a.nbk||(geneReviewsInfo(a)||{}).nbk||'').toUpperCase(), bn=String(b.nbk||(geneReviewsInfo(b)||{}).nbk||'').toUpperCase(); if(an&&bn&&an===bn) return true;
+  const an=bookshelfNbk(a), bn=bookshelfNbk(b); if(an&&bn&&an===bn) return true;
   return false;
 }
 /* Clave del IDENTIFICADOR FUERTE de un documento (para agrupar duplicados). '' si no tiene ninguno. */
@@ -1832,7 +1846,7 @@ function docStrongId(d){
   const doi=normDoi(d.doi||doiFromUrl(d.url)); if(doi) return 'doi:'+doi;
   const pmid=String(d.pmid||pmidFromUrl(d.url)||'').trim(); if(pmid) return 'pmid:'+pmid;
   const pmcid=String(d.pmcid||'').toUpperCase().trim(); if(pmcid) return 'pmcid:'+pmcid;
-  const nbk=String(d.nbk||(geneReviewsInfo(d)||{}).nbk||'').toUpperCase(); if(nbk) return 'nbk:'+nbk;
+  const nbk=bookshelfNbk(d); if(nbk) return 'nbk:'+nbk;
   return '';
 }
 /* Clave para AGRUPAR DUPLICADOS: identificador fuerte (DOI/PMID/PMCID/NBK/ISBN) si lo hay; si no —y NO es legislación—
@@ -1854,8 +1868,8 @@ function docMatchesFuente(d, f){
   if(fdoi && ddoi && fdoi===ddoi) return true;
   const fpmid=String(f.pmid||pmidFromUrl(f.url)||'').trim(), dpmid=String(d.pmid||pmidFromUrl(d.url)||'').trim();
   if(fpmid && dpmid && fpmid===dpmid) return true;
-  // GeneReviews: el identificador estable es el NBK (aunque el PMID esté mal capturado). Sale del campo o de la URL /books/NBKxxxx.
-  const fnbk=String(f.nbk||(geneReviewsInfo(f)||{}).nbk||'').toUpperCase(), dnbk=String(d.nbk||(geneReviewsInfo(d)||{}).nbk||'').toUpperCase();
+  // NCBI Bookshelf: el identificador estable es el NBK para TODAS sus colecciones (no implica GeneReviews).
+  const fnbk=bookshelfNbk(f), dnbk=bookshelfNbk(d);
   if(fnbk && dnbk && fnbk===dnbk) return true;
   const furl=normUrl(f.url), durl=normUrl(d.url), den=normUrl(d.enlace);
   if(furl && (furl===durl || furl===den)) return true;
@@ -1877,12 +1891,12 @@ async function ensureFuentesInRepo(fuentes){
   if(!idx.docs) idx.docs=[];
   let added=0;
   for(const f of list){
-    if(idx.docs.some(d=>docMatchesFuente(d, f))) continue;   // ya está (incluye match por NBK de GeneReviews)
-    const gr=geneReviewsInfo(f);   // nombre visible = la cita del protocolo; el nombre-resumen y el resumen quedan pendientes hasta que tenga PDF
+    if(idx.docs.some(d=>docMatchesFuente(d, f))) continue;   // ya está (incluye match por NBK de cualquier colección Bookshelf)
+    const bs=bookshelfInfo(f), gr=geneReviewsInfo(f);   // la colección real se conserva; NBK sin metadatos queda como Bookshelf genérico
     idx.docs.push({ id:slugify(f.titulo||f.url||'ref')+'-'+Math.random().toString(36).slice(2,6),
-      titulo:f.titulo||f.url||'', cita:f.titulo||f.url||'', descripcion:'', tipo:gr?'GeneReviews':'referencia', anio:f.anio||'',
+      titulo:f.titulo||f.url||'', cita:f.titulo||f.url||'', descripcion:'', tipo:bs?bs.label:'referencia', bookshelf_collection:(bs&&bs.collection)||'', source:(bs&&bs.label)||'', anio:f.anio||'',
       doi:f.doi||'', pmid:f.pmid||'', pmcid:f.pmcid||'', readcube:f.readcube||'',
-      nbk:(gr&&gr.nbk)||f.nbk||'', gr_updated:f.gr_updated||'', gr_initial:f.gr_initial||'',
+      nbk:(bs&&bs.nbk)||f.nbk||'', gr_updated:gr?(f.gr_updated||''):'', gr_initial:gr?(f.gr_initial||''):'',
       url:f.url||'', enlace:'', externo:true, iaAnalizado:false });
     added++;
   }
@@ -2047,18 +2061,62 @@ function refIdChipsHtml(s){
   if(pmcid) out.push(chip('PMCID', pmcid, 'https://www.ncbi.nlm.nih.gov/pmc/articles/'+encodeURIComponent(pmcid)+'/'));
   return out.length ? ' <span class="ref-ids">'+out.join('')+'</span>' : '';
 }
-/* GeneReviews (NCBI Bookshelf): documento vivo, sin DOI, con fecha de «Last Update». Detecta la referencia
-   por su URL (/books/NBKxxxx) o por el título, y saca el id NBK. La fecha de revisión (gr_updated) y el nbk
-   los rellena la IA al indexar (búsqueda web, sin CORS) o el autor del protocolo. */
-function geneReviewsInfo(s){
-  s=s||{};
-  const u=String(s.url||s.enlace||'');
-  let nbk=s.nbk||''; if(!nbk){ const m=u.match(/\/books\/(NBK\d+)/i); if(m) nbk=m[1].toUpperCase(); }
-  const looksGr=/genereviews/i.test(String(s.titulo||s.nombre||'')) || /genereviews/i.test(u) || !!nbk;
-  if(!looksGr) return null;
-  const url = nbk ? ('https://www.ncbi.nlm.nih.gov/books/'+nbk+'/') : (u||'https://www.ncbi.nlm.nih.gov/books/n/gene/');
-  return { nbk, url, updated:(s.gr_updated||s.revisado||'').trim(), initial:(s.gr_initial||'').trim(), pdf: nbk?('https://www.ncbi.nlm.nih.gov/books/'+nbk+'/pdf/Bookshelf_'+nbk+'.pdf'):'' };
+/* NCBI Bookshelf aloja colecciones distintas. NBK es solo el identificador técnico de Bookshelf: NUNCA
+   demuestra por sí solo que una obra sea GeneReviews. La colección debe venir explícita en metadatos,
+   título o fuente; si no, se conserva como «NCBI Bookshelf» genérico hasta revisión. */
+const BOOKSHELF_COLLECTIONS={
+  genereviews:{label:'GeneReviews',icon:'📖'},
+  statpearls:{label:'StatPearls',icon:'🩺'},
+  'medical-genetics-summaries':{label:'Medical Genetics Summaries',icon:'🧬'},
+  endotext:{label:'Endotext',icon:'🧪'},
+  mothertobaby:{label:'MotherToBaby',icon:'🤰'},
+  'nice-guidance':{label:'NICE Guidance',icon:'⚕️'},
+  livertox:{label:'LiverTox',icon:'🧫'},
+  'pdq-cancer':{label:'PDQ Cancer Information Summaries',icon:'🎗️'},
+  'clinical-methods':{label:'Clinical Methods',icon:'🩻'},
+  'who-guidance':{label:'WHO Guidance',icon:'🌐'},
+  'ahrq-reports':{label:'AHRQ Reports',icon:'📊'},
+  bookshelf:{label:'NCBI Bookshelf',icon:'📘'}
+};
+function bookshelfNbk(s){
+  s=s||{}; const ids=s.external_ids||{}, bib=s.bibliographic||{};
+  let nbk=String(s.nbk||ids.nbk||'').toUpperCase().trim();
+  if(!nbk){ const m=String(s.url||s.enlace||bib.official_url||'').match(/\/books\/(NBK\d+)/i); if(m) nbk=m[1].toUpperCase(); }
+  return /^NBK\d+$/.test(nbk)?nbk:'';
 }
+function bookshelfCollectionKey(s){
+  s=s||{}; if(s.genereviews===true) return 'genereviews';
+  const bib=s.bibliographic||{};
+  const values=[s.bookshelf_collection,s.collection,s.source,s.source_type,s._src,s.tipo,s.type,s.publisher,s.titulo,s.title,s.nombre,s.cita,s.url,s.enlace,bib.collection,bib.container_title,bib.publisher,bib.official_url]
+    .concat(Array.isArray(s.source_ids)?s.source_ids:[]).filter(Boolean).map(value=>accLower(String(value)).replace(/[_-]+/g,' ')).join(' | ');
+  if(/mother\s*to\s*baby/.test(values)) return 'mothertobaby';
+  if(/medical genetics summar/.test(values)) return 'medical-genetics-summaries';
+  if(/stat\s*pearls?/.test(values)) return 'statpearls';
+  if(/endo\s*text/.test(values)) return 'endotext';
+  if(/gene\s*reviews?/.test(values)) return 'genereviews';
+  if(/liver\s*tox/.test(values)) return 'livertox';
+  if(/\bpdq\b/.test(values)&&/cancer|oncolog/.test(values)) return 'pdq-cancer';
+  if(/clinical methods/.test(values)) return 'clinical-methods';
+  if(/\bwho\b|world health organi/.test(values)&&/(guid|recommend|manual|report)/.test(values)) return 'who-guidance';
+  if(/\bahrq\b|agency for healthcare research/.test(values)) return 'ahrq-reports';
+  if(/\bnice\b/.test(values)&&/(guid|clinical|health)/.test(values)) return 'nice-guidance';
+  return bookshelfNbk(s)||/ncbi\s*bookshelf|\/books\//.test(values)?'bookshelf':'';
+}
+function bookshelfInfo(s){
+  s=s||{}; const nbk=bookshelfNbk(s), collection=bookshelfCollectionKey(s); if(!collection) return null;
+  const bib=s.bibliographic||{}, supplied=String(s.url||s.enlace||bib.official_url||'');
+  const url=nbk?('https://www.ncbi.nlm.nih.gov/books/'+nbk+'/'):(supplied||'https://www.ncbi.nlm.nih.gov/books/');
+  const def=BOOKSHELF_COLLECTIONS[collection]||BOOKSHELF_COLLECTIONS.bookshelf;
+  const explicitLabel=String(s.bookshelf_collection||s.collection||bib.collection||'').trim();
+  const customLabel=collection==='bookshelf'&&explicitLabel&&!/^(?:bookshelf|ncbi bookshelf)$/i.test(explicitLabel)?explicitLabel:'';
+  return {nbk,url,collection,label:customLabel||def.label,icon:def.icon,
+    updated:collection==='genereviews'?String(s.gr_updated||s.revisado||'').trim():'',
+    initial:collection==='genereviews'?String(s.gr_initial||'').trim():'',
+    pdf:collection==='genereviews'&&nbk?('https://www.ncbi.nlm.nih.gov/books/'+nbk+'/pdf/Bookshelf_'+nbk+'.pdf'):''};
+}
+/* GeneReviews conserva su comportamiento específico (revisiones vivas, figuras y aviso de actualización),
+   pero solo cuando la colección está identificada de forma explícita. */
+function geneReviewsInfo(s){ const info=bookshelfInfo(s); return info&&info.collection==='genereviews'?info:null; }
 /* Fecha a mostrar de un GeneReviews: la de «última revisión» si existe; si no, la de INCLUSIÓN (Initial Posting).
    Devuelve {fecha, tipo:'revisión'|'inclusión'} o null si no hay ninguna. */
 function grFecha(g){
@@ -2141,13 +2199,20 @@ async function verifyArticleIds(ids){
   }catch(e){}
   return {doi, pmid, pmcid};
 }
-/* Badge propio para GeneReviews: enlace al capítulo + tooltip con NBK y fecha de última revisión + enlace al PDF. */
-function geneReviewsBadgeHtml(s){
-  const g=geneReviewsInfo(s); if(!g) return '';
-  const fe=grFecha(g);
-  const tip='GeneReviews'+(g.nbk?' · '+g.nbk:'')+(fe?'<br>'+fe.label+': '+escHtml(fmtGrDate(fe.fecha)):'<br><span class="dx-meta">revisión: —</span>')+(g.pdf?'<br><a href="'+escA(g.pdf)+'" target="_blank" rel="noopener">Abrir PDF ↗</a> <span class="dx-meta">(guárdalo en tu Drive para tenerlo en el repositorio)</span>':'');
-  return ` <span class="hastip gr-badge"><a href="${escA(g.url)}" target="_blank" rel="noopener">📖 GeneReviews</a><span class="tooltip">${tip}</span></span>`;
+/* Badge por colección. Todas abren su entrada oficial de Bookshelf; únicamente GeneReviews añade sus
+   campos de revisión/figuras porque no son propiedades comunes al resto de colecciones NBK. */
+function bookshelfBadgeHtml(s){
+  const b=bookshelfInfo(s); if(!b) return '';
+  let tip=escHtml(b.label)+(b.nbk?' · '+escHtml(b.nbk):'');
+  if(b.collection==='genereviews'){
+    const fe=grFecha(b);
+    tip+=(fe?'<br>'+fe.label+': '+escHtml(fmtGrDate(fe.fecha)):'<br><span class="dx-meta">revisión: —</span>')
+      +(b.pdf?'<br><a href="'+escA(b.pdf)+'" target="_blank" rel="noopener">Abrir PDF ↗</a> <span class="dx-meta">(opcional: guárdalo en tu repositorio)</span>':'');
+  } else tip+='<br><span class="dx-meta">Colección de NCBI Bookshelf</span>';
+  const legacy=b.collection==='genereviews'?' gr-badge':'';
+  return ` <span class="hastip bookshelf-badge bs-${escA(b.collection)}${legacy}"><a href="${escA(b.url)}" target="_blank" rel="noopener">${b.icon} ${escHtml(b.label)}</a><span class="tooltip">${tip}</span></span>`;
 }
+function geneReviewsBadgeHtml(s){ const g=geneReviewsInfo(s); return g?bookshelfBadgeHtml(Object.assign({},s,{bookshelf_collection:'genereviews'})):''; }
 /* Aviso si un GeneReviews citado se ha REVISADO después de la última revisión del protocolo (documento vivo). */
 function grStaleHtml(s, protoRevIso){
   const g=geneReviewsInfo(s); if(!g || !g.updated || !protoRevIso) return '';
@@ -2169,13 +2234,13 @@ function bibRefHtml(fuente, opts){
     pmcid: fuente.pmcid||(d&&d.pmcid)||pmcidFromUrl(fuente.url)||pmcidFromUrl(d&&d.url),
     readcube: fuente.readcube||(d&&d.readcube)||''   // enlace ReadCube pegado a mano en la referencia (tiene prioridad)
   };
-  const grBadge=geneReviewsBadgeHtml(Object.assign({}, d||{}, fuente));   // badge propio si es GeneReviews (fecha de revisión + página + PDF)
+  const sourceBadge=bookshelfBadgeHtml(Object.assign({}, d||{}, fuente));   // colección Bookshelf real; NBK por sí solo queda genérico
   // Documento del repositorio CON fichero en Drive → SOLO el icono de Drive (limpio), clic para abrirlo; tooltip nativo.
   if(d && (d.driveId || d.enlace)){
     const pdf=d.enlace||d.url||'';
     const t=(d.titulo||fuente.titulo||'Documento')+' — en tu repositorio (Google Drive)'+(pdf?' · clic para abrir':'')+(d.descripcion?' · '+d.descripcion:'');
     const openHref = pdf ? ` href="${escA(pdf)}" target="_blank" rel="noopener"` : '';
-    return readcubeLibBadgeHtml(ids)+grBadge+` <a class="drive-ico"${openHref} title="${escA(t)}">${DRIVE_ICON}</a>`
+    return readcubeLibBadgeHtml(ids)+sourceBadge+` <a class="drive-ico"${openHref} title="${escA(t)}">${DRIVE_ICON}</a>`
       +(d.id && !opts.noAssign?' <a class="tip-ai bib-unassign" data-docid="'+escHtml(String(d.id))+'" title="Eliminar este documento asignado del índice">✕</a>':'')
       +readcubeMarkerHtml(ids);
   }
@@ -2187,14 +2252,14 @@ function bibRefHtml(fuente, opts){
   if(directDriveId||suppliedDriveUrl){
     const href=suppliedDriveUrl||('https://drive.google.com/open?id='+encodeURIComponent(directDriveId));
     const title=(fuente.titulo||'Documento')+' — abrir el archivo exacto en Google Drive';
-    return readcubeLibBadgeHtml(ids)+grBadge+` <a class="drive-ico" href="${escA(href)}" target="_blank" rel="noopener" title="${escA(title)}">${DRIVE_ICON}</a>`+readcubeMarkerHtml(ids);
+    return readcubeLibBadgeHtml(ids)+sourceBadge+` <a class="drive-ico" href="${escA(href)}" target="_blank" rel="noopener" title="${escA(title)}">${DRIVE_ICON}</a>`+readcubeMarkerHtml(ids);
   }
   // Referencia YA en el repositorio pero SIN fichero (cita externa auto-añadida) → solo badges, sin «asignar PDF».
-  if(d) return readcubeLibBadgeHtml(ids)+grBadge+readcubeMarkerHtml(ids);
+  if(d) return readcubeLibBadgeHtml(ids)+sourceBadge+readcubeMarkerHtml(ids);
   // No está en el repositorio. En vistas de solo lectura (protocolo) NO mostramos «asignar PDF».
-  if(opts.noAssign) return readcubeLibBadgeHtml(ids)+grBadge+readcubeMarkerHtml(ids);
+  if(opts.noAssign) return readcubeLibBadgeHtml(ids)+sourceBadge+readcubeMarkerHtml(ids);
   const enc=encodeURIComponent(JSON.stringify({titulo:fuente.titulo||'', url:fuente.url||'', anio:fuente.anio||''}));
-  return readcubeLibBadgeHtml(ids)+grBadge+' <a class="tip-ai bib-assign" data-bibref="'+enc+'" title="Asignar/registrar el PDF de esta referencia en tu repositorio">📎 asignar PDF</a>'+readcubeMarkerHtml(ids);
+  return readcubeLibBadgeHtml(ids)+sourceBadge+' <a class="tip-ai bib-assign" data-bibref="'+enc+'" title="Asignar/registrar el PDF de esta referencia en tu repositorio">📎 asignar PDF</a>'+readcubeMarkerHtml(ids);
 }
 /* Render único de una fuente: cita + identificadores + Papers + fichero exacto de Drive. */
 function bibliographyEntryHtml(fuente, opts){
@@ -2219,7 +2284,9 @@ function wireBibRefs(container, onDone){
 /* Construye una referencia (fuente) a partir de un documento del repositorio: la CITA es el documento. */
 function fuenteFromDoc(d){
   d=d||{};
-  return { titulo:d.titulo||d.nombre||'', url:d.url||d.enlace||'', anio:d.anio||'', doi:d.doi||'', pmid:d.pmid||'', pmcid:d.pmcid||'', readcube:d.readcube||'' };
+  return { titulo:d.titulo||d.nombre||'', url:d.url||d.enlace||'', anio:d.anio||'', doi:d.doi||'', pmid:d.pmid||'', pmcid:d.pmcid||'', readcube:d.readcube||'',
+    nbk:bookshelfNbk(d), source:d.source||'', bookshelf_collection:d.bookshelf_collection||'', genereviews:d.genereviews===true,
+    gr_updated:d.gr_updated||'', gr_initial:d.gr_initial||'' };
 }
 /* Selector del repositorio: lista los documentos indexados (docs/index.json) para VINCULAR una referencia
    a uno de ellos, en vez de «asignar PDF» a mano. onPick(doc) recibe el documento elegido. */
@@ -2262,7 +2329,7 @@ function appendAiLog(entry){
   AI_LOG.push(entry);
   if(AI_LOG.length>AI_LOG_MAX_ENTRIES) AI_LOG.splice(0,AI_LOG.length-AI_LOG_MAX_ENTRIES);
 }
-const AI_TASKS={assign:'asignando protocolo', extract:'extrayendo HPO del informe', deepen:'profundizando', author:'generando protocolo · 🌐 buscando en la web', freshness:'comprobando novedades · 🌐 buscando en la web', eval:'consultando guías · 🌐 buscando en la web', chat:'consultando tu documentación', actividad:'leyendo actividad (visión)'};
+const AI_TASKS={assign:'asignando protocolo', extract:'extrayendo HPO del informe', deepen:'profundizando', author:'generando protocolo · 🌐 buscando en la web', freshness:'comprobando novedades · 🌐 buscando en la web', eval:'consultando guías · 🌐 buscando en la web', chat:'consultando tu documentación'};
 function aiBusyStart(label){
   _aiBusyN++;
   let el=document.getElementById('aiBusy');
@@ -2593,13 +2660,14 @@ function openSettings(){
       .cfg-pane{display:none} .cfg-pane.on{display:block}
     </style>
     <h2>⚙ Ajustes</h2>
-    <div class="msub">Las API keys y el PAT de GitHub se guardan <b>solo en el localStorage de este navegador</b>. Uso personal local.</div>
+    <div class="msub">Las API keys, el PAT de GitHub y la clave B2 de solo lectura se guardan <b>solo en el localStorage de este navegador</b>. Uso personal local.</div>
 
     <div class="cfg-tabs">
       <button type="button" data-tab="ia" class="on">🤖 IA</button>
       <button type="button" data-tab="sb">🧠 Segundo cerebro</button>
       <button type="button" data-tab="gh">📦 GitHub</button>
       <button type="button" data-tab="drive">📁 Drive</button>
+      <button type="button" data-tab="b2">☁️ B2</button>
       <button type="button" data-tab="rc">📗 ReadCube</button>
     </div>
 
@@ -2627,7 +2695,7 @@ function openSettings(){
     <div class="cfg-pane" data-pane="sb">
     <div class="sec-note">Ariadna 3 separa los dos corpus: conserva el Vector Store ya validado de <b>GeneReviews</b> y usa otro independiente para <b>tus documentos</b>. El chat puede consultar ambos sin mezclarlos durante la actualización.</div>
     ${legacyMixedStore&&!splitStoresReady?`<div class="sec-note" style="border-color:#9b7a32"><b>Almacén mixto activo durante la transición:</b> <code>${escHtml(legacyMixedStore)}</code><br>Solo se utiliza mientras no estén configurados correctamente <b>los dos</b> almacenes nuevos.</div>`:legacyMixedStore&&splitStoresReady?`<details class="sec-note"><summary style="cursor:pointer"><b>Respaldo histórico conservado (no activo)</b></summary><div style="margin-top:5px"><code>${escHtml(legacyMixedStore)}</code><br>Consultar ya no usa este almacén. Se conserva únicamente para una reversión manual y segura.</div></details>`:''}
-    <div class="field"><label>Vector Store de GeneReviews 3.0 <span class="dx-meta">(revisiones oficiales y sus figuras)</span></label>
+    <div class="field"><label>Vector Store de GeneReviews <span class="dx-meta">(revisiones oficiales y sus figuras)</span></label>
       <input id="cfgSbGeneReviewsStore" type="text" value="${escHtml(splitGeneReviewsStore).replace(/"/g,'&quot;')}" placeholder="vs_… GeneReviews" autocomplete="off"></div>
     <div class="field"><label>Vector Store de documentos propios <span class="dx-meta">(nuevo; PDF, EPUB y futuras presentaciones)</span></label>
       <input id="cfgSbDocumentsStore" type="text" value="${escHtml(splitDocumentsStore).replace(/"/g,'&quot;')}" placeholder="vs_… documentos" autocomplete="off"></div>
@@ -2674,12 +2742,29 @@ function openSettings(){
     </div>
 
     <div class="cfg-pane" data-pane="drive">
-    <div class="sec-note">Repositorio documental en Google Drive (tus PDFs).</div>
+    <div class="sec-note">Repositorio de originales en Google Drive (tus PDF). Las páginas, miniaturas, figuras y tablas derivadas se sirven desde el bucket privado B2.</div>
     <div class="field"><label>Client ID de Google <span class="hint">(público; atado a tu origen)</span></label>
       <input id="cfgDriveCid" type="text" value="${(c.driveClientId||'').replace(/"/g,'&quot;')}" placeholder="…apps.googleusercontent.com" autocomplete="off"></div>
     <div class="field"><label>Carpeta de Drive a vigilar (opcional) <span class="hint">(ID de carpeta; vacío = todos tus PDFs)</span></label>
       <input id="cfgDriveFolder" type="text" value="${(c.driveFolder||'').replace(/"/g,'&quot;')}" placeholder="ID de carpeta" autocomplete="off"></div>
     <label class="q-opt" style="font-size:13px"><input id="cfgDriveSub" type="checkbox" ${c.driveSubfolders?'checked':''}> Incluir también los PDFs de las subcarpetas</label>
+    </div>
+
+    <div class="cfg-pane" data-pane="b2">
+    <div class="sec-note"><b>Lectura privada de derivados.</b> Usa una Application Key distinta, de tipo <b>Read Only</b>, limitada únicamente al bucket <code>ariadnadatos</code> y, preferiblemente, al prefijo <code>ariadna-data/</code>. La clave de subida/borrado del Mac nunca debe introducirse aquí.</div>
+    <div class="field"><label>Endpoint S3 de B2</label>
+      <input id="cfgB2Endpoint" type="text" value="${escA(c.b2Endpoint||'')}" placeholder="https://s3.us-west-001.backblazeb2.com" autocomplete="off"></div>
+    <div class="field"><label>Bucket privado</label>
+      <input id="cfgB2Bucket" type="text" value="${escA(c.b2Bucket||'')}" placeholder="ariadnadatos" autocomplete="off"></div>
+    <div class="field"><label>Prefijo de Ariadna</label>
+      <input id="cfgB2Prefix" type="text" value="${escA(c.b2Prefix||'')}" placeholder="ariadna-data" autocomplete="off"></div>
+    <div class="field"><label>Application Key ID <span class="hint">(solo lectura)</span></label>
+      <input id="cfgB2ReadKeyId" type="password" value="${escA(c.b2ReadKeyId||'')}" placeholder="Key ID de la clave Read Only" autocomplete="off"></div>
+    <div class="field"><label>Application Key <span class="hint">(solo lectura)</span></label>
+      <input id="cfgB2ReadKey" type="password" value="${escA(c.b2ReadKey||'')}" placeholder="Application Key de lectura" autocomplete="off"></div>
+    <button class="btn" id="cfgTestB2">Probar lectura privada B2</button>
+    <div class="test-out" id="cfgB2Out"></div>
+    <div class="sec-note">Ariadna firma en tu navegador una URL de lectura que caduca a los cinco minutos, descarga solo el recurso solicitado y verifica su SHA-256. El bucket continúa siendo privado y esta clave no permite subir ni borrar.</div>
     </div>
 
     <div class="cfg-pane" data-pane="rc">
@@ -2747,6 +2832,22 @@ function openSettings(){
   if(resetOverrides) resetOverrides.addEventListener('click', ()=>{
     ov.querySelectorAll('select[data-operation]').forEach(sel=>{ sel.value=''; });
     showToast('Todas las operaciones quedan en selección automática al guardar');
+  });
+  const testB2=ov.querySelector('#cfgTestB2');
+  if(testB2) testB2.addEventListener('click',async ()=>{
+    const out=ov.querySelector('#cfgB2Out');
+    const candidate={
+      endpoint:ov.querySelector('#cfgB2Endpoint').value.trim(), bucket:ov.querySelector('#cfgB2Bucket').value.trim(),
+      prefix:ov.querySelector('#cfgB2Prefix').value.trim(), keyId:ov.querySelector('#cfgB2ReadKeyId').value.trim(),
+      applicationKey:ov.querySelector('#cfgB2ReadKey').value.trim(), version:B2_BROWSER_INDEX_VERSION,
+      indexSha256:B2_BROWSER_INDEX_SHA256
+    };
+    out.className='test-out'; out.textContent='Probando una lectura firmada…'; testB2.disabled=true;
+    try{
+      const index=await loadB2BrowserIndex(candidate,true);
+      out.className='test-out ok'; out.textContent='✓ Lectura B2 correcta · '+index.document_count+' documentos · '+index.visual_asset_count+' recursos visuales localizables.';
+    }catch(error){ out.className='test-out bad'; out.textContent='✗ '+(error.message||error); }
+    finally{ testB2.disabled=false; }
   });
   // Biblioteca ReadCube: estado actual + importar (pegar o archivo) + vaciar
   (function(){
@@ -2890,7 +2991,14 @@ function openSettings(){
       gh_pat: ov.querySelector('#cfgPat').value.trim(),
       driveClientId: ov.querySelector('#cfgDriveCid').value.trim(),
       driveFolder: ov.querySelector('#cfgDriveFolder').value.trim(),
-      driveSubfolders: ov.querySelector('#cfgDriveSub').checked
+      driveSubfolders: ov.querySelector('#cfgDriveSub').checked,
+      b2Endpoint: ov.querySelector('#cfgB2Endpoint').value.trim(),
+      b2Bucket: ov.querySelector('#cfgB2Bucket').value.trim(),
+      b2Prefix: ov.querySelector('#cfgB2Prefix').value.trim(),
+      b2IndexVersion: B2_BROWSER_INDEX_VERSION,
+      b2IndexSha256: B2_BROWSER_INDEX_SHA256,
+      b2ReadKeyId: ov.querySelector('#cfgB2ReadKeyId').value.trim(),
+      b2ReadKey: ov.querySelector('#cfgB2ReadKey').value.trim()
     });
     renderStatus();
     showToast('Ajustes guardados');
@@ -4197,7 +4305,7 @@ function masterFileCanonicalError(canonical){
   if(ids.doi&&!/^10\.\d{4,9}\/.+/.test(doi)) return 'El DOI no tiene un formato válido.';
   if(ids.pmid&&!/^\d{5,10}$/.test(pmid)) return 'El PMID debe contener entre 5 y 10 cifras.';
   if(ids.pmcid&&!/^PMC\d+$/.test(pmcid.startsWith('PMC')?pmcid:'PMC'+pmcid)) return 'El PMCID debe tener el formato PMC seguido de cifras.';
-  if(ids.nbk&&!/^NBK\d+$/.test(nbk.startsWith('NBK')?nbk:'NBK'+nbk)) return 'El identificador GeneReviews debe tener el formato NBK seguido de cifras.';
+  if(ids.nbk&&!/^NBK\d+$/.test(nbk.startsWith('NBK')?nbk:'NBK'+nbk)) return 'El identificador de NCBI Bookshelf debe tener el formato NBK seguido de cifras.';
   if(ids.isbn&&!masterFileNormalizedIsbn(ids.isbn)) return 'El ISBN no supera la validación ISBN-10/ISBN-13.';
   return '';
 }
@@ -4512,6 +4620,7 @@ function masterDocumentRegistrationForDriveFile(file){
     titulo:repairMojibake(work.title||file.name||''),cita:repairMojibake(work.title||file.name||''),nombreIA:repairMojibake(work.short_title||''),
     descripcion:bib.summary||bib.abstract||'',tipo:masterArchiveTypeLabel(work.type),anio:work.year||'',
     doi:ids.doi||'',pmid:ids.pmid||'',pmcid:ids.pmcid||'',nbk:ids.nbk||'',isbn:ids.isbn||'',legal_id:ids.legal_id||'',
+    source:(work.source_ids||[])[0]||'',source_ids:work.source_ids||[],bookshelf_collection:bookshelfCollectionKey(work)||'',
     url:bib.official_url||file.webViewLink||'',enlace:file.webViewLink||('https://drive.google.com/open?id='+encodeURIComponent(file.id)),
     _masterCatalog:true,_masterWork:work,_catalogCited:state.cited===true,_catalogSecondBrain:state.in_second_brain===true};
 }
@@ -4531,6 +4640,8 @@ function canonicalBibliographyReference(ref){
     tipo:work.type||ref.tipo||'',
     doi:ids.doi||ref.doi||'', pmid:ids.pmid||ref.pmid||'', pmcid:ids.pmcid||ref.pmcid||'',
     nbk:ids.nbk||ref.nbk||'', isbn:ids.isbn||ref.isbn||'', legal_id:ids.legal_id||ref.legal_id||'',
+    source:ref.source||(work.source_ids||[])[0]||'', source_ids:work.source_ids||ref.source_ids||[],
+    bookshelf_collection:bookshelfCollectionKey(work)||ref.bookshelf_collection||'',
     url:bib.official_url||ref.url||'',
     driveId:driveId||ref.driveId||ref.drive_id||'',
     enlace:ref.enlace||(driveId?('https://drive.google.com/open?id='+encodeURIComponent(driveId)):'')
@@ -4584,7 +4695,7 @@ function masterArchiveSearch(works,query,limit){
     const metadata=accLower([work.type,bib.container_title,bib.publisher,bib.series_title,bib.abstract,bib.summary,(bib.keywords||[]).join(' '),Object.values(ids).join(' ')].filter(Boolean).join(' '));
     if(parsed.types.size){
       const actual=String(work.type||''), sources=(work.source_ids||[]).map(x=>accLower(String(x)));
-      const typeMatch=[...parsed.types].some(type=>type==='genereviews'?!!(ids.nbk||sources.some(x=>x.includes('genereview'))):type===actual);
+      const typeMatch=[...parsed.types].some(type=>type==='genereviews'?masterArchiveIsGeneReviews(work):type===actual);
       if(!typeMatch) return null;
     }
     let score=0;
@@ -4609,15 +4720,14 @@ function masterArchiveHasFile(work){
   const state=(work&&work.state)||{};
   return state.pdf_available===true || (Array.isArray(work&&work.drive_file_ids) && work.drive_file_ids.length>0) || Number(work&&work.file_count)>0;
 }
-function masterArchiveIsGeneReviews(work){
-  const ids=(work&&work.external_ids)||{}, sources=(work&&work.source_ids||[]).map(x=>accLower(String(x)));
-  return !!ids.nbk || sources.some(x=>x.includes('genereview'));
-}
+function masterArchiveBookshelfCollection(work){ return bookshelfCollectionKey(work)||''; }
+function masterArchiveIsBookshelf(work){ return !!bookshelfInfo(work); }
+function masterArchiveIsGeneReviews(work){ return masterArchiveBookshelfCollection(work)==='genereviews'; }
 /* Recursos nacidos como páginas vivas (GeneReviews, Genotipia y futuras bases web) no tienen un PDF
    pendiente por defecto. Pueden enlazarse a un archivo si se añade uno, pero su ausencia no es incidencia. */
 function masterArchiveIsWebOnly(work){
   const type=String(work&&work.type||''), sources=(work&&work.source_ids||[]).map(x=>accLower(String(x)));
-  return masterArchiveIsGeneReviews(work) || ['web_article','website','database_entry'].includes(type)
+  return masterArchiveIsBookshelf(work) || ['web_article','website','database_entry'].includes(type)
     || sources.some(x=>/genotipia|\bomim\b|orphanet|\borpha\b/.test(x));
 }
 function masterArchiveFileFilterMatch(work,filter){
@@ -4661,7 +4771,7 @@ function masterArchiveBibliographicRows(work){
 }
 function masterArchiveCardHtml(work){
   const state=work.state||{}, states=[], ids=work.external_ids||{}, sources=(work.source_ids||[]).map(x=>accLower(String(x)));
-  const typeLabel=(ids.nbk||sources.some(x=>x.includes('genereview')))?'GeneReviews':masterArchiveTypeLabel(work.type);
+  const bs=bookshelfInfo(work), typeLabel=bs?bs.label:masterArchiveTypeLabel(work.type);
   const detailRows=masterArchiveBibliographicRows(work);
   if(masterArchiveHasFile(work)) states.push('Archivo disponible');
   else if(masterArchiveIsWebOnly(work)) states.push('Web · no requiere PDF');
@@ -4752,7 +4862,7 @@ function sbQuoteHtml(passages, key){
   const mine=passages.filter(p=>String(p.filename||'').split('__')[0]===key && String(p.text||'').trim());
   if(!mine.length) return '';
   const apartado=fn=>{ const parts=String(fn||'').replace(/\.(md|txt|pdf)$/i,'').split('__'); return parts.length>1?parts.slice(1).join(' · ').replace(/-/g,' '):''; };
-  const nbk=/^NBK\d+$/i.test(String(key))?String(key).toUpperCase():'';
+  const source=chatSourceFuente(key), gr=geneReviewsInfo(source), nbk=gr&&gr.nbk?gr.nbk:'';
   const work=masterWorkForDriveId(key), format=masterFileFormatForDriveId(key)||'pdf', currentHash=masterFileHashForDriveId(key);
   const body=mine.map(p=>{ const rawText=String(p.text), text=rawText.slice(0,1600), visual=sourceVisualAsset(rawText,p.filename), unit=sourcePassageUnit(rawText), unitLabel=unit?(unit.kind+' '+unit.number):'', passageHash=sourcePassageHash(rawText), stale=!!(passageHash&&currentHash&&passageHash!==currentHash);
     const visualData=visual?` data-sbasset="${escA(visual.assetId)}" data-sbassetsha="${escA(visual.sha256)}" data-sbassettype="${escA(visual.type)}" data-sbassetlabel="${escA(encodeURIComponent(visual.label||''))}" data-sbassetsource="${escA(visual.sourceDriveId||'')}"`:'';
@@ -4817,6 +4927,76 @@ function sourceViewerUrl(driveId,unitNumber){
 let _chatVisualObjectUrl=null, _chatVisualRequest=0;
 const _derivedAssetRemoteCache=new Map();
 function releaseChatVisualObjectUrl(){ if(_chatVisualObjectUrl){ try{ URL.revokeObjectURL(_chatVisualObjectUrl); }catch(e){} _chatVisualObjectUrl=null; } }
+const _b2TextEncoder=new TextEncoder();
+const _b2TextDecoder=new TextDecoder();
+let _b2BrowserIndex=null, _b2BrowserIndexCacheKey='';
+function b2Bytes(value){ return value instanceof Uint8Array?value:_b2TextEncoder.encode(String(value)); }
+function b2Hex(value){ return [...new Uint8Array(value)].map(byte=>byte.toString(16).padStart(2,'0')).join(''); }
+function b2AwsEncode(value){ return encodeURIComponent(String(value)).replace(/[!'()*]/g,char=>'%'+char.charCodeAt(0).toString(16).toUpperCase()); }
+async function b2Sha256(value){ return b2Hex(await crypto.subtle.digest('SHA-256',b2Bytes(value))); }
+async function b2Hmac(key,value,raw){
+  const imported=await crypto.subtle.importKey('raw',b2Bytes(key),{name:'HMAC',hash:'SHA-256'},false,['sign']);
+  const signed=await crypto.subtle.sign('HMAC',imported,b2Bytes(value));
+  return raw?new Uint8Array(signed):b2Hex(signed);
+}
+function b2BrowserConfig(override){
+  if(override) return override;
+  const c=loadCfg();
+  return {endpoint:String(c.b2Endpoint||'').trim(),bucket:String(c.b2Bucket||'').trim(),prefix:String(c.b2Prefix||'').trim().replace(/^\/+|\/+$/g,''),
+    version:String(c.b2IndexVersion||B2_BROWSER_INDEX_VERSION).trim(),indexSha256:String(c.b2IndexSha256||B2_BROWSER_INDEX_SHA256).trim().toLowerCase(),
+    keyId:String(c.b2ReadKeyId||'').trim(),applicationKey:String(c.b2ReadKey||'').trim()};
+}
+function b2BrowserConfigured(config){ const c=config||b2BrowserConfig(); return !!(c.endpoint&&c.bucket&&c.prefix&&c.version&&c.keyId&&c.applicationKey); }
+function b2ObjectPath(bucket,objectName){
+  const bucketName=String(bucket||'').trim(), key=String(objectName||'').replace(/^\/+/, '');
+  if(!/^[a-z0-9.-]{6,63}$/.test(bucketName)||!key||key.includes('\0')) throw new Error('Bucket u objeto B2 no válidos.');
+  return '/'+b2AwsEncode(bucketName)+'/'+key.split('/').map(b2AwsEncode).join('/');
+}
+async function b2PresignGet(config,objectName,expires){
+  const base=new URL(config.endpoint); if(base.protocol!=='https:') throw new Error('B2 exige un endpoint HTTPS.');
+  const region=(base.hostname.match(/^s3\.([a-z0-9-]+)\.backblazeb2\.com$/i)||[])[1];
+  if(!region) throw new Error('El endpoint S3 de B2 no tiene el formato esperado.');
+  if(!config.keyId||!config.applicationKey) throw new Error('Falta la clave B2 de solo lectura.');
+  const now=new Date(), amzDate=now.toISOString().replace(/[:-]|\.\d{3}/g,''), dateStamp=amzDate.slice(0,8);
+  const scope=dateStamp+'/'+region+'/s3/aws4_request', lifetime=String(Math.max(1,Math.min(3600,Number(expires)||300)));
+  const params={'X-Amz-Algorithm':'AWS4-HMAC-SHA256','X-Amz-Credential':config.keyId+'/'+scope,'X-Amz-Date':amzDate,'X-Amz-Expires':lifetime,'X-Amz-SignedHeaders':'host'};
+  const canonicalQuery=Object.entries(params).map(([key,value])=>[b2AwsEncode(key),b2AwsEncode(value)]).sort(([a],[b])=>a.localeCompare(b)).map(([key,value])=>key+'='+value).join('&');
+  const canonicalUri=b2ObjectPath(config.bucket,objectName), canonicalRequest='GET\n'+canonicalUri+'\n'+canonicalQuery+'\nhost:'+base.host+'\n\nhost\nUNSIGNED-PAYLOAD';
+  const stringToSign='AWS4-HMAC-SHA256\n'+amzDate+'\n'+scope+'\n'+await b2Sha256(canonicalRequest);
+  const kDate=await b2Hmac('AWS4'+config.applicationKey,dateStamp,true), kRegion=await b2Hmac(kDate,region,true), kService=await b2Hmac(kRegion,'s3',true), kSigning=await b2Hmac(kService,'aws4_request',true);
+  return base.origin+canonicalUri+'?'+canonicalQuery+'&X-Amz-Signature='+await b2Hmac(kSigning,stringToSign,false);
+}
+async function loadB2BrowserIndex(override,force){
+  const config=b2BrowserConfig(override); if(!b2BrowserConfigured(config)) throw new Error('Configura en Ajustes una clave B2 de solo lectura.');
+  const cacheKey=[config.endpoint,config.bucket,config.prefix,config.version,config.keyId].join('|');
+  if(!force&&_b2BrowserIndex&&_b2BrowserIndexCacheKey===cacheKey) return _b2BrowserIndex;
+  const objectName=config.prefix+'/v1/index/browser/'+config.version+'/documents.json';
+  const response=await fetch(await b2PresignGet(config,objectName,300),{cache:'no-store'});
+  if(response.status===401||response.status===403) throw new Error('B2 rechazó la clave de lectura. Comprueba que sea Read Only y esté limitada a este bucket/prefijo.');
+  if(response.status===404) throw new Error('El índice de lectura B2 todavía no está publicado.');
+  if(!response.ok) throw new Error('B2 no pudo leer el índice documental ('+response.status+').');
+  const bytes=await response.arrayBuffer(), actual=await b2Sha256(new Uint8Array(bytes));
+  if(config.indexSha256&&actual!==config.indexSha256) throw new Error('El índice B2 no coincide con la huella validada; no se utilizará.');
+  let index; try{ index=JSON.parse(_b2TextDecoder.decode(bytes)); }catch(e){ throw new Error('B2 devolvió un índice documental no válido.'); }
+  if(index.schema!=='ariadna-b2-browser-index-v1'||index.version!==config.version||!index.documents) throw new Error('El índice B2 no pertenece a esta versión documental.');
+  _b2BrowserIndex=index; _b2BrowserIndexCacheKey=cacheKey; return index;
+}
+async function fetchVerifiedDerivedVisualFromB2(asset){
+  const config=b2BrowserConfig(); if(!b2BrowserConfigured(config)) throw Object.assign(new Error('B2 no está configurado.'),{code:'b2_not_configured'});
+  const sourceDriveId=String(asset?.sourceDriveId||'').trim(), assetId=String(asset?.assetId||'').toLowerCase();
+  if(!/^[A-Za-z0-9_-]{8,200}$/.test(sourceDriveId)||!/^asset_[a-f0-9]{24,64}$/.test(assetId)) throw new Error('El localizador visual B2 no es válido.');
+  const index=await loadB2BrowserIndex(config), document=index.documents[sourceDriveId], revisionKey=Array.isArray(document)?String(document[0]||''):'';
+  if(!/^[a-f0-9]{24}$/.test(revisionKey)) throw new Error('El documento no tiene una revisión B2 activa en el índice validado.');
+  const objectName=config.prefix+'/v1/documents/'+sourceDriveId+'/revisions/'+revisionKey+'/assets/'+assetId+'.jpg';
+  const response=await fetch(await b2PresignGet(config,objectName,300),{cache:'no-store'});
+  if(response.status===401||response.status===403) throw new Error('B2 rechazó la lectura privada del recurso.');
+  if(response.status===404) throw new Error('El recurso visual no está en la revisión B2 activa.');
+  if(!response.ok) throw new Error('B2 no pudo descargar el recurso visual ('+response.status+').');
+  const blob=await response.blob();
+  if(!/^image\/(?:jpeg|jpg)$/i.test(blob.type||'image/jpeg')) throw new Error('B2 devolvió un archivo que no es una imagen JPEG.');
+  if(asset.sha256){ const actual=await sha256Blob(blob); if(actual!==asset.sha256) throw new Error('La imagen B2 no coincide con la huella indexada; no se mostrará.'); }
+  return {remote:{objectName},blob,provider:'b2'};
+}
 function driveQueryEscape(value){ return String(value||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 async function findDerivedVisualInDrive(asset){
   if(!driveTokenValid()) throw Object.assign(new Error('Conecta Google Drive para mostrar la imagen.'),{code:'drive_auth_required'});
@@ -4844,7 +5024,7 @@ async function sha256Blob(blob){
   const bytes=await blob.arrayBuffer(), digest=await crypto.subtle.digest('SHA-256',bytes);
   return [...new Uint8Array(digest)].map(value=>value.toString(16).padStart(2,'0')).join('');
 }
-async function fetchVerifiedDerivedVisual(asset){
+async function fetchVerifiedDerivedVisualFromDrive(asset){
   const remote=await findDerivedVisualInDrive(asset);
   const response=await fetch('https://www.googleapis.com/drive/v3/files/'+encodeURIComponent(remote.id)+'?alt=media',{headers:{Authorization:'Bearer '+_driveToken},cache:'no-store'});
   if(response.status===401){ _driveToken=null; _driveTokExp=0; throw Object.assign(new Error('La autorización de Google Drive ha caducado.'),{code:'drive_auth_required'}); }
@@ -4852,7 +5032,11 @@ async function fetchVerifiedDerivedVisual(asset){
   const blob=await response.blob();
   if(!/^image\/(?:jpeg|jpg)$/i.test(blob.type||'image/jpeg')) throw new Error('El archivo recuperado no es una imagen JPEG.');
   if(asset.sha256){ const actual=await sha256Blob(blob); if(actual!==asset.sha256) throw new Error('La imagen descargada no coincide con la huella indexada; no se mostrará.'); }
-  return {remote,blob};
+  return {remote,blob,provider:'drive'};
+}
+async function fetchVerifiedDerivedVisual(asset){
+  if(b2BrowserConfigured()) return fetchVerifiedDerivedVisualFromB2(asset);
+  return fetchVerifiedDerivedVisualFromDrive(asset);
 }
 function requestDriveForDerivedVisual(asset,driveId){
   const client=ensureDriveTokenClient(), target=document.getElementById('chatDerivedVisual');
@@ -4862,18 +5046,20 @@ function requestDriveForDerivedVisual(asset,driveId){
 }
 async function renderDerivedVisualAsset(asset,driveId){
   const host=document.getElementById('chatDerivedVisual'); if(!host||!asset) return;
-  if(!driveTokenValid()){
-    host.innerHTML='<div class="placeholder">La imagen se conserva en tu Google Drive y solo se descarga al pedirla.<div style="margin-top:8px"><button class="btn primary" id="chatVisualConnect">Conectar Drive y mostrar imagen</button></div></div>';
+  if(!b2BrowserConfigured()&&!driveTokenValid()){
+    host.innerHTML='<div class="placeholder">La imagen se conserva en tu almacenamiento privado. Configura la clave B2 de solo lectura en Ajustes; durante la transición también puede leerse desde Drive.<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn primary" id="chatVisualSettings">Abrir Ajustes B2</button><button class="btn ghost" id="chatVisualConnect">Conectar Drive temporalmente</button></div></div>';
+    host.querySelector('#chatVisualSettings')?.addEventListener('click',openSettings);
     host.querySelector('#chatVisualConnect')?.addEventListener('click',()=>requestDriveForDerivedVisual(asset,driveId)); return;
   }
   const request=++_chatVisualRequest; releaseChatVisualObjectUrl();
-  host.innerHTML='<div class="loading">Localizando y verificando la imagen en Google Drive…</div>';
+  host.innerHTML='<div class="loading">Localizando y verificando la imagen en '+(b2BrowserConfigured()?'B2 privado':'Google Drive')+'…</div>';
   try{
-    const {remote,blob}=await fetchVerifiedDerivedVisual(asset);
+    const {remote,blob,provider}=await fetchVerifiedDerivedVisual(asset);
     if(request!==_chatVisualRequest || !document.getElementById('chatDerivedVisual')) return;
     _chatVisualObjectUrl=URL.createObjectURL(blob);
     const label=asset.label||((asset.type==='table'?'Tabla':'Figura')+(asset.page?' · página '+asset.page:''));
-    host.innerHTML=`<figure style="margin:0"><a href="${escA(_chatVisualObjectUrl)}" target="_blank" rel="noopener"><img src="${escA(_chatVisualObjectUrl)}" alt="${escA(label)}" style="display:block;max-width:100%;max-height:64vh;margin:0 auto;border:1px solid var(--line);border-radius:9px;background:white;object-fit:contain"></a><figcaption class="dx-meta" style="margin-top:5px"><b>${escHtml(label)}</b>${asset.page?' · página '+escHtml(asset.page):''}<br>✓ JPG verificado con la huella del índice · cargado solo para esta vista</figcaption></figure><div style="margin-top:6px"><a class="btn ghost" href="https://drive.google.com/open?id=${encodeURIComponent(remote.id)}" target="_blank" rel="noopener">Abrir JPG en Drive</a></div>`;
+    const remoteButton=provider==='drive'?`<div style="margin-top:6px"><a class="btn ghost" href="https://drive.google.com/open?id=${encodeURIComponent(remote.id)}" target="_blank" rel="noopener">Abrir JPG en Drive</a></div>`:'';
+    host.innerHTML=`<figure style="margin:0"><a href="${escA(_chatVisualObjectUrl)}" target="_blank" rel="noopener"><img src="${escA(_chatVisualObjectUrl)}" alt="${escA(label)}" style="display:block;max-width:100%;max-height:64vh;margin:0 auto;border:1px solid var(--line);border-radius:9px;background:white;object-fit:contain"></a><figcaption class="dx-meta" style="margin-top:5px"><b>${escHtml(label)}</b>${asset.page?' · página '+escHtml(asset.page):''}<br>✓ JPG verificado con la huella del índice · ${provider==='b2'?'leído del bucket privado B2':'leído de Drive'} solo para esta vista</figcaption></figure>`+remoteButton;
   }catch(error){
     if(request!==_chatVisualRequest || !document.getElementById('chatDerivedVisual')) return;
     const reconnect=error&&error.code==='drive_auth_required'?'<div style="margin-top:8px"><button class="btn primary" id="chatVisualReconnect">Volver a conectar Drive</button></div>':'';
@@ -5029,7 +5215,7 @@ async function openChatSourceViewer({driveId,format,unitKind,unitNumber,quote,vi
 function sbInvCounts(){
   const works=(_masterCatalogIndex&&_masterCatalogIndex.works)||[];
   if(works.length){ const gr=works.filter(masterArchiveIsGeneReviews).length, pdf=works.filter(masterArchiveHasFile).length, web=works.filter(w=>masterArchiveIsWebOnly(w)&&!masterArchiveIsGeneReviews(w)).length; return {gr,pdf,web,otro:Math.max(0,works.length-gr-pdf-web),total:works.length}; }
-  const s=_sbSources||{}; let gr=0,pdf=0; for(const v of Object.values(s)){ if(v.source==='GeneReviews') gr++; else if(v.source==='PDF') pdf++; } return {gr,pdf,web:0,otro:Math.max(0,Object.keys(s).length-gr-pdf),total:Object.keys(s).length};
+  const s=_sbSources||{}; let gr=0,pdf=0,web=0; for(const v of Object.values(s)){ const bs=bookshelfInfo(v); if(bs&&bs.collection==='genereviews') gr++; else if(v.source==='PDF') pdf++; else if(bs) web++; } return {gr,pdf,web,otro:Math.max(0,Object.keys(s).length-gr-pdf-web),total:Object.keys(s).length};
 }
 /* Posibles DUPLICADOS: documentos distintos que comparten DOI, PMID, ISBN o título casi idéntico. Devuelve grupos. */
 function sbDupGroups(){
@@ -5066,7 +5252,7 @@ function sbMissingDocs(){
   const inSb=(d)=> sbList.some(v=>{
     if(v.doi && d.doi && normDoi(v.doi)===normDoi(d.doi)) return true;
     if(v.pmid && d.pmid && String(v.pmid).trim()===String(d.pmid).trim()) return true;
-    const dn=String(d.nbk||(geneReviewsInfo(d)||{}).nbk||'').toUpperCase(); if(v.nbk && dn && String(v.nbk).toUpperCase()===dn) return true;
+    const dn=bookshelfNbk(d); if(v.nbk && dn && String(v.nbk).toUpperCase()===dn) return true;
     if(v.isbn && d.isbn && String(v.isbn).replace(/[^0-9xX]/gi,'')===String(d.isbn).replace(/[^0-9xX]/gi,'')) return true;
     const vu=normUrl(v.url); if(vu && (vu===normUrl(d.url)||vu===normUrl(d.enlace))) return true;   // MISMO fichero de Drive (señal fiable)
     const vt=normTxt(v.titulo||''), dt=normTxt(d.cita||d.titulo||''); if(vt.length>=10 && vt===dt) return true;
@@ -5091,7 +5277,9 @@ function sbMissingRowsHtml(){
 }
 /* Una entrada de sources.json → fuente (para pintarla como cualquier referencia de Ariadna). */
 function sbFuente(k,v){
-  if(v.source==='GeneReviews') return {titulo:grRefTitle(v.nbk, v.titulo), url:v.url||(v.nbk?('https://www.ncbi.nlm.nih.gov/books/'+String(v.nbk).toUpperCase()+'/'):''), nbk:v.nbk, gr_updated:v.updated, gr_initial:v.initial||'', _src:'GeneReviews'};
+  const bs=bookshelfInfo(v);
+  if(bs) return {titulo:bs.collection==='genereviews'?grRefTitle(bs.nbk,v.titulo):(v.titulo||bs.nbk||bs.label),url:v.url||bs.url,nbk:bs.nbk,
+    source:bs.label,bookshelf_collection:bs.collection,gr_updated:bs.collection==='genereviews'?(v.updated||v.gr_updated||''):'',gr_initial:bs.collection==='genereviews'?(v.initial||v.gr_initial||''):'',_src:bs.label};
   return {titulo:v.titulo||k, url:v.url||'', enlace:v.enlace||'', driveId:v.driveId||v.drive_id||driveFileIdFromUrl(v.enlace||v.url)||(masterWorkForDriveId(k)?k:''), doi:v.doi||'', pmid:v.pmid||'', isbn:v.isbn||'', _src:'PDF'};
 }
 /* Icono de Drive para abrir un documento del store: si bibRefHtml ya lo pinta (doc en tu repo local) no repite;
@@ -5121,7 +5309,7 @@ function sbInvRows(filter, type){
   const s=_sbSources||{};
   const rows=[];
   for(const [k,v] of Object.entries(s)){
-    const isGr=v.source==='GeneReviews';
+    const isGr=bookshelfCollectionKey(v)==='genereviews';
     if(type==='gr' && !isGr) continue; if(type==='pdf' && isGr) continue;
     const hay=(String(v.titulo||'')+' '+String(v.nbk||'')+' '+String(v.doi||'')+' '+String(v.pmid||'')+' '+String(v.isbn||'')+' '+k).toLowerCase();
     if(filter && !hay.includes(filter)) continue;
@@ -5168,8 +5356,10 @@ function chatSourceFuente(name){
   const key=String(name).split('__')[0];
   const s=(_sbSources||{})[key];
   if(s){
-    if(s.source==='GeneReviews') return {titulo:grRefTitle(s.nbk, s.titulo), url:s.url, nbk:s.nbk, gr_updated:s.updated, gr_initial:s.initial||'', _src:'GeneReviews'};
-    return canonicalBibliographyReference({titulo:s.titulo||name, url:s.url||'', enlace:s.enlace||'', driveId:s.driveId||s.drive_id||driveFileIdFromUrl(s.enlace||s.url)||(masterWorkForDriveId(key)?key:''), doi:s.doi||'', pmid:s.pmid||'', pmcid:s.pmcid||'', isbn:s.isbn||'', _src:s.source});
+    const bs=bookshelfInfo(s);
+    if(bs) return canonicalBibliographyReference({titulo:bs.collection==='genereviews'?grRefTitle(bs.nbk,s.titulo):(s.titulo||bs.nbk||bs.label),url:s.url||bs.url,nbk:bs.nbk,
+      source:bs.label,bookshelf_collection:bs.collection,gr_updated:bs.collection==='genereviews'?(s.updated||s.gr_updated||''):'',gr_initial:bs.collection==='genereviews'?(s.initial||s.gr_initial||''):'',_src:bs.label});
+    return canonicalBibliographyReference({titulo:s.titulo||name, url:s.url||'', enlace:s.enlace||'', driveId:s.driveId||s.drive_id||driveFileIdFromUrl(s.enlace||s.url)||(masterWorkForDriveId(key)?key:''), doi:s.doi||'', pmid:s.pmid||'', pmcid:s.pmcid||'', isbn:s.isbn||'', source:s.source||'', _src:s.source});
   }
   const work=masterWorkForDriveId(key);
   if(work){
@@ -5177,7 +5367,7 @@ function chatSourceFuente(name){
     return canonicalBibliographyReference({work_id:work.work_id,driveId:key,url:(doc&&(doc.enlace||doc.url))||'',_src:'PDF'});
   }
   const nbk=(String(name).match(/NBK\d+/i)||[])[0];
-  if(nbk) return {titulo:grRefTitle(nbk, ''), url:'https://www.ncbi.nlm.nih.gov/books/'+nbk.toUpperCase()+'/', nbk:nbk.toUpperCase(), _src:'GeneReviews'};
+  if(nbk) return {titulo:nbk.toUpperCase(),url:'https://www.ncbi.nlm.nih.gov/books/'+nbk.toUpperCase()+'/',nbk:nbk.toUpperCase(),source:'NCBI Bookshelf',bookshelf_collection:'bookshelf',_src:'NCBI Bookshelf'};
   return {titulo:String(name).replace(/\.(md|txt|pdf)$/i,'').replace(/__/g,' · ')};
 }
 const _CHAT_RULES=' REGLAS ESTRICTAS: (1) PROHIBIDO usar conocimiento general, externo o de memoria. (2) Debes responder TODAS las NECESIDADES planteadas; una necesidad puede y debe integrar VARIAS fuentes cuando aporten evidencia complementaria. (3) Si no existe ningún pasaje pertinente responde NO_ENCONTRADO. Si solo falta evidencia para una parte, responde lo sustentado e identifica de forma explícita qué parte no está documentada. (4) Nunca menciones un documento que no trate específicamente lo preguntado. (5) Un cálculo solicitado solo puede hacerse cuando los pasajes documenten tanto sus datos de entrada como el método; preséntalo como «Cálculo derivado por Ariadna», muestra la operación y no atribuyas el resultado calculado a una publicación. (6) El historial de conversación solo sirve para entender referencias como «eso», «el anterior» o «calcula ahora»; NUNCA es evidencia clínica ni sustituye los PASAJES recuperados. Responde únicamente a la PREGUNTA ACTUAL. Cuando SÍ esté en los pasajes: responde a NIVEL ESPECIALISTA (preciso, técnico, terminología y matices propios de un genetista clínico; SIN definiciones elementales). CONTEXTO TEMPORAL: fíjate en las FECHAS; si una guía/ley/documento ha sido SUSTITUIDA o actualizada, prioriza la vigente y AVISA. NO escribas una sección de «Fuentes» ni nombres de fichero: la app muestra por su cuenta TODAS las referencias realmente utilizadas. Responde en español, con precisión, sin inventar.';
@@ -5336,17 +5526,19 @@ function renderChatMsgs(){
               act = '<span class="dx-meta" style="color:var(--ok);margin-left:6px" title="Documento de tu Drive, ya en tu biblioteca">✓ en tu biblioteca</span>';
             } else if(catalogWork){
               act = '<span class="dx-meta" style="color:var(--ok);margin-left:6px" title="Referencia canónica ya registrada">✓ en Catálogo Maestro</span>';
-            } else if(f._src==='GeneReviews'){
+            } else if(geneReviewsInfo(f)){
               act = '<span class="dx-meta" style="color:var(--ok);margin-left:6px" title="GeneReview oficial ya indexada en el segundo cerebro">✓ indexada</span>';
+            } else if(bookshelfInfo(f)){
+              act = '<span class="dx-meta" style="color:var(--ok);margin-left:6px" title="Fuente oficial de NCBI Bookshelf ya indexada en el segundo cerebro">✓ indexada</span>';
             } else {
               const inRepo=!!matchDoc(f, repoDocs);   // ya en tu biblioteca (por NBK/PMID/DOI/URL/alias) → no ofrecer «añadir»
               act = inRepo ? '<span class="dx-meta" style="color:var(--ok)" title="Ya está en tu biblioteca">✓ en tu biblioteca</span>'
                            : '<a class="tip-ai chat-add" data-fu="'+enc+'" title="Añadir esta referencia a tu repositorio bibliográfico">➕ a mi biblioteca</a>';
             }
-            const figs=f.nbk?grFiguresHtml(f.nbk):'';   // figuras del capítulo GeneReviews (embebidas de NCBI)
+            const gr=geneReviewsInfo(f), figs=gr&&gr.nbk?grFiguresHtml(gr.nbk):'';   // figuras solo para GeneReviews
             const quote=sbQuoteHtml(m.passages, key);   // texto EXACTO recuperado (localizar la afirmación)
             const firstPassage=(m.passages||[]).find(p=>String(p.filename||'').split('__')[0]===key&&String(p.text||'').trim());
-            const sourceHref=f.nbk?geneReviewsTextFragmentUrl(f.nbk,firstPassage?.text||''):'';
+            const sourceHref=gr&&gr.nbk?geneReviewsTextFragmentUrl(gr.nbk,firstPassage?.text||''):'';
             return '<div style="margin:2px 0">'+bibliographyEntryHtml(f,sourceHref?{href:sourceHref}:undefined)+' '+act+figs+quote+'</div>'; }).join('')
         + '</div></div>';
     }
@@ -5521,6 +5713,7 @@ let _docVisibleLimit=DOC_PAGE_SIZE;
 const DOC_CATS=[
   {k:'all',         label:'Todo'},
   {k:'genereviews', label:'📖 GeneReviews'},
+  {k:'bookshelf',   label:'📘 Otras colecciones Bookshelf'},
   {k:'articulos',   label:'📄 Artículos'},
   {k:'guias',       label:'📋 Guías/protocolos'},
   {k:'consensos',   label:'🤝 Consensos'},
@@ -5535,7 +5728,9 @@ const DOC_CATS=[
    DOI/PMID). Un PDF aún sin indexar (sin reg) → «otros» hasta que se analice. */
 function docCategoria(reg){
   if(!reg) return 'sinindexar';   // PDF de Drive aún sin indexar (sin `tipo`) → pestaña propia, no «Otros»
-  if(reg.genereviews || reg.nbk || /genereview/i.test(reg.tipo||'') || (typeof geneReviewsInfo==='function' && geneReviewsInfo(reg))) return 'genereviews';
+  const bs=typeof bookshelfInfo==='function'?bookshelfInfo(reg):null;
+  if(bs&&bs.collection==='genereviews') return 'genereviews';
+  if(bs) return 'bookshelf';
   const t=accLower(reg.tipo||''); const url=accLower(reg.url||reg.enlace||'');
   if(reg.boletin || /legisl|\bley\b|decreto|\borden\b|reglamento|directiva|bolet[íi]n/.test(t) || /boe\.es|xunta\.gal|eur-?lex\.europa|dogaweb|diariooficial/.test(url)) return 'legislacion';
   if(/consenso|consensus/.test(t)) return 'consensos';
@@ -5820,12 +6015,12 @@ function editarDocMeta(f, reg, onDone){
     <div class="msub">${escHtml(f.name)} — corrige el nombre y la descripción a mano, o pulsa <b>✨ Regenerar (IA)</b> para que la IA los rehaga <b>leyendo el texto real del PDF</b>.</div>
     <div class="field"><label>Nombre</label><input id="emTit" type="text" value="${escHtml(reg.titulo||f.name).replace(/"/g,'&quot;')}"></div>
     <div class="field"><label>Descripción — qué es</label><textarea id="emDesc" style="width:100%;min-height:80px;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">${escHtml(reg.descripcion||'')}</textarea></div>
-    <div class="field"><label>Identificadores <span class="dx-meta">(PMID/DOI/PMCID; NBK para GeneReviews). El PMID de un GeneReviews se verifica contra su NBK.</span></label>
+    <div class="field"><label>Identificadores <span class="dx-meta">(PMID/DOI/PMCID; NBK para cualquier colección NCBI Bookshelf).</span></label>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <input id="emDoi" type="text" value="${escHtml(reg.doi||'').replace(/"/g,'&quot;')}" placeholder="DOI (10.xxxx)" style="flex:1;min-width:130px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink);font-size:13px">
         <input id="emPmid" type="text" value="${escHtml(reg.pmid||'').replace(/"/g,'&quot;')}" placeholder="PMID" style="width:100px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink);font-size:13px">
         <input id="emPmcid" type="text" value="${escHtml(reg.pmcid||'').replace(/"/g,'&quot;')}" placeholder="PMCID" style="width:110px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink);font-size:13px">
-        <input id="emNbk" type="text" value="${escHtml(reg.nbk||'').replace(/"/g,'&quot;')}" placeholder="NBK (GeneReviews)" style="width:150px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink);font-size:13px">
+        <input id="emNbk" type="text" value="${escHtml(reg.nbk||'').replace(/"/g,'&quot;')}" placeholder="NBK (Bookshelf)" style="width:150px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink);font-size:13px">
         <button class="btn" id="emFind" title="Buscar DOI/PMID/PMCID con IA (y verificar el PMID del NBK contra NCBI)">🔍 Buscar</button>
       </div></div>
     <div class="test-out" id="emOut"></div>
@@ -5838,7 +6033,7 @@ function editarDocMeta(f, reg, onDone){
     if(!anyProvider()){ out.className='test-out bad'; out.textContent='Configura una API key en ⚙ Ajustes.'; return; }
     out.className='test-out'; out.textContent='Buscando identificadores…';
     try{
-      const r=await findFuenteIds({titulo:tit.value.trim()||reg.titulo||f.name, url:reg.url||f.webViewLink, nbk:emNbk.value.trim()});
+      const r=await findFuenteIds({titulo:tit.value.trim()||reg.titulo||f.name, url:reg.url||f.webViewLink, nbk:emNbk.value.trim(),source:reg.source||'',bookshelf_collection:reg.bookshelf_collection||'',tipo:reg.tipo||'',genereviews:reg.genereviews===true});
       if(r.doi) emDoi.value=String(r.doi).trim();
       if(r.nbk){ emNbk.value=String(r.nbk).trim().toUpperCase(); emPmid.value=String(r.pmid||'').trim(); }   // GeneReviews: pmid verificado contra NCBI (o vacío)
       else if(r.pmid) emPmid.value=String(r.pmid).trim();
@@ -5864,7 +6059,7 @@ function editarDocMeta(f, reg, onDone){
       const nt=tit.value.trim()||reg.titulo;
       const nbk=emNbk.value.trim().toUpperCase();
       let pmid=emPmid.value.trim();
-      if(nbk){ const vp=await nbkPmid(nbk); if(vp!==null) pmid=vp; }   // GeneReviews: el PMID DEBE coincidir con el NBK (verificado en NCBI)
+      if(nbk&&geneReviewsInfo(reg)){ const vp=await nbkPmid(nbk); if(vp!==null) pmid=vp; }   // solo GeneReviews tiene esta resolución específica
       await registrarDoc(Object.assign({}, reg, {titulo:nt, cita:nt, descripcion:desc.value.trim(), doi:emDoi.value.trim(), pmid, pmcid:emPmcid.value.trim().toUpperCase(), nbk}));
       close(); showToast('Documento actualizado'); if(onDone) onDone();
     }catch(e){ out.className='test-out bad'; out.textContent='Error: '+e.message; }
@@ -5915,17 +6110,18 @@ async function indexarDriveDoc(f, opts){
   let doi=String((j&&j.doi)||'').trim()||doiFromUrl(f.webViewLink)||((txtHead.match(/10\.\d{4,9}\/[^\s"'<>,;)\]}]+/)||[])[0]||'').replace(/[).,;]+$/,'');
   let pmid=String((j&&j.pmid)||'').trim()||((txtHead.match(/pmid[:\s]*?(\d{4,9})/i)||[])[1]||'');
   let pmcid=String((j&&j.pmcid)||'').trim()||((txtHead.match(/\bPMC\d{4,9}\b/i)||[])[0]||'').toUpperCase();
-  // El NBK también sale del NOMBRE DEL FICHERO (los PDF de GeneReviews de NCBI Bookshelf se llaman Bookshelf_NBKxxxx.pdf).
+  // El NBK también sale del nombre del fichero, pero solo identifica NCBI Bookshelf: NO clasifica la colección.
   const fnameNbk=((String(f.name||'').match(/Bookshelf_(NBK\d{3,7})/i))||[])[1]||'';
   const nbk=(String((j&&j.nbk)||'').trim()||((txtHead.match(/\bNBK\d{3,7}\b/i)||[])[0]||'')||fnameNbk).toUpperCase();
   const cita=String((j&&j.cita)||'').trim();           // cita bibliográfica → nombre visible (línea 1)
   const nombreIA=String((j&&j.nombre)||'').trim();     // nombre-resumen corto → tooltip
-  const esGr=!!nbk || (j&&j.genereviews===true) || /genereviews/i.test(String((j&&j.tipo)||''));
+  const detectedBookshelf=bookshelfInfo({nbk,bookshelf_collection:j&&j.bookshelf_collection,source:j&&j.bookshelf_collection,tipo:j&&j.tipo,genereviews:j&&j.genereviews,titulo:cita||nombreIA||f.name});
+  const esGr=!!(detectedBookshelf&&detectedBookshelf.collection==='genereviews');
   // GeneReviews: el PMID NUNCA se toma de la IA (los inventa); se resuelve el auténtico a partir del NBK contra NCBI, o se deja vacío.
-  if(nbk){ const vp=await nbkPmid(nbk); pmid = (vp!==null) ? vp : ''; }
+  if(esGr&&nbk){ const vp=await nbkPmid(nbk); pmid = (vp!==null) ? vp : ''; }
   else { try{ const v=await verifyArticleIds({doi, pmid, pmcid}); doi=v.doi; pmid=v.pmid; pmcid=v.pmcid; }catch(e){} }   // artículos normales: DOI/PMID/PMCID verificados (descarta los inventados)
   const doc={ titulo: cita||nombreIA||f.name, cita, nombreIA, descripcion:(j&&j.descripcion)||'',
-    tipo:(j&&j.tipo)||(esGr?'GeneReviews':''), anio:(j&&j.anio)||(f.modifiedTime||'').slice(0,4),
+    tipo:(j&&j.tipo)||(detectedBookshelf?detectedBookshelf.label:''), bookshelf_collection:(detectedBookshelf&&detectedBookshelf.collection)||'', source:(detectedBookshelf&&detectedBookshelf.label)||'', anio:(j&&j.anio)||(f.modifiedTime||'').slice(0,4),
     doi, pmid, pmcid, nbk, gr_updated:String((j&&j.gr_updated)||'').trim(), gr_initial:String((j&&j.gr_initial)||'').trim(),
     textLen:(pdfText||'').length, pages:pTot||0, truncado:((pdfText||'').length>=5000000),   // indicador de indexado completo (cuánto texto se extrajo; truncado si topó el límite de 5M)
     url:f.webViewLink||('drive:'+f.id), enlace:f.webViewLink||('https://drive.google.com/file/d/'+f.id), driveId:f.id, mt:f.modifiedTime||'', iaAnalizado:!!j };
@@ -6135,17 +6331,18 @@ function replaceHpoInReview(oldId, newId, name){
   const eo=ov.querySelector('#fichaEditOut'); if(eo){ eo.className=''; eo.innerHTML='<div style="color:var(--ok)">✓ HPO '+escHtml(oldId)+(oldId!==newId?' → '+escHtml(newId):'')+' · '+escHtml(name||'')+'. Revisa y guarda.</div>'; }
 }
 
-/* Busca DOI/PMID/PMCID (y NBK/gr_updated si es GeneReviews) de UNA referencia con IA. Solo rellena con coincidencia
+/* Busca identificadores y, si procede, la colección NCBI Bookshelf de UNA referencia con IA. Solo rellena con coincidencia
    segura; nunca inventa. Reutilizado por el editor de fuentes de protocolos y el de síndromes prenatales. */
 async function findFuenteIds(f){
   const isGr=!!geneReviewsInfo(f);
-  const system='Eres bibliotecario científico especializado en identificadores de publicaciones. Te doy el título (y URL si la hay) de UNA referencia bibliográfica. Busca en PubMed/CrossRef/DOI.org su identificador REAL: "doi" (sin el prefijo https://doi.org/), "pmid" (solo dígitos) y/o "pmcid" (formato PMCxxxxxxx). '+(isGr?'Es un capítulo de GeneReviews (NCBI Bookshelf): busca su "nbk" (formato NBKxxxxx), "gr_updated" (la fecha EXACTA de «Last Update»/«Last Revision» tal cual aparece, p. ej. "September 29, 2022") y "gr_initial" (la fecha EXACTA de «Initial Posting»/inclusión, p. ej. "January 3, 2001"); si no hay «Last Update», deja "gr_updated" vacío pero rellena SIEMPRE "gr_initial". DEJA "pmid" VACÍO para GeneReviews (no lo adivines: se deriva del NBK automáticamente).':'')+'Devuelve un identificador SOLO si estás SEGURO de que corresponde EXACTAMENTE a esa referencia (mismo título/autores/año) — déjalo vacío ("") si no encuentras una coincidencia fiable. NUNCA inventes nada. Devuelve SOLO JSON {"doi":"","pmid":"","pmcid":""'+(isGr?',"nbk":"","gr_updated":"","gr_initial":""':'')+'}.';
+  const system='Eres bibliotecario científico especializado en identificadores de publicaciones. Te doy el título (y URL si la hay) de UNA referencia bibliográfica. Busca sus identificadores reales. Un NBK solo significa NCBI Bookshelf y NO demuestra que sea GeneReviews. Si es Bookshelf, identifica su colección exacta en "bookshelf_collection": "GeneReviews"|"StatPearls"|"Medical Genetics Summaries"|"Endotext"|"MotherToBaby"|"NICE Guidance"|"LiverTox"|"PDQ Cancer Information Summaries"|"Clinical Methods"|"WHO Guidance"|"AHRQ Reports"|"NCBI Bookshelf". '+(isGr?'La fuente está identificada explícitamente como GeneReviews: busca también "gr_updated" y "gr_initial"; deja su PMID vacío porque se verificará desde el NBK. Devuelve SOLO JSON {"doi":"","pmid":"","pmcid":"","nbk":"","bookshelf_collection":"GeneReviews","gr_updated":"","gr_initial":""}. ':'No la clasifiques como GeneReviews salvo que la fuente lo diga explícitamente. Devuelve SOLO JSON {"doi":"","pmid":"","pmcid":"","nbk":"","bookshelf_collection":""}. ')+'Devuelve datos SOLO si corresponden exactamente a esta referencia. NUNCA inventes.';
   const user='Referencia: "'+(f.titulo||'')+'"'+(f.url?' — '+f.url:'');
   const resp=await callLLM({system, user, webSearch:true, maxTokens:500, operation:'bibliography_resolve'});
   const r=extractJSON(resp)||{};
   // GeneReviews: el PMID lo resolvemos SIEMPRE contra NCBI a partir del NBK (la IA los inventa); auténtico o vacío.
-  const nbk=String(r.nbk||(geneReviewsInfo(f)||{}).nbk||'').toUpperCase();
-  if(nbk){ r.nbk=nbk; const vp=await nbkPmid(nbk); r.pmid = (vp!==null) ? vp : ''; }
+  const nbk=String(r.nbk||bookshelfNbk(f)||'').toUpperCase();
+  if(nbk) r.nbk=nbk;
+  if(isGr&&nbk){ const vp=await nbkPmid(nbk); r.pmid = (vp!==null) ? vp : ''; r.bookshelf_collection='GeneReviews'; }
   else { try{ const v=await verifyArticleIds({doi:r.doi, pmid:r.pmid, pmcid:r.pmcid}); r.doi=v.doi; r.pmid=v.pmid; r.pmcid=v.pmcid; }catch(e){} }   // artículo normal: identificadores verificados
   return r;
 }
@@ -6153,7 +6350,7 @@ async function findFuenteIds(f){
    título/URL/año/DOI/PMID/PMCID/ReadCube, badges, botón 📁 (vincular al repositorio) y 🔍 (buscar identificadores).
    getArr()→array actual; setArr(arr,rerender) persiste. Devuelve {render}. */
 function proposeReferenceUpdatesFromMaster(refs){
-  let changed=0; const fields=['work_id','titulo','title','anio','year','tipo','doi','pmid','pmcid','nbk','isbn','legal_id','url'];
+  let changed=0; const fields=['work_id','titulo','title','anio','year','tipo','source','source_ids','bookshelf_collection','doi','pmid','pmcid','nbk','isbn','legal_id','url'];
   const updated=(refs||[]).map(ref=>{
     const canonical=canonicalBibliographyReference(ref||{}); if(!canonical.work_id) return ref;
     const next=Object.assign({},ref); let rowChanged=false;
@@ -6167,7 +6364,7 @@ function buildFuentesEditor(container, getArr, setArr){
   const feIn='padding:4px 7px;border:1px solid var(--line);border-radius:6px;background:var(--panel2);color:var(--ink);font-size:12px';
   const feBtn='padding:2px 8px;font-size:11px';
   const A=s=>escHtml(s||'').replace(/"/g,'&quot;');
-  const FU_MAP={tit:'titulo', url:'url', anio:'anio', doi:'doi', pmid:'pmid', pmcid:'pmcid', nbk:'nbk', readcube:'readcube'};
+  const FU_MAP={tit:'titulo', url:'url', anio:'anio', doi:'doi', pmid:'pmid', pmcid:'pmcid', nbk:'nbk', collection:'bookshelf_collection', readcube:'readcube'};
   let masterMessage='';
   function render(){
     const fu=getArr()||[];
@@ -6185,7 +6382,8 @@ function buildFuentesEditor(container, getArr, setArr){
           <input class="fe-i" data-fu="doi" data-fi="${fi}" value="${A(s.doi)}" placeholder="DOI (10.xxxx)" style="flex:1;min-width:130px;${feIn}">
           <input class="fe-i" data-fu="pmid" data-fi="${fi}" value="${A(s.pmid)}" placeholder="PMID" style="width:100px;${feIn}">
           <input class="fe-i" data-fu="pmcid" data-fi="${fi}" value="${A(s.pmcid)}" placeholder="PMCID" style="width:110px;${feIn}">
-          <input class="fe-i" data-fu="nbk" data-fi="${fi}" value="${A(s.nbk)}" placeholder="NBK (GeneReviews)" title="Accesión de NCBI Bookshelf (NBKxxxxx). El PMID de un GeneReviews se deriva del NBK." style="width:130px;${feIn}">
+          <input class="fe-i" data-fu="nbk" data-fi="${fi}" value="${A(s.nbk)}" placeholder="NBK (Bookshelf)" title="Accesión NCBI Bookshelf; no determina la colección." style="width:130px;${feIn}">
+          <select class="fe-i" data-fu="collection" data-fi="${fi}" title="Colección real de NCBI Bookshelf" style="min-width:175px;${feIn}"><option value="">— colección Bookshelf —</option>${Object.entries(BOOKSHELF_COLLECTIONS).map(([key,def])=>`<option value="${key}"${bookshelfCollectionKey(s)===key?' selected':''}>${def.icon} ${escHtml(def.label)}</option>`).join('')}</select>
         </div>
         <input class="fe-i" data-fu="readcube" data-fi="${fi}" value="${A(s.readcube)}" placeholder="Enlace ReadCube Papers (pégalo del artículo: app.readcube.com/library/…/item/…)" style="width:100%;box-sizing:border-box;margin-top:5px;${feIn}">
         <div style="margin-top:4px">${bibRefHtml(s,{noAssign:true})}</div>
@@ -6204,9 +6402,11 @@ function buildFuentesEditor(container, getArr, setArr){
       const arr2=getArr(); if(!arr2||!arr2[fi]) return;   // relee: respeta ediciones concurrentes
       let hit=false;
       if(r.doi){ arr2[fi].doi=String(r.doi).trim(); hit=true; }
-      if(r.nbk){ arr2[fi].nbk=String(r.nbk).trim().toUpperCase(); arr2[fi].pmid=String(r.pmid||'').trim(); hit=true; }   // GeneReviews: PMID verificado contra NCBI (o vacío) — nunca el inventado por la IA
-      else if(r.pmid){ arr2[fi].pmid=String(r.pmid).trim(); hit=true; }
+      if(r.nbk){ arr2[fi].nbk=String(r.nbk).trim().toUpperCase(); hit=true; }
+      if(r.pmid){ arr2[fi].pmid=String(r.pmid).trim(); hit=true; }
+      else if(bookshelfCollectionKey({bookshelf_collection:r.bookshelf_collection})==='genereviews') arr2[fi].pmid='';
       if(r.pmcid){ arr2[fi].pmcid=String(r.pmcid).trim(); hit=true; }
+      if(r.bookshelf_collection){ arr2[fi].bookshelf_collection=bookshelfCollectionKey({bookshelf_collection:r.bookshelf_collection})||String(r.bookshelf_collection).trim(); arr2[fi].source=(BOOKSHELF_COLLECTIONS[arr2[fi].bookshelf_collection]||{}).label||String(r.bookshelf_collection).trim(); hit=true; }
       if(r.gr_updated){ arr2[fi].gr_updated=String(r.gr_updated).trim(); hit=true; }
       if(r.gr_initial){ arr2[fi].gr_initial=String(r.gr_initial).trim(); hit=true; }
       setArr(arr2, true); render();
@@ -6685,13 +6885,15 @@ function openFichaReview(f, opts){
     if(!anyProvider()){ fout.innerHTML='<div class="err">Configura una API key (Claude u OpenAI) en ⚙ Ajustes.</div>'; return; }
     fout.className='test-out'; fout.textContent='Buscando datos de '+targets.length+' referencia(s)…';
     try{
-      const system='Eres bibliotecario científico especializado en identificadores de publicaciones. Te doy una lista NUMERADA de referencias bibliográficas (título + URL si la hay). Para CADA una, busca en PubMed/CrossRef/DOI.org su identificador REAL: "doi" (sin el prefijo https://doi.org/), "pmid" (solo dígitos) y/o "pmcid" (formato PMCxxxxxxx). Si una referencia es un capítulo de GeneReviews (URL con /books/NBK… o el título menciona GeneReviews), añade además su "nbk" (formato NBKxxxxx), "gr_updated" (la fecha EXACTA de «Last Update»/«Last Revision» tal cual aparece, p. ej. "September 29, 2022") y "gr_initial" (la fecha EXACTA de «Initial Posting»/inclusión, p. ej. "January 3, 2001"); si no hay «Last Update», deja "gr_updated" vacío pero rellena SIEMPRE "gr_initial". Devuelve un dato SOLO si estás SEGURO de que corresponde EXACTAMENTE a esa referencia — déjalo vacío ("") si no. NUNCA inventes nada. Devuelve SOLO JSON {"resultados":[{"index":1,"doi":"","pmid":"","pmcid":"","nbk":"","gr_updated":"","gr_initial":""}]} — un elemento por cada referencia, mismo "index" que en la lista (empieza en 1).';
+      const system='Eres bibliotecario científico especializado en identificadores de publicaciones. Te doy una lista NUMERADA de referencias bibliográficas (título + URL si la hay). Para CADA una, busca sus identificadores reales y contrasta los artículos con PubMed y CrossRef. Un código NBK identifica NCBI Bookshelf, pero NO significa GeneReviews. Si pertenece a Bookshelf, devuelve la colección comprobada en "bookshelf_collection": "GeneReviews"|"StatPearls"|"Medical Genetics Summaries"|"Endotext"|"MotherToBaby"|"NICE Guidance"|"LiverTox"|"PDQ Cancer Information Summaries"|"Clinical Methods"|"WHO Guidance"|"AHRQ Reports"|"NCBI Bookshelf". Solo si la fuente dice explícitamente GeneReviews añade "gr_updated" y "gr_initial". Devuelve un dato SOLO si corresponde EXACTAMENTE a esa referencia; NUNCA inventes. Devuelve SOLO JSON {"resultados":[{"index":1,"doi":"","pmid":"","pmcid":"","nbk":"","bookshelf_collection":"","gr_updated":"","gr_initial":""}]}.';
       const user='Referencias:\n'+targets.map((t,i)=>(i+1)+'. "'+t.titulo+'"'+(t.url?' — '+t.url:'')+(t.isGr?' [GeneReviews: busca NBK y fecha de Last Update]':'')).join('\n');
       const resp=await callLLM({system, user, webSearch:true, maxTokens:2000, operation:'bibliography_resolve'});
       const j2=extractJSON(resp);
       const results=(j2&&j2.resultados)||[];
-      // GeneReviews: el PMID SIEMPRE se verifica contra NCBI a partir del NBK (la IA los inventa). Auténtico o vacío.
-      for(const r of results){ if(r && r.nbk){ const vp=await nbkPmid(String(r.nbk).toUpperCase()); r.pmid = (vp!==null) ? vp : ''; r._gr=true; } }
+      // Solo GeneReviews resuelve su PMID por NBK. Un NBK de StatPearls u otra colección no entra aquí.
+      for(let i=0;i<results.length;i++){ const r=results[i]; if(!r) continue; const idx=(Number.isFinite(+r.index)&&+r.index>=1)?(+r.index-1):i, t=targets[idx];
+        if(t&&t.isGr&&r.nbk){ const vp=await nbkPmid(String(r.nbk).toUpperCase()); r.pmid=(vp!==null)?vp:''; r._gr=true; }
+      }
       // Relee ta.value FRESCO ahora que la búsqueda terminó — puede haber cambiado mientras esperábamos.
       const jj=feModel();
       if(!jj){ fout.className='test-out bad'; fout.textContent='El JSON dejó de ser válido mientras se buscaba — no se aplicaron los resultados. Corrígelo y reintenta.'; return; }
@@ -6707,6 +6909,7 @@ function openFichaReview(f, opts){
         else if(r.pmid){ f.pmid=String(r.pmid).trim(); hit=true; }
         if(r.pmcid){ f.pmcid=String(r.pmcid).trim(); hit=true; }
         if(r.nbk){ f.nbk=String(r.nbk).trim().toUpperCase(); hit=true; }
+        if(r.bookshelf_collection){ f.bookshelf_collection=String(r.bookshelf_collection).trim(); f.source=f.bookshelf_collection; hit=true; }
         if(r.gr_updated){ f.gr_updated=String(r.gr_updated).trim(); hit=true; }
         if(r.gr_initial){ f.gr_initial=String(r.gr_initial).trim(); hit=true; }
         if(hit) found++;
@@ -9323,10 +9526,9 @@ function mergeConsultas(existing, incoming){
 var CONSULTAS=[];   // var (no let): así window.CONSULTAS queda sincronizado tras reasignaciones (import/carga)
 function loadConsultasLocal(){ try{ const c=JSON.parse(localStorage.getItem('fh_consultas')); if(Array.isArray(c)) CONSULTAS=c; }catch(e){} }
 async function loadConsultas(){
-  loadConsultasLocal();
-  if(ghConfigured()){ try{ const r=await ghGetFile('consultas.json'); if(r.json && Array.isArray(r.json.consultas)){ CONSULTAS=r.json.consultas; try{ localStorage.setItem('fh_consultas', JSON.stringify(CONSULTAS)); }catch(e){} } }catch(e){} }
-  // Corrige registros antiguos con médico mal guardado (S.C S → SC) y persiste si cambió algo
-  if(migrateConsultas()>0){ try{ await persistConsultas('consultas: normalizar médico SC'); }catch(e){} }
+  if(!window.AriadnaActivity){ console.error('Importador privado de actividad no disponible: se bloquea el módulo antiguo.'); return; }
+  window.AriadnaActivity.configure({ghGetFile,ghPutFile,ghListDirectory,ghConfigured,safeLocalSet,showToast,escHtml});
+  await window.AriadnaActivity.load();
 }
 async function persistConsultas(msg){
   safeLocalSet('fh_consultas', JSON.stringify(CONSULTAS));
@@ -9338,7 +9540,8 @@ function trimestre(iso){ const m=iso.match(/^(\d{4})-(\d{2})/); if(!m) return ''
 
 /* Llamada al modelo de VISIÓN con imágenes (base64 PNG, sin prefijo data:). */
 async function callVisionLLM(imagesB64, system, user, task){
-  const c=loadCfg(), operation=task==='actividad'?'activity_table':operationKey(task||'pdf_visual_deep');
+  if(task==='actividad') throw new Error('El importador externo de actividad está retirado. Usa el OCR privado local de Ariadna 3.1.');
+  const c=loadCfg(), operation=operationKey(task||'pdf_visual_deep');
   const plan=modelPlanForOperation(operation), candidates=(plan&&plan.candidates)||[]; if(!candidates.length) throw new Error('No hay un modelo de visión compatible configurado (⚙ Ajustes).');
   aiBusyStart((AI_TASKS[task]||plan.label||'analizando')+' · '+prettyModel(candidates[0].provider,candidates[0].model));
   try{
@@ -9552,6 +9755,10 @@ let _cmRange=null;   // {desde,hasta} — de serie el MES actual
 function cmMonthRange(d){ const y=d.getFullYear(), m=d.getMonth(), p=n=>String(n).padStart(2,'0'); const last=new Date(y,m+1,0); return {desde:`${y}-${p(m+1)}-01`, hasta:`${y}-${p(m+1)}-${p(last.getDate())}`}; }
 function renderCuadroMando(){
   const box=document.getElementById('cuadromandoView'); if(!box) return;
+  if(!window.AriadnaActivity){ box.innerHTML='<div class="err">El importador privado local no se ha cargado. Por seguridad, el importador externo permanece bloqueado.</div>'; return; }
+  window.AriadnaActivity.configure({ghGetFile,ghPutFile,ghListDirectory,ghConfigured,safeLocalSet,showToast,escHtml});
+  window.AriadnaActivity.render(box);
+  return;
   if(_cmRange===null) _cmRange=cmMonthRange(new Date());   // preselección: mes actual
   const desde=_cmRange.desde||'', hasta=_cmRange.hasta||'';
   const rows=CONSULTAS.filter(r=>{ const iso=fechaISO(r.fecha); if(desde && iso<desde) return false; if(hasta && iso>hasta) return false; return true; });
@@ -9914,7 +10121,7 @@ async function renderFichaView(f){
 /* La IA identifica el documento (por título/URL/DOI, con búsqueda web) → nombre + descripción + tipo.
    Es el "análisis una sola vez": el resultado se guarda en docs/index.json (GitHub). */
 async function analizarDocIA(fuente, pdfText){
-  const sys='Eres documentalista clínico-genético. Identifica el documento bibliográfico. '+(pdfText?'Te doy un EXTRACTO del texto real del PDF: úsalo como FUENTE PRINCIPAL (el nombre del fichero puede inducir a error, NO te fíes de él). ':'Usa el título/URL/DOI y búsqueda web; NO inventes. ')+'Si es un artículo científico, incluye además su "doi" (10.xxxx, sin el prefijo https://doi.org/), "pmid" (solo dígitos) y "pmcid" (PMCxxxxxxx) SIEMPRE que puedas identificarlos con seguridad (déjalos en "" si no); NO los inventes. Si es un capítulo de GeneReviews (NCBI Bookshelf), pon "genereviews":true, su "nbk" (formato NBKxxxxx), "gr_updated" (la fecha exacta de «Last Update»/«Last Revision», tal cual aparece, p. ej. "September 29, 2022") y "gr_initial" (la fecha exacta de «Initial Posting»/inclusión, p. ej. "January 3, 2001"); si no hay «Last Update», deja "gr_updated" vacío pero rellena SIEMPRE "gr_initial"; para GeneReviews DEJA "pmid" VACÍO (no lo adivines: se obtiene de forma automática y verificada a partir del NBK). Devuelve SOLO JSON {"cita":"cita bibliográfica COMPLETA estilo Vancouver (Autores. Título. Revista Año;vol(núm):págs.; para libro/GeneReviews: Autores. Título. GeneReviews®. Año); déjala en "" si no puedes construirla con seguridad","nombre":"nombre CORTO y claro en español (NO es la cita), sin comillas","descripcion":"1-2 frases: QUÉ es y para qué sirve","tipo":"guía clínica|revisión|artículo original|consenso|libro|base de datos|legislación|GeneReviews|otro","anio":"AAAA","doi":"","pmid":"","pmcid":"","genereviews":false,"nbk":"","gr_updated":"","gr_initial":""}.';
+  const sys='Eres documentalista clínico-genético. Identifica el documento bibliográfico. '+(pdfText?'Te doy un EXTRACTO del texto real del PDF: úsalo como FUENTE PRINCIPAL (el nombre del fichero puede inducir a error, NO te fíes de él). ':'Usa el título/URL/DOI y búsqueda web; NO inventes. ')+'Si es un artículo científico, incluye además su "doi" (10.xxxx, sin el prefijo https://doi.org/), "pmid" (solo dígitos) y "pmcid" (PMCxxxxxxx) SIEMPRE que puedas identificarlos con seguridad (déjalos en "" si no); NO los inventes. IMPORTANTE: un identificador NBK solo significa NCBI Bookshelf y NO demuestra que sea GeneReviews. Si pertenece a Bookshelf, identifica la colección real en "bookshelf_collection": "GeneReviews"|"StatPearls"|"Medical Genetics Summaries"|"Endotext"|"MotherToBaby"|"NICE Guidance"|"NCBI Bookshelf". Pon "genereviews":true únicamente si la página o el documento dicen explícitamente GeneReviews. Solo en ese caso rellena "gr_updated" y "gr_initial" y deja "pmid" vacío para resolverlo después desde NCBI. Devuelve SOLO JSON {"cita":"cita bibliográfica COMPLETA estilo Vancouver; déjala en blanco si no puedes construirla con seguridad","nombre":"nombre CORTO y claro en español (NO es la cita)","descripcion":"1-2 frases: QUÉ es y para qué sirve","tipo":"guía clínica|revisión|artículo original|consenso|libro|base de datos|legislación|GeneReviews|StatPearls|Medical Genetics Summaries|Endotext|MotherToBaby|NCBI Bookshelf|otro","anio":"AAAA","doi":"","pmid":"","pmcid":"","genereviews":false,"bookshelf_collection":"","nbk":"","gr_updated":"","gr_initial":""}.';
   const user='Documento: '+JSON.stringify({titulo:fuente.titulo||'', url:fuente.url||'', doi:fuente.doi||''})+(pdfText?('\n\nEXTRACTO DEL PDF (texto real, prioritario):\n'+pdfText.slice(0,6000)):'');
   // Con texto del PDF, identificar el documento es una tarea sencilla → modelo BARATO (assign). Sin texto, hace falta búsqueda web (eval).
   const resp=await callLLM({system:sys, user, webSearch:!pdfText, maxTokens:700, operation:pdfText?'catalog_identify_text':'catalog_identify_web'});
