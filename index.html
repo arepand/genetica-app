@@ -543,8 +543,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.1.1';
+const APP_VERSION='3.1.2';
 const CHANGELOG=[
+  {v:'3.1.2',d:'2026-07-25',c:['La actualización documental vuelve a leer Finder justo antes de procesar y detecta PDF o EPUB realmente nuevos aunque el catálogo local guardado estuviera desfasado.','Los originales de Google Drive que aparecen en Finder pero todavía no están completos se materializan de forma limitada y se reintentan antes de declarar una incidencia; el progreso queda guardado para reanudar sin repetir trabajo.','El estado distingue documentos encontrados, pendientes de descarga o lectura y documentos realmente procesables, evitando presentar como fallo que una ejecución no tenga novedades.']},
   {v:'3.1.1',d:'2026-07-25',c:['Nuevo observatorio de modelos de IA: detecta Claude Opus 5 en el catálogo real de Anthropic y permite compararlo, con tareas sintéticas y sin datos clínicos, frente a la política estable de autoría de protocolos. Mide calidad estructural, latencia y consumo antes de proponer cualquier cambio.','Los resultados de la evaluación no modifican por sí solos el enrutado. La activación y la reversión son explícitas, los modelos fijados manualmente por tarea conservan prioridad y las operaciones visuales o de lectura de PDF quedan fuera de esta comparación de autoría.','La comprobación del catálogo de modelos se considera reciente durante 24 horas, de acuerdo con el comportamiento real de Ariadna; el texto de Ajustes deja de indicar erróneamente siete días.']},
   {v:'3.1.0',d:'2026-07-18',c:['Nuevo asistente privado de actividad de consulta: procesa en el navegador PDF escaneados de hasta 10 páginas, un solo médico por lote y una agenda confirmada por página. El PDF, las imágenes, los nombres, los NREG, las horas y las filas individuales nunca salen del navegador.','OCR completamente local y autocontenido con PDF.js y Tesseract.js: incluye enmascarado ajustable de la zona de nombres, giro, corrección de inclinación, contraste y umbral. No utiliza OpenAI, Anthropic, CDN ni servicios externos.','Revisión obligatoria y cierre seguro: Ariadna conserva las filas ambiguas, exige reconciliar todas las bandas visibles, permite corregir o añadir filas omitidas y no prepara el lote hasta que fechas, horas, prestaciones, estados, NREG y altas estén validados.','Persistencia mínima y auditable: solo guarda agregados diarios, metadatos del lote y HMAC irreversibles para evitar duplicados. Los catálogos versionados de médicos, agendas y prestaciones son editables, y los lotes erróneos se anulan mediante un registro nuevo sin reescribir el historial.','El proceso conserva un checkpoint local por página y puede reanudarse tras recargar o cerrar el navegador. El cuadro de mando parte de cero y no migra automáticamente las tres entradas antiguas que se consideraron erróneas.','Las figuras y tablas documentales se leen desde el bucket privado de Backblaze B2 con una clave web independiente de solo lectura guardada en este navegador. Ariadna utiliza enlaces firmados de cinco minutos y verifica la huella de cada recurso; la clave del Mac que permite escribir o borrar nunca se entrega a la web.']},
   {v:'3.0.6',d:'2026-07-18',c:['Consultar ocupa ahora todo el ancho útil de la ventana. Al abrir el visor lateral, el PDF conserva su tamaño amplio y la conversación deja de quedar comprimida por el límite general de 1.100 píxeles.','Los pasajes de GeneReviews se abren en el mismo panel derecho que los PDF: Ariadna reconstruye una vista de lectura local, identifica capítulo y apartado y marca en amarillo el texto exacto recuperado y utilizado. El enlace al capítulo oficial de NCBI se conserva como comprobación secundaria.','El editor «Ventanas de visibilidad ecográfica y fuentes» puede investigar con IA las filas seleccionadas o todas las visibles tras aplicar un filtro. Cada HPO permite además una búsqueda individual. Ariadna contrasta el Segundo Cerebro con literatura científica web, distingue visibilidad ecográfica de desarrollo embriológico, exige fuentes comprobables y mantiene cada resultado como propuesta hasta la confirmación manual.']},
@@ -1481,6 +1482,7 @@ async function checkModelsFreshness(force){
 /* ---- Evaluación sintética reproducible de candidatos (nunca usa pacientes, documentos privados ni web) ---- */
 const AI_MODEL_EVALUATOR_VERSION='2026-07-24.v1';
 const AI_MODEL_EVALUATIONS_KEY='fh_model_evaluations';
+const AI_MODEL_EVALUATION_DECISIONS_KEY='fh_model_evaluation_decisions';
 const AI_MODEL_CANDIDATE_REGISTRY=[
   {key:'anthropic-opus-5',label:'Claude Opus 5',provider:'anthropic',matches:id=>/^claude-opus-5(?:-|$)/i.test(id),
     baseline:M('anthropic','claude-opus-4-8','high'),effort:'high',
@@ -1521,6 +1523,19 @@ function saveModelEvaluation(report){
   return report;
 }
 function modelEvaluationById(id){ return modelEvaluations().find(x=>x&&x.id===id)||null; }
+function modelEvaluationDecisions(){
+  try{ const d=JSON.parse(localStorage.getItem(AI_MODEL_EVALUATION_DECISIONS_KEY)); return d&&typeof d==='object'&&!Array.isArray(d)?d:{}; }
+  catch(e){ return {}; }
+}
+function modelEvaluationDecision(reportId){ return modelEvaluationDecisions()[reportId]||null; }
+function saveModelEvaluationDecision(reportId,decision){
+  if(!reportId||!['keep','activate'].includes(decision)) return null;
+  const all=modelEvaluationDecisions();
+  all[reportId]={decision,decidedAt:new Date().toISOString()};
+  const entries=Object.entries(all).sort((a,b)=>String(b[1]&&b[1].decidedAt||'').localeCompare(String(a[1]&&a[1].decidedAt||''))).slice(0,30);
+  try{ localStorage.setItem(AI_MODEL_EVALUATION_DECISIONS_KEY,JSON.stringify(Object.fromEntries(entries))); }catch(e){}
+  return all[reportId];
+}
 function recognizedModelCandidates(){
   const out=[];
   for(const def of AI_MODEL_CANDIDATE_REGISTRY){
@@ -2792,30 +2807,114 @@ function evaluatorDuration(ms){
 function evaluatorTokens(usage){
   return (Number(usage&&usage.input)||0)+(Number(usage&&usage.output)||0);
 }
+function evaluatorModelName(choice,fallback){
+  if(!choice) return fallback||'Modelo';
+  const readable=prettyModel(choice.provider,choice.model);
+  return choice.provider==='anthropic'?readable.replace(/^Anthropic\s+/,'Claude '):readable;
+}
+function evaluatorCompletedCases(result){
+  const cases=Array.isArray(result&&result.cases)?result.cases:[];
+  return cases.filter(x=>x&&x.ok).length;
+}
+function modelEvaluationEligibilityReasons(report){
+  if(!report) return [];
+  const reasons=[];
+  const contender=report.contender||{}, baseline=report.baseline||{};
+  if(!contender.ok){
+    const incomplete=(contender.cases||[]).filter(x=>!x.ok).map(x=>x.label||x.key).filter(Boolean);
+    reasons.push('No completó todos los criterios de '+(incomplete.length?incomplete.join(', '):'las tres pruebas sintéticas')+'.');
+  }
+  if(Number(contender.score)<0.90) reasons.push('Su calidad global fue '+Math.round((Number(contender.score)||0)*100)+' %, por debajo del mínimo de activación del 90 %.');
+  if(Number(contender.score)<Number(baseline.score)-0.01) reasons.push('Quedó más de un punto porcentual por debajo del modelo vigente.');
+  return reasons;
+}
+function evaluatorCasePurpose(key){
+  return ({
+    protocol:'Comprueba JSON válido, recomendación estructurada y conservación de las citas [A] y [B].',
+    multisource:'Comprueba que integra las dos fuentes y expresa una limitación sin inventar evidencia.',
+    bibliography:'Comprueba que conserva DOI, PMID y justifica la decisión citando [A] y [B].'
+  })[key]||'Comprueba la estructura y la fidelidad de la respuesta.';
+}
+function evaluatorResultCell(result){
+  const score=Math.round((Number(result&&result.score)||0)*100);
+  const tokens=evaluatorTokens(result&&result.usage);
+  return `<div style="font-weight:650;color:${result&&result.ok?'var(--ok)':'var(--bad)'}">${result&&result.ok?'✓ Completa':'⚠ Incompleta'} · ${score} %</div>
+    <div class="dx-meta">${evaluatorDuration(result&&result.latencyMs)} · ${tokens} tokens</div>
+    ${result&&result.error?`<div class="dx-meta" style="color:var(--bad)">${escHtml(result.error)}</div>`:''}`;
+}
+function evaluatorOutputDetails(title,result){
+  const output=String(result&&result.output||'').trim();
+  return `<details style="margin-top:5px"><summary style="cursor:pointer;color:var(--accent);font-size:11px">${escHtml(title)}</summary>
+    <pre style="white-space:pre-wrap;max-height:220px;overflow:auto;margin:5px 0 0;padding:7px;border:1px solid var(--line);border-radius:7px;background:var(--panel);font:10.5px/1.45 ui-monospace,monospace;color:var(--ink2)">${escHtml(output||result&&result.error||'Sin respuesta')}</pre>
+  </details>`;
+}
+function evaluatorCasesHtml(report,candidateName,baselineName){
+  if(!report) return '';
+  const baselineCases=Array.isArray(report.baseline&&report.baseline.cases)?report.baseline.cases:[];
+  const contenderCases=Array.isArray(report.contender&&report.contender.cases)?report.contender.cases:[];
+  const keys=[...new Set([...AI_MODEL_SYNTHETIC_CASES.map(x=>x.key),...contenderCases.map(x=>x.key)])];
+  return `<details style="margin-top:9px;border-top:1px solid var(--line);padding-top:7px">
+    <summary style="cursor:pointer;font-weight:650;color:var(--accent)">Ver detalle de las ${keys.length} pruebas</summary>
+    <div style="margin-top:7px;display:grid;gap:7px">${keys.map(key=>{
+      const definition=AI_MODEL_SYNTHETIC_CASES.find(x=>x.key===key)||{};
+      const contender=contenderCases.find(x=>x.key===key)||{};
+      const baseline=baselineCases.find(x=>x.key===key)||{};
+      return `<div style="border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--panel)">
+        <div style="font-weight:650">${escHtml(contender.label||baseline.label||definition.label||key)}</div>
+        <div class="dx-meta" style="margin:2px 0 6px">${escHtml(evaluatorCasePurpose(key))}</div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(190px,1fr));gap:8px">
+          <div><div class="dx-meta" style="font-weight:650;margin-bottom:2px">Candidato · ${escHtml(candidateName)}</div>${evaluatorResultCell(contender)}${evaluatorOutputDetails('Ver respuesta del candidato',contender)}</div>
+          <div><div class="dx-meta" style="font-weight:650;margin-bottom:2px">Vigente · ${escHtml(baselineName)}</div>${evaluatorResultCell(baseline)}${evaluatorOutputDetails('Ver respuesta del modelo vigente',baseline)}</div>
+        </div>
+      </div>`;
+    }).join('')}</div>
+  </details>`;
+}
 function candidatePromotionActive(candidateKey){
   return Object.values(loadCfg().evaluatedModelPromotions||{}).some(p=>p&&p.candidateKey===candidateKey);
 }
 function modelEvaluatorPanelHtml(){
   const candidates=recognizedModelCandidates();
-  const intro=`<div class="sec-note" style="margin-top:8px">La evaluación usa únicamente <b>casos sintéticos</b>: no usa pacientes, documentos privados ni búsqueda web. Compara calidad estructural, citas, latencia y consumo frente al modelo vigente. Las tareas visuales quedan excluidas hasta validarlas por separado.</div>`;
+  const intro=`<div class="sec-note" style="margin-top:8px">La evaluación usa únicamente <b>casos sintéticos</b>: no usa pacientes, documentos privados ni búsqueda web. La activación exige completar todas las pruebas, alcanzar al menos un <b>90 % de calidad</b> y no quedar más de un punto por debajo del modelo vigente. Latencia y tokens se muestran para ayudarte a decidir, pero <b>no determinan por sí solos</b> si el candidato es apto. Las tareas visuales quedan excluidas hasta validarlas por separado.</div>`;
   if(!candidates.length) return intro+`<div class="dx-meta" style="margin-top:8px">No hay todavía un candidato reconocido exactamente en el catálogo de tu cuenta. Pulsa «Comprobar catálogo de modelos». Ariadna no infiere familias desconocidas ni las activa.</div><div class="test-out" id="cfgEvaluatorOut"></div>`;
   return intro+candidates.map(candidate=>{
     const report=latestModelEvaluation(candidate.key,candidate.model), active=candidatePromotionActive(candidate.key);
-    const status=active?'Activo por evaluación':report?(report.eligible?'Apto para proponer':'No apto'):'Pendiente de evaluar';
+    const candidateName=evaluatorModelName({provider:candidate.provider,model:candidate.model},candidate.label);
+    const baselineChoice=report&&report.baselineChoice||candidate.baseline;
+    const baselineName=evaluatorModelName(baselineChoice,'modelo vigente');
+    const decision=report&&modelEvaluationDecision(report.id);
+    const reasons=modelEvaluationEligibilityReasons(report);
+    const status=active?'Activo por evaluación':report?(report.eligible?'Cumple los criterios; pendiente de tu decisión':'No cumple los criterios de activación'):'Pendiente de evaluar';
     const color=active?'var(--ok)':report&&report.eligible?'var(--accent)':report?'var(--bad)':'var(--ink2)';
-    const metrics=report?`<div class="dx-meta" style="margin-top:5px;line-height:1.55">
-      Resultado ${Math.round(report.contender.score*100)} % frente a ${Math.round(report.baseline.score*100)} % ·
-      latencia ${evaluatorDuration(report.contender.latencyMs)} frente a ${evaluatorDuration(report.baseline.latencyMs)} ·
-      consumo ${evaluatorTokens(report.contender.usage)} frente a ${evaluatorTokens(report.baseline.usage)} tokens ·
-      ${new Date(report.createdAt).toLocaleString('es-ES')}
-    </div>`:'';
+    const recommendation=report?(report.eligible
+      ?`El candidato supera la puerta de calidad. Puedes mantener ${baselineName} o activar ${candidateName}; ninguna opción se aplica hasta que pulses el botón correspondiente.`
+      :`Recomendación: mantener ${baselineName}. ${reasons.join(' ')} ${candidateName} no puede activarse desde esta evaluación fallida; puedes evaluarlo otra vez más adelante.`):'';
+    const metrics=report?`<div style="margin-top:8px;display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:8px">
+      <div style="border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--panel)">
+        <div class="dx-meta" style="font-weight:650">Candidato evaluado</div>
+        <div style="font-weight:700;margin:2px 0 5px">${escHtml(candidateName)}</div>
+        <div><b>${Math.round(report.contender.score*100)} %</b> de calidad · ${evaluatorCompletedCases(report.contender)}/${(report.contender.cases||[]).length} pruebas completas</div>
+        <div class="dx-meta">${evaluatorDuration(report.contender.latencyMs)} · ${evaluatorTokens(report.contender.usage)} tokens</div>
+      </div>
+      <div style="border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--panel)">
+        <div class="dx-meta" style="font-weight:650">Modelo vigente</div>
+        <div style="font-weight:700;margin:2px 0 5px">${escHtml(baselineName)}</div>
+        <div><b>${Math.round(report.baseline.score*100)} %</b> de calidad · ${evaluatorCompletedCases(report.baseline)}/${(report.baseline.cases||[]).length} pruebas completas</div>
+        <div class="dx-meta">${evaluatorDuration(report.baseline.latencyMs)} · ${evaluatorTokens(report.baseline.usage)} tokens</div>
+      </div>
+    </div>
+    <div class="sec-note" style="margin-top:7px;border-color:${report.eligible?'var(--accent)':'var(--bad)'}"><b>${report.eligible?'Decisión disponible':'Por qué no se propone el cambio'}</b><br>${escHtml(recommendation)}</div>
+    ${decision?`<div class="dx-meta" style="margin-top:5px;color:var(--ok)">✓ Decisión guardada: ${decision.decision==='activate'?'activar '+escHtml(candidateName):'mantener '+escHtml(baselineName)} · ${new Date(decision.decidedAt).toLocaleString('es-ES')}</div>`:''}
+    <div class="dx-meta" style="margin-top:5px">Evaluación: ${new Date(report.createdAt).toLocaleString('es-ES')} · Los tiempos y tokens corresponden solo a esta ejecución.</div>
+    ${evaluatorCasesHtml(report,candidateName,baselineName)}`:'';
     return `<div style="margin-top:8px;border:1px solid var(--line);border-radius:9px;padding:9px;background:var(--panel2)">
       <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap">
-        <div><b>${escHtml(candidate.label)}</b> <code>${escHtml(candidate.model)}</code><div style="font-size:11px;color:${color};margin-top:3px">${escHtml(status)}</div></div>
+        <div><b>${escHtml(candidateName)}</b> <code>${escHtml(candidate.model)}</code><div style="font-size:11px;color:${color};margin-top:3px">${escHtml(status)}</div></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn" data-eval-candidate="${escHtml(candidate.key)}" data-eval-model="${escHtml(candidate.model)}">Evaluar ahora</button>
-          ${report&&report.eligible&&!active?`<button class="btn primary" data-activate-evaluation="${escHtml(report.id)}">Activar propuesta</button>`:''}
-          ${active?`<button class="btn ghost" data-revert-evaluation="${escHtml(candidate.key)}">Revertir</button>`:''}
+          <button class="btn" data-eval-candidate="${escHtml(candidate.key)}" data-eval-model="${escHtml(candidate.model)}">${report?'Evaluar otra vez':'Evaluar ahora'}</button>
+          ${report&&!active?`<button class="btn ghost" data-keep-evaluation="${escHtml(report.id)}">Mantener ${escHtml(baselineName)}</button>`:''}
+          ${report&&!active?`<button class="btn primary" data-activate-evaluation="${escHtml(report.id)}"${report.eligible?'':' disabled title="Bloqueado: el candidato no ha superado la puerta de calidad"'}>Activar ${escHtml(candidateName)}</button>`:''}
+          ${active?`<button class="btn ghost" data-revert-evaluation="${escHtml(candidate.key)}" data-report-id="${report?escHtml(report.id):''}">Volver a ${escHtml(baselineName)}</button>`:''}
         </div>
       </div>${metrics}
     </div>`;
@@ -2850,10 +2949,17 @@ function wireModelEvaluatorPanel(ov){
       button.disabled=false;
     }
   }));
+  ov.querySelectorAll('[data-keep-evaluation]').forEach(button=>button.addEventListener('click',()=>{
+    const report=modelEvaluationById(button.dataset.keepEvaluation); if(!report) return;
+    saveModelEvaluationDecision(report.id,'keep');
+    showToast('Decisión guardada: se mantiene '+evaluatorModelName(report.baselineChoice,'el modelo vigente'));
+    refreshModelEvaluatorUi(ov);
+  }));
   ov.querySelectorAll('[data-activate-evaluation]').forEach(button=>button.addEventListener('click',()=>{
     const report=modelEvaluationById(button.dataset.activateEvaluation); if(!report) return;
     if(!confirm('¿Activar '+report.label+' en las operaciones aprobadas? Las tareas visuales no cambiarán y podrás revertirlo inmediatamente.')) return;
     if(applyEvaluatedModelPromotion(report.id,true)){
+      saveModelEvaluationDecision(report.id,'activate');
       showToast('Modelo evaluado activado; las tareas visuales siguen sin cambios');
       refreshPolicyGridPreservingSelections(ov); refreshModelEvaluatorUi(ov);
     }
@@ -2861,6 +2967,7 @@ function wireModelEvaluatorPanel(ov){
   ov.querySelectorAll('[data-revert-evaluation]').forEach(button=>button.addEventListener('click',()=>{
     if(!confirm('¿Revertir este modelo y volver a la política estable anterior?')) return;
     if(revertEvaluatedModelPromotion(button.dataset.revertEvaluation,true)){
+      if(button.dataset.reportId) saveModelEvaluationDecision(button.dataset.reportId,'keep');
       showToast('Modelo revertido a la política estable');
       refreshPolicyGridPreservingSelections(ov); refreshModelEvaluatorUi(ov);
     }
