@@ -543,8 +543,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.1.0';
+const APP_VERSION='3.1.1';
 const CHANGELOG=[
+  {v:'3.1.1',d:'2026-07-25',c:['Nuevo observatorio de modelos de IA: detecta Claude Opus 5 en el catálogo real de Anthropic y permite compararlo, con tareas sintéticas y sin datos clínicos, frente a la política estable de autoría de protocolos. Mide calidad estructural, latencia y consumo antes de proponer cualquier cambio.','Los resultados de la evaluación no modifican por sí solos el enrutado. La activación y la reversión son explícitas, los modelos fijados manualmente por tarea conservan prioridad y las operaciones visuales o de lectura de PDF quedan fuera de esta comparación de autoría.','La comprobación del catálogo de modelos se considera reciente durante 24 horas, de acuerdo con el comportamiento real de Ariadna; el texto de Ajustes deja de indicar erróneamente siete días.']},
   {v:'3.1.0',d:'2026-07-18',c:['Nuevo asistente privado de actividad de consulta: procesa en el navegador PDF escaneados de hasta 10 páginas, un solo médico por lote y una agenda confirmada por página. El PDF, las imágenes, los nombres, los NREG, las horas y las filas individuales nunca salen del navegador.','OCR completamente local y autocontenido con PDF.js y Tesseract.js: incluye enmascarado ajustable de la zona de nombres, giro, corrección de inclinación, contraste y umbral. No utiliza OpenAI, Anthropic, CDN ni servicios externos.','Revisión obligatoria y cierre seguro: Ariadna conserva las filas ambiguas, exige reconciliar todas las bandas visibles, permite corregir o añadir filas omitidas y no prepara el lote hasta que fechas, horas, prestaciones, estados, NREG y altas estén validados.','Persistencia mínima y auditable: solo guarda agregados diarios, metadatos del lote y HMAC irreversibles para evitar duplicados. Los catálogos versionados de médicos, agendas y prestaciones son editables, y los lotes erróneos se anulan mediante un registro nuevo sin reescribir el historial.','El proceso conserva un checkpoint local por página y puede reanudarse tras recargar o cerrar el navegador. El cuadro de mando parte de cero y no migra automáticamente las tres entradas antiguas que se consideraron erróneas.','Las figuras y tablas documentales se leen desde el bucket privado de Backblaze B2 con una clave web independiente de solo lectura guardada en este navegador. Ariadna utiliza enlaces firmados de cinco minutos y verifica la huella de cada recurso; la clave del Mac que permite escribir o borrar nunca se entrega a la web.']},
   {v:'3.0.6',d:'2026-07-18',c:['Consultar ocupa ahora todo el ancho útil de la ventana. Al abrir el visor lateral, el PDF conserva su tamaño amplio y la conversación deja de quedar comprimida por el límite general de 1.100 píxeles.','Los pasajes de GeneReviews se abren en el mismo panel derecho que los PDF: Ariadna reconstruye una vista de lectura local, identifica capítulo y apartado y marca en amarillo el texto exacto recuperado y utilizado. El enlace al capítulo oficial de NCBI se conserva como comprobación secundaria.','El editor «Ventanas de visibilidad ecográfica y fuentes» puede investigar con IA las filas seleccionadas o todas las visibles tras aplicar un filtro. Cada HPO permite además una búsqueda individual. Ariadna contrasta el Segundo Cerebro con literatura científica web, distingue visibilidad ecográfica de desarrollo embriológico, exige fuentes comprobables y mantiene cada resultado como propuesta hasta la confirmación manual.']},
   {v:'3.0.5',d:'2026-07-17',c:['Los HPO del editor prenatal son interactivos como los de los protocolos normales: muestran el nombre oficial de la ontología y, al pulsarlos, permiten buscar, comprobar o corregir el código. Al guardar una regeneración, cualquier HPO nuevo se incorpora también al selector prenatal y se repinta inmediatamente.','El diferencial prenatal deja de presentar una búsqueda genérica de GeneReviews como si fuera bibliografía. Las fuentes reales se muestran con el render común del Catálogo Maestro; los protocolos iniciales sin referencias quedan señalados como pendientes y permiten actualizar su evidencia antes de confirmar la recomendación de estudio.','Las fuentes GeneReviews de Consultar abren ahora la revisión oficial de NCBI en el pasaje literal utilizado e intentan seleccionarlo y resaltarlo automáticamente. Si NCBI ha modificado el texto o el navegador no admite fragmentos de texto, el mismo enlace conserva como alternativa la apertura del capítulo oficial.','Las citas documentales antiguas que solo conservaban un bloque —por ejemplo, «chunk 004»— resuelven bajo demanda la página exacta dentro del archivo ya indexado y abren el PDF en esa página con el pasaje resaltado, sin descargar ni volver a vectorizar el libro completo.','Los títulos bibliográficos con codificación heredada rota se reparan al mostrarse: «Bases genÃ©ticas de la conducta» vuelve a verse correctamente como «Bases genéticas de la conducta», sin modificar el archivo original.','Consultar permite plegar la columna de conversaciones, recuerda la preferencia y dedica todo el ancho disponible a la conversación y al documento original.','Las repreguntas conservan un contexto más amplio de la misma conversación para entender expresiones como «eso» o «el anterior», sin convertir el historial en evidencia clínica.','Incidencias y duplicados distinguen ahora claramente un borrador local de una resolución aplicada; la app local incorpora los paquetes confirmados y regenera la propuesta del Catálogo con cero borrados automáticos.']},
@@ -649,7 +650,7 @@ const CHANGELOG=[
   {v:'1.33.0', d:'2026-07-02', c:['Cuadro de mando: nueva gráfica de barras MENSUAL (Ene–Dic) con selector de AÑO, que suma solo las realizadas (SI+URG). Barras apiladas por colores según «Desglosar por» (médico/consulta/prestación/realizada) y filtros multi-selección (consultas, prestaciones, médicos, SI/URG).','Cuadro de mando: por defecto se preselecciona el MES actual, con botones «Mes actual», «Año actual» y «Todo».','Médico sin clasificar (S.C / S.C S.C) se muestra como «SC». Agenda UXPC03 se muestra como «UXPC03 Xenética» (y UXPC04 como «UXPC04 Telefónicas Xenética»).']},
   {v:'1.32.1', d:'2026-07-02', c:['Cuadro de mando: soporte de PDF de VARIAS páginas — se procesan por lotes (4 páginas) con indicador de progreso y arrastre de la sección Médico/Agenda entre páginas por si alguna no repite la cabecera.']},
   {v:'1.32.0', d:'2026-07-02', c:['Nuevo módulo «📊 Cuadro de mando» (menú «Otros»): gestión de la actividad de consulta. Importas el PDF de actividad; la app lo lee en el navegador y TAPA en blanco la columna «Paciente» ANTES de procesar (los nombres nunca salen del navegador) — solo se guardan registros SIN datos personales. El PDF no se almacena. Evita duplicados por NREG (puedes re-subir un PDF con fechas ya cargadas). Cuadro de mando con filtro por fechas, gráficas por agenda/prestación/médico y resumen trimestral (total por agenda desglosado por prestación + total acumulado). Vista previa redactada con botón «Rotar» y exportación CSV.']},
-  {v:'1.31.0', d:'2026-07-02', c:['Modelos IA al día: la app comprueba automáticamente (cada 7 días, con tu API key) si tus proveedores tienen modelos nuevos (p. ej. Fable) y, si aparecen, te avisa y lo anota en un «Registro de modelos» con fecha, dentro de «Estado». Botón «🔎 Comprobar ahora» para forzarlo. (Es un registro por dispositivo; no requiere actualizar la versión de la app.)']},
+  {v:'1.31.0', d:'2026-07-02', c:['Modelos IA al día: la app comprueba automáticamente (cada 24 horas, con tu API key) si tus proveedores tienen modelos nuevos (p. ej. Fable) y, si aparecen, te avisa y lo anota en un «Registro de modelos» con fecha, dentro de «Estado». Botón «🔎 Comprobar ahora» para forzarlo. (Es un registro por dispositivo; no requiere actualizar la versión de la app.)']},
   {v:'1.30.0', d:'2026-07-02', c:['El indicador que aparece arriba mientras trabaja la IA muestra ahora el PROVEEDOR y MODELO en uso (p. ej. «Anthropic Opus 4.8», «OpenAI GPT-5.5»), además de la tarea.']},
   {v:'1.29.1', d:'2026-07-02', c:['Perímetro cefálico en adultos (>18 a): se valora anclando a la referencia de 18 años (el PC alcanza tamaño ~adulto hacia los 16–18 a), en vez de dejarlo sin valor. Se etiqueta como «ref. 18 a (aprox. adulto)»; la referencia específica de adulto sería Bushby 1992 si se aporta.']},
   {v:'1.29.0', d:'2026-07-02', c:['Antropometría: sustituidas las referencias por las tablas OFICIALES de Orbegozo, EDICIÓN 2011 (estudio transversal de Bilbao), extraídas del TEXTO del PDF oficial de la Fundación (datos exactos, sin OCR): talla, peso, IMC y perímetro cefálico, varones y mujeres, 5–18 años. El PC (que antes se transcribió por OCR) ahora también viene del texto exacto y coincide. Para ≤5 años se sigue usando OMS 2006.']},
@@ -1304,7 +1305,7 @@ function resetPatient(){
 const CFG_KEY='fh_cfg';
 const B2_BROWSER_INDEX_VERSION='e885d859887f8337a9d62f9f2bd6778e40dc0ee2956f8480f0bcccfe31c1ccce';
 const B2_BROWSER_INDEX_SHA256='954374fb91ab7256ec79a1130cc248596ea4d74cd16146cd397426b80d45a01b';
-const CFG_DEFAULTS={ anthropicKey:'', openaiKey:'', modelOverrides:{}, gh_owner:'', gh_repo:'', gh_branch:'main', gh_pat:'',
+const CFG_DEFAULTS={ anthropicKey:'', openaiKey:'', modelOverrides:{}, evaluatedModelPromotions:{}, gh_owner:'', gh_repo:'', gh_branch:'main', gh_pat:'',
   driveClientId:'672017094614-goqdjb7159poff6jieh7rgjtop06askb.apps.googleusercontent.com', driveFolder:'', driveSubfolders:false,
   b2Endpoint:'https://s3.us-west-001.backblazeb2.com', b2Bucket:'ariadnadatos', b2Prefix:'ariadna-data',
   b2IndexVersion:B2_BROWSER_INDEX_VERSION, b2IndexSha256:B2_BROWSER_INDEX_SHA256, b2ReadKeyId:'', b2ReadKey:'',
@@ -1373,9 +1374,26 @@ function loadCfg(){
   // Migración desde el esquema antiguo {provider, llmKey}
   if(c.llmKey && !c.anthropicKey && !c.openaiKey){ if(c.provider==='openai') c.openaiKey=c.llmKey; else c.anthropicKey=c.llmKey; }
   c.chatMode=normalizedChatMode(c.chatMode); if(!c.modelOverrides||typeof c.modelOverrides!=='object') c.modelOverrides={};
+  if(!c.evaluatedModelPromotions||typeof c.evaluatedModelPromotions!=='object') c.evaluatedModelPromotions={};
   return c;
 }
-function saveCfg(c){ try{ localStorage.setItem(CFG_KEY, JSON.stringify(c)); }catch(e){ showToast('No se pudo guardar en localStorage (¿lleno?): '+e.message); } }
+function saveCfg(patch){
+  try{
+    // Algunos controles guardan solo una parte de los ajustes. Mezclarlos con
+    // la configuración existente evita que cambiar un modo o una preferencia
+    // borre accidentalmente las claves privadas ya guardadas en el navegador.
+    const current=loadCfg(), incoming=(patch&&typeof patch==='object')?patch:{};
+    const next=Object.assign({}, current, incoming);
+    next.modelOverrides=Object.prototype.hasOwnProperty.call(incoming,'modelOverrides')
+      ? Object.assign({}, incoming.modelOverrides||{})
+      : Object.assign({}, current.modelOverrides||{});
+    next.evaluatedModelPromotions=Object.prototype.hasOwnProperty.call(incoming,'evaluatedModelPromotions')
+      ? Object.assign({}, incoming.evaluatedModelPromotions||{})
+      : Object.assign({}, current.evaluatedModelPromotions||{});
+    localStorage.setItem(CFG_KEY, JSON.stringify(next));
+    return next;
+  }catch(e){ showToast('No se pudo guardar en localStorage (¿lleno?): '+e.message); return null; }
+}
 
 function providerKey(p){ const c=loadCfg(); return p==='anthropic' ? c.anthropicKey : c.openaiKey; }
 function anyProvider(){ return !!(providerKey('anthropic') || providerKey('openai')); }
@@ -1386,21 +1404,30 @@ function operationKey(input){
 function approvedChoicesForOperation(operation){ const p=AI_OPERATION_POLICIES[operationKey(operation)]; return p?(p.choices||[]).map(x=>({...x})):[]; }
 function modelPlanForOperation(input){
   const operation=operationKey(input), policy=AI_OPERATION_POLICIES[operation]; if(!policy) return null;
-  const c=loadCfg(), override=c.modelOverrides&&c.modelOverrides[operation]; let choices=approvedChoicesForOperation(operation);
+  const c=loadCfg(), override=c.modelOverrides&&c.modelOverrides[operation], promotion=validPromotionForOperation(operation,c);
+  const approved=approvedChoicesForOperation(operation); let choices=approved.slice();
+  if(promotion) choices=[promotion,...choices.filter(x=>x.provider!==promotion.provider||x.model!==promotion.model)];
   if(override&&override.provider&&override.model){
-    const allowed=choices.find(x=>x.provider===override.provider&&x.model===override.model);
-    if(allowed) choices=[allowed,...choices.filter(x=>x!==allowed)];
+    const allowed=approved.find(x=>x.provider===override.provider&&x.model===override.model);
+    if(allowed) choices=[allowed,...choices.filter(x=>x.provider!==allowed.provider||x.model!==allowed.model)];
   }
   const available=choices.filter(x=>providerKey(x.provider));
+  const primary=available[0]||null;
+  const overrideActive=!!(override&&primary&&primary.provider===override.provider&&primary.model===override.model);
+  const promotionActive=!!(!overrideActive&&promotion&&primary&&primary.provider===promotion.provider&&primary.model===promotion.model);
   return {operation,label:policy.label,group:policy.group,policyVersion:AI_POLICY_VERSION,evaluatedAt:AI_POLICY_EVALUATED_AT,
-    override:!!(override&&available[0]&&available[0].provider===override.provider&&available[0].model===override.model),primary:available[0]||null,candidates:available};
+    override:overrideActive,promoted:promotionActive,promotionReportId:promotionActive?promotion.reportId:'',
+    primary,candidates:available};
 }
 /* Compatibilidad pública: pickModel acepta el task antiguo o el identificador exacto de operación. */
 function pickModel(taskOrOperation){ const p=modelPlanForOperation(taskOrOperation); return p&&p.primary?{...p.primary,operation:p.operation,group:p.group}:null; }
 function modelRouting(){
   const ops=['protocol_create','chat_quick','chat_standard','chat_deep','chat_max','catalog_identify_text','report_hpo_simple'];
   return {mode:'policy',policyVersion:AI_POLICY_VERSION,evaluatedAt:AI_POLICY_EVALUATED_AT,
-    ops:ops.map(operation=>{ const plan=modelPlanForOperation(operation), p=plan&&plan.primary; return {operation,label:plan&&plan.label,model:p?prettyModel(p.provider,p.model):'—',provider:p&&p.provider,override:plan&&plan.override}; })};
+    ops:ops.map(operation=>{ const plan=modelPlanForOperation(operation), p=plan&&plan.primary; return {
+      operation,label:plan&&plan.label,model:p?prettyModel(p.provider,p.model):'—',provider:p&&p.provider,
+      override:plan&&plan.override,promoted:plan&&plan.promoted,promotionReportId:plan&&plan.promotionReportId
+    }; })};
 }
 /* Descubrimiento de modelos disponibles (para el selector auto-actualizable) */
 function cachedModels(p){ try{ return JSON.parse(localStorage.getItem('fh_models_'+p))||[]; }catch(e){ return []; } }
@@ -1449,6 +1476,117 @@ async function checkModelsFreshness(force){
   }
   if(anyNew){ try{ renderStatus(); }catch(e){} }
   return anyNew;
+}
+
+/* ---- Evaluación sintética reproducible de candidatos (nunca usa pacientes, documentos privados ni web) ---- */
+const AI_MODEL_EVALUATOR_VERSION='2026-07-24.v1';
+const AI_MODEL_EVALUATIONS_KEY='fh_model_evaluations';
+const AI_MODEL_CANDIDATE_REGISTRY=[
+  {key:'anthropic-opus-5',label:'Claude Opus 5',provider:'anthropic',matches:id=>/^claude-opus-5(?:-|$)/i.test(id),
+    baseline:M('anthropic','claude-opus-4-8','high'),effort:'high',
+    operations:['protocol_create','protocol_regenerate','prenatal_protocol_author','prenatal_discover',
+      'prenatal_criteria_update','genetic_test_indication','gene_guidance','chat_deep']}
+];
+const AI_MODEL_SYNTHETIC_CASES=[
+  {key:'protocol',label:'Protocolo estructurado',system:'ARIADNA_EVAL_PROTOCOL. Evaluación sintética sin datos clínicos reales. Devuelve exclusivamente JSON válido.',
+    user:'Dos fuentes sintéticas dicen: [A] recomendar vigilancia anual y [B] ajustar la frecuencia si aparece el marcador Z. Devuelve {"recommendations":["..."],"rationale":"..."} conservando [A] y [B].',
+    score:text=>{
+      const d=parseEvalJson(text), rec=d&&Array.isArray(d.recommendations)&&d.recommendations.length>0, rat=String(d&&d.rationale||'');
+      return ((rec?1:0)+(rat.includes('[A]')?1:0)+(rat.includes('[B]')?1:0))/3;
+    }},
+  {key:'multisource',label:'Síntesis multifuente',system:'ARIADNA_EVAL_MULTISOURCE. Evaluación sintética sin datos clínicos reales. Responde en español.',
+    user:'Integra estas dos fuentes sin inventar: [A] una cohorte pequeña observa el hallazgo X; [B] una guía recomienda confirmar Y. Explica la conclusión y una limitación, citando ambas fuentes.',
+    score:text=>{
+      const s=String(text||''), limitation=/limitaci|muestra|incertid|cautela/i.test(s);
+      return ((s.includes('[A]')?1:0)+(s.includes('[B]')?1:0)+(limitation?1:0))/3;
+    }},
+  {key:'bibliography',label:'Revisión bibliográfica',system:'ARIADNA_EVAL_BIBLIOGRAPHY. Evaluación sintética sin datos clínicos reales. Devuelve exclusivamente JSON válido.',
+    user:'La referencia [A] DOI 10.1000/alpha sigue vigente. La referencia [B] PMID:12345678 aporta evidencia complementaria. Devuelve {"keep":[],"add":[],"reason":"..."} sin perder los identificadores.',
+    score:text=>{
+      const d=parseEvalJson(text), keep=JSON.stringify(d&&d.keep||[]), add=JSON.stringify(d&&d.add||[]), reason=String(d&&d.reason||'');
+      return ((keep.includes('10.1000/alpha')?1:0)+(add.includes('12345678')?1:0)+((reason.includes('[A]')&&reason.includes('[B]'))?1:0))/3;
+    }}
+];
+function parseEvalJson(text){
+  const raw=String(text||'').trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');
+  try{ return JSON.parse(raw); }catch(e){
+    const a=raw.indexOf('{'), b=raw.lastIndexOf('}'); if(a<0||b<=a) return null;
+    try{ return JSON.parse(raw.slice(a,b+1)); }catch(_e){ return null; }
+  }
+}
+function modelEvaluations(){ try{ const d=JSON.parse(localStorage.getItem(AI_MODEL_EVALUATIONS_KEY)); return Array.isArray(d)?d:[]; }catch(e){ return []; } }
+function saveModelEvaluation(report){
+  const list=modelEvaluations().filter(x=>x&&x.id!==report.id); list.unshift(report);
+  try{ localStorage.setItem(AI_MODEL_EVALUATIONS_KEY,JSON.stringify(list.slice(0,20))); }catch(e){}
+  return report;
+}
+function modelEvaluationById(id){ return modelEvaluations().find(x=>x&&x.id===id)||null; }
+function recognizedModelCandidates(){
+  const out=[];
+  for(const def of AI_MODEL_CANDIDATE_REGISTRY){
+    for(const id of cachedModels(def.provider).filter(x=>def.matches(String(x||'')))){
+      out.push({...def,model:id});
+    }
+  }
+  return out;
+}
+function latestModelEvaluation(candidateKey,model){
+  return modelEvaluations().find(x=>x&&x.candidateKey===candidateKey&&(!model||x.model===model))||null;
+}
+function validPromotionForOperation(operation,cfg){
+  if(operation==='pdf_visual_quick'||operation==='pdf_visual_deep') return null;
+  cfg=cfg||loadCfg(); const p=cfg.evaluatedModelPromotions&&cfg.evaluatedModelPromotions[operation];
+  if(!p||p.evaluatorVersion!==AI_MODEL_EVALUATOR_VERSION) return null;
+  const report=modelEvaluationById(p.reportId);
+  if(!report||!report.eligible||report.evaluatorVersion!==AI_MODEL_EVALUATOR_VERSION) return null;
+  if(report.provider!==p.provider||report.model!==p.model||!(report.operations||[]).includes(operation)) return null;
+  return {provider:p.provider,model:p.model,effort:p.effort||report.effort||'high',reportId:p.reportId};
+}
+function applyEvaluatedModelPromotion(reportId,approved){
+  const report=modelEvaluationById(reportId); if(!approved||!report||!report.eligible||report.evaluatorVersion!==AI_MODEL_EVALUATOR_VERSION) return false;
+  const next=Object.assign({},loadCfg().evaluatedModelPromotions||{});
+  for(const operation of (report.operations||[])){
+    if(operation==='pdf_visual_quick'||operation==='pdf_visual_deep') continue;
+    next[operation]={candidateKey:report.candidateKey,provider:report.provider,model:report.model,effort:report.effort,
+      reportId:report.id,evaluatorVersion:report.evaluatorVersion,activatedAt:new Date().toISOString()};
+  }
+  saveCfg({evaluatedModelPromotions:next}); return true;
+}
+function revertEvaluatedModelPromotion(candidateKey,approved){
+  if(!approved) return false;
+  const current=loadCfg().evaluatedModelPromotions||{}, next={}; let changed=false;
+  for(const [operation,p] of Object.entries(current)){
+    if(p&&p.candidateKey===candidateKey) changed=true; else next[operation]=p;
+  }
+  if(changed) saveCfg({evaluatedModelPromotions:next});
+  return changed;
+}
+function normalizedModelUsage(u){
+  return {input:Number(u&&((u.input_tokens??u.prompt_tokens)))||0,output:Number(u&&((u.output_tokens??u.completion_tokens)))||0};
+}
+async function evaluateConcreteModel(choice){
+  const started=Date.now(), cases=[]; let total=0,input=0,output=0;
+  for(const c of AI_MODEL_SYNTHETIC_CASES){
+    const dbg={}; const t=Date.now(); let text='',score=0,error='';
+    try{ text=await _callProvider(choice,{system:c.system,user:c.user,webSearch:false,maxTokens:700,thinking:true},dbg); score=c.score(text); }
+    catch(e){ error=e&&e.message||String(e); }
+    const usage=normalizedModelUsage(dbg.usage); input+=usage.input; output+=usage.output; total+=score;
+    cases.push({key:c.key,label:c.label,score,ok:score>=0.99,latencyMs:Date.now()-t,usage,error,output:String(text||'').slice(0,3000)});
+  }
+  return {score:total/AI_MODEL_SYNTHETIC_CASES.length,latencyMs:Date.now()-started,usage:{input,output},cases,
+    ok:cases.every(x=>x.ok)};
+}
+async function runModelEvaluation(candidateKey,exactModel){
+  const candidate=recognizedModelCandidates().find(x=>x.key===candidateKey&&(!exactModel||x.model===exactModel));
+  if(!candidate) throw new Error('El candidato exacto no figura en el catálogo detectado. Comprueba primero el catálogo de modelos.');
+  if(!providerKey(candidate.provider)) throw new Error('Falta la clave de '+candidate.provider+' para ejecutar la evaluación.');
+  const baseline=await evaluateConcreteModel(candidate.baseline);
+  const contender=await evaluateConcreteModel({provider:candidate.provider,model:candidate.model,effort:candidate.effort});
+  const eligible=contender.ok&&contender.score>=0.90&&contender.score>=baseline.score-0.01;
+  return saveModelEvaluation({id:'eval_'+Date.now()+'_'+candidate.key,evaluatorVersion:AI_MODEL_EVALUATOR_VERSION,
+    createdAt:new Date().toISOString(),candidateKey:candidate.key,label:candidate.label,provider:candidate.provider,
+    model:candidate.model,effort:candidate.effort,baselineChoice:candidate.baseline,operations:candidate.operations.slice(),
+    synthetic:true,visualValidated:false,eligible,baseline,contender});
 }
 
 /* Libera espacio en localStorage borrando SOLO cachés que se pueden reconstruir (embeddings, texto de PDFs,
@@ -2391,7 +2529,9 @@ async function _callProvider(choice, {system, user, webSearch, maxTokens, thinki
       method:'POST', headers:{Authorization:'Bearer '+c.openaiKey,'Content-Type':'application/json'}, body:JSON.stringify(body)
     });
     if(!r.ok) throw new Error('OpenAI '+r.status+' '+await r.text());
-    const d=await r.json(), text=openAIResponseText(d); if(!text) throw new Error('OpenAI devolvió una respuesta vacía'); return text;
+    const d=await r.json(), text=openAIResponseText(d);
+    if(_dbg) _dbg.usage=d.usage||null;
+    if(!text) throw new Error('OpenAI devolvió una respuesta vacía'); return text;
   } else { // anthropic
     const body={model, max_tokens:maxTokens, system, messages:[{role:'user',content:user}]};
     if((thinking||effort!=='none')&&!/haiku/i.test(model)){ body.thinking={type:'adaptive'}; body.output_config={effort:effort==='none'?'high':effort}; }
@@ -2403,7 +2543,10 @@ async function _callProvider(choice, {system, user, webSearch, maxTokens, thinki
     });
     if(!r.ok) throw new Error('Anthropic '+r.status+' '+await r.text());
     const d=await r.json();
-    if(_dbg){ _dbg.reasoning=(d.content||[]).filter(b=>b.type==='thinking').map(b=>b.thinking||'').join('\n'); }
+    if(_dbg){
+      _dbg.reasoning=(d.content||[]).filter(b=>b.type==='thinking').map(b=>b.thinking||'').join('\n');
+      _dbg.usage=d.usage||null;
+    }
     return (d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
   }
 }
@@ -2627,9 +2770,9 @@ async function diagnoseGithub(){
 function operationChoiceValue(choice){ return choice ? choice.provider+'|'+choice.model : ''; }
 function modelOverrideSelectHtml(operation){
   const plan=modelPlanForOperation(operation), choices=approvedChoicesForOperation(operation), current=plan&&plan.override&&plan.primary?operationChoiceValue(plan.primary):'';
-  const automatic=choices.find(x=>providerKey(x.provider))||choices[0];
+  const automatic=(plan&&plan.primary)||choices.find(x=>providerKey(x.provider))||choices[0];
   return `<select data-operation="${operation}" style="width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink);font-size:11px">
-    <option value=""${current?'':' selected'}>Automático · ${automatic?escHtml(prettyModel(automatic.provider,automatic.model)):'sin modelo'}</option>
+    <option value=""${current?'':' selected'}>Automático · ${automatic?escHtml(prettyModel(automatic.provider,automatic.model)):'sin modelo'}${plan&&plan.promoted?' · evaluado':''}</option>
     ${choices.map(x=>`<option value="${operationChoiceValue(x)}"${operationChoiceValue(x)===current?' selected':''}>Forzar ${escHtml(prettyModel(x.provider,x.model))}${x.effort&&x.effort!=='none'?' · '+escHtml(x.effort):''}</option>`).join('')}
   </select>`;
 }
@@ -2641,6 +2784,87 @@ function modelPolicyGridHtml(){
       <div style="margin-top:5px">${operations.map(operation=>{ const p=AI_OPERATION_POLICIES[operation]; return `<div style="display:grid;grid-template-columns:minmax(180px,1fr) minmax(260px,1.3fr);gap:8px;align-items:center;padding:4px 0;border-top:1px solid var(--line)"><span style="font-size:11.5px;color:var(--ink3)">${escHtml(p.label)}</span>${modelOverrideSelectHtml(operation)}</div>`; }).join('')}</div>
     </details>`;
   }).join('');
+}
+function evaluatorDuration(ms){
+  const n=Number(ms)||0;
+  return n<1000?Math.round(n)+' ms':(n/1000).toFixed(n<10000?1:0)+' s';
+}
+function evaluatorTokens(usage){
+  return (Number(usage&&usage.input)||0)+(Number(usage&&usage.output)||0);
+}
+function candidatePromotionActive(candidateKey){
+  return Object.values(loadCfg().evaluatedModelPromotions||{}).some(p=>p&&p.candidateKey===candidateKey);
+}
+function modelEvaluatorPanelHtml(){
+  const candidates=recognizedModelCandidates();
+  const intro=`<div class="sec-note" style="margin-top:8px">La evaluación usa únicamente <b>casos sintéticos</b>: no usa pacientes, documentos privados ni búsqueda web. Compara calidad estructural, citas, latencia y consumo frente al modelo vigente. Las tareas visuales quedan excluidas hasta validarlas por separado.</div>`;
+  if(!candidates.length) return intro+`<div class="dx-meta" style="margin-top:8px">No hay todavía un candidato reconocido exactamente en el catálogo de tu cuenta. Pulsa «Comprobar catálogo de modelos». Ariadna no infiere familias desconocidas ni las activa.</div><div class="test-out" id="cfgEvaluatorOut"></div>`;
+  return intro+candidates.map(candidate=>{
+    const report=latestModelEvaluation(candidate.key,candidate.model), active=candidatePromotionActive(candidate.key);
+    const status=active?'Activo por evaluación':report?(report.eligible?'Apto para proponer':'No apto'):'Pendiente de evaluar';
+    const color=active?'var(--ok)':report&&report.eligible?'var(--accent)':report?'var(--bad)':'var(--ink2)';
+    const metrics=report?`<div class="dx-meta" style="margin-top:5px;line-height:1.55">
+      Resultado ${Math.round(report.contender.score*100)} % frente a ${Math.round(report.baseline.score*100)} % ·
+      latencia ${evaluatorDuration(report.contender.latencyMs)} frente a ${evaluatorDuration(report.baseline.latencyMs)} ·
+      consumo ${evaluatorTokens(report.contender.usage)} frente a ${evaluatorTokens(report.baseline.usage)} tokens ·
+      ${new Date(report.createdAt).toLocaleString('es-ES')}
+    </div>`:'';
+    return `<div style="margin-top:8px;border:1px solid var(--line);border-radius:9px;padding:9px;background:var(--panel2)">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap">
+        <div><b>${escHtml(candidate.label)}</b> <code>${escHtml(candidate.model)}</code><div style="font-size:11px;color:${color};margin-top:3px">${escHtml(status)}</div></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn" data-eval-candidate="${escHtml(candidate.key)}" data-eval-model="${escHtml(candidate.model)}">Evaluar ahora</button>
+          ${report&&report.eligible&&!active?`<button class="btn primary" data-activate-evaluation="${escHtml(report.id)}">Activar propuesta</button>`:''}
+          ${active?`<button class="btn ghost" data-revert-evaluation="${escHtml(candidate.key)}">Revertir</button>`:''}
+        </div>
+      </div>${metrics}
+    </div>`;
+  }).join('')+`<div class="test-out" id="cfgEvaluatorOut"></div>`;
+}
+function refreshPolicyGridPreservingSelections(ov){
+  const grid=ov&&ov.querySelector('#cfgPolicyGrid'); if(!grid) return;
+  const selected={}; grid.querySelectorAll('select[data-operation]').forEach(s=>{ selected[s.dataset.operation]=s.value; });
+  grid.innerHTML=modelPolicyGridHtml();
+  grid.querySelectorAll('select[data-operation]').forEach(s=>{ if(Object.prototype.hasOwnProperty.call(selected,s.dataset.operation)) s.value=selected[s.dataset.operation]; });
+}
+function refreshModelEvaluatorUi(ov){
+  const panel=ov&&ov.querySelector('#cfgModelEvaluator'); if(!panel) return;
+  panel.innerHTML=modelEvaluatorPanelHtml();
+  wireModelEvaluatorPanel(ov);
+}
+function wireModelEvaluatorPanel(ov){
+  if(!ov) return;
+  ov.querySelectorAll('[data-eval-candidate]').forEach(button=>button.addEventListener('click',async ()=>{
+    const out=ov.querySelector('#cfgEvaluatorOut'), before=loadCfg();
+    const previousKeys={anthropicKey:before.anthropicKey||'',openaiKey:before.openaiKey||''};
+    saveCfg({anthropicKey:ov.querySelector('#cfgAnthropicKey').value.trim(),openaiKey:ov.querySelector('#cfgOpenaiKey').value.trim()});
+    button.disabled=true; if(out){ out.className='test-out'; out.textContent='Evaluando candidato y modelo vigente con casos sintéticos…'; }
+    try{
+      const report=await runModelEvaluation(button.dataset.evalCandidate,button.dataset.evalModel);
+      if(out){ out.className='test-out '+(report.eligible?'ok':'bad'); out.textContent=report.eligible?'✓ Evaluación terminada: candidato apto. No se ha activado.':'Evaluación terminada: no se propone activar este candidato.'; }
+      refreshModelEvaluatorUi(ov);
+    }catch(error){
+      if(out){ out.className='test-out bad'; out.textContent='✗ '+(error.message||error); }
+    }finally{
+      saveCfg(previousKeys);
+      button.disabled=false;
+    }
+  }));
+  ov.querySelectorAll('[data-activate-evaluation]').forEach(button=>button.addEventListener('click',()=>{
+    const report=modelEvaluationById(button.dataset.activateEvaluation); if(!report) return;
+    if(!confirm('¿Activar '+report.label+' en las operaciones aprobadas? Las tareas visuales no cambiarán y podrás revertirlo inmediatamente.')) return;
+    if(applyEvaluatedModelPromotion(report.id,true)){
+      showToast('Modelo evaluado activado; las tareas visuales siguen sin cambios');
+      refreshPolicyGridPreservingSelections(ov); refreshModelEvaluatorUi(ov);
+    }
+  }));
+  ov.querySelectorAll('[data-revert-evaluation]').forEach(button=>button.addEventListener('click',()=>{
+    if(!confirm('¿Revertir este modelo y volver a la política estable anterior?')) return;
+    if(revertEvaluatedModelPromotion(button.dataset.revertEvaluation,true)){
+      showToast('Modelo revertido a la política estable');
+      refreshPolicyGridPreservingSelections(ov); refreshModelEvaluatorUi(ov);
+    }
+  }));
 }
 function openSettings(){
   const c=loadCfg();
@@ -2688,6 +2912,7 @@ function openSettings(){
         <button class="btn" id="cfgRefreshModels">Comprobar catálogo de modelos</button>
         <span class="test-out" id="cfgModelsOut" style="margin-left:8px"></span>
         <div class="sec-note">Un modelo nuevo se registra como <b>candidato</b>; nunca sustituye automáticamente a uno activo. Antes hay que comprobar calidad, coste, herramientas, visión, búsqueda web y formato de salida.</div>
+        <div id="cfgModelEvaluator">${modelEvaluatorPanelHtml()}</div>
       </div>
     </details>
     </div>
@@ -2785,6 +3010,7 @@ function openSettings(){
     </div>
   </div>`;
   document.body.appendChild(ov);
+  wireModelEvaluatorPanel(ov);
 
   // Pestañas de Ajustes
   ov.querySelectorAll('.cfg-tabs button').forEach(b=>b.addEventListener('click', ()=>{
@@ -2883,15 +3109,19 @@ function openSettings(){
     const out=ov.querySelector('#cfgModelsOut');
     out.className='test-out'; out.textContent='Consultando…';
     // Guarda temporalmente las keys escritas para que fetchModels las use
-    const prev=loadCfg();
-    saveCfg(Object.assign({}, prev, { anthropicKey:ov.querySelector('#cfgAnthropicKey').value.trim(), openaiKey:ov.querySelector('#cfgOpenaiKey').value.trim() }));
+    const before=loadCfg();
+    const previousKeys={anthropicKey:before.anthropicKey||'', openaiKey:before.openaiKey||''};
+    saveCfg({anthropicKey:ov.querySelector('#cfgAnthropicKey').value.trim(), openaiKey:ov.querySelector('#cfgOpenaiKey').value.trim()});
     const msgs=[];
-    for(const p of ['anthropic','openai']){
-      if(!providerKey(p)){ continue; }
-      try{ const ids=await fetchModels(p); msgs.push(p+': '+ids.length); }
-      catch(e){ msgs.push(p+': ✗ '+e.message); }
+    try{
+      for(const p of ['anthropic','openai']){
+        if(!providerKey(p)){ continue; }
+        try{ const ids=await fetchModels(p); msgs.push(p+': '+ids.length); }
+        catch(e){ msgs.push(p+': ✗ '+e.message); }
+      }
+    }finally{
+      saveCfg(previousKeys); // restaura solo las claves hasta pulsar Guardar
     }
-    saveCfg(prev); // restaura hasta Guardar
     const oaList=cachedModels('openai'), clList=cachedModels('anthropic');
     // Muestra la LISTA real que devuelve tu cuenta (para ver si gpt-5, o-series, etc. están disponibles)
     out.className='test-out ok'; out.innerHTML = (msgs.length? ('Modelos: '+msgs.join(' · ')) : 'Escribe alguna API key primero.')
@@ -2899,6 +3129,7 @@ function openSettings(){
       + (clList.length? '<br><span class="dx-meta" style="font-size:10px;line-height:1.5">Claude ('+clList.length+'): '+clList.map(escHtml).join(', ')+'</span>':'');
     const csel=ov.querySelector('#cfgChatMode');   // repuebla los modelos entre paréntesis del selector del chat
     if(csel){ csel.innerHTML=chatModeOptionsHtml(csel.value); }
+    refreshModelEvaluatorUi(ov);
   });
 
   ov.querySelector('#cfgTestGh').addEventListener('click', async ()=>{
@@ -5473,7 +5704,11 @@ function chatConversationContext(messages,maxChars=12000,maxMessages=20){
 }
 async function askRepo(q){
   q=(q||'').trim(); if(!q) return;
-  if(!anyProvider()){ _chatMsgs.push({role:'assistant', text:'Configura una API key (Claude u OpenAI) en ⚙ Ajustes para poder consultar.'}); renderChatMsgs(); return; }
+  if(!anyProvider()){
+    _chatMsgs.push({role:'assistant', text:'No encuentro una clave de IA guardada en **este navegador**. Las claves de la app del Mac se guardan aparte; abre ⚙ Ajustes → IA y guarda aquí la clave de OpenAI para consultar el segundo cerebro.'});
+    renderChatMsgs();
+    return;
+  }
   const history=chatConversationContext(_chatMsgs);   // se captura antes de añadir la pregunta actual
   _chatMsgs.push({role:'user', text:q});
   const pend={role:'assistant', text:'', pending:true}; _chatMsgs.push(pend); renderChatMsgs();
@@ -5490,7 +5725,7 @@ async function askRepo(q){
     pend.pending=false;
     pend.text = loadCfg().openaiKey
       ? 'Aún no has configurado tu **segundo cerebro**. Ve a ⚙ Ajustes → 🧠 Segundo cerebro y pega el ID del Vector Store de OpenAI para poder consultar tu documentación.'
-      : 'Para consultar tu documentación necesitas tu **segundo cerebro**: una clave de OpenAI y el ID del Vector Store en ⚙ Ajustes → 🧠 Segundo cerebro.';
+      : 'Para consultar el segundo cerebro falta una clave de **OpenAI guardada en este navegador**. La clave del Llavero de la app del Mac no se comparte con la web. Ve a ⚙ Ajustes → IA.';
     renderChatMsgs();
   }catch(e){ pend.pending=false; pend.text='Error al consultar: '+e.message; renderChatMsgs(); }
 }
@@ -10254,7 +10489,7 @@ function init(){
   loadReadcubeLibRemote();
   // Pre-carga del Catálogo Maestro → todas las bibliografías muestran la obra canónica cuando ya está vinculada.
   loadMasterCatalogIndex();
-  // Chequeo periódico (7 días) de modelos IA nuevos (p. ej. Fable) → avisa y anota en el registro
+  // Chequeo periódico (24 horas) de modelos IA nuevos → avisa y anota candidatos; nunca activa uno automáticamente.
   setTimeout(()=>{ checkModelsFreshness().catch(()=>{}); }, 3000);
   // Deep-link ?proto=<id>: abrir un protocolo directamente (para «Abrir en pestaña nueva»).
   let deepProto=''; try{ deepProto=new URLSearchParams(location.search).get('proto')||''; }catch(e){}

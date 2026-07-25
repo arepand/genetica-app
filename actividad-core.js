@@ -351,7 +351,10 @@
       const hasService = /\b(?:[A-Z]{1,8}\d*[.]\d+[A-Z]?|\d+[.]\d+[A-Z]?)\b/i.test(value);
       const hasPerformed = /\b(?:URG(?:ENTE)?|S[IÍ]|NO)\b/i.test(value);
       const hasNreg = /\b\d{6,}\b/.test(value);
-      return hasDate || hasTime || (hasService && (hasPerformed || hasNreg));
+      // La cabecera de impresión también contiene fecha y hora, pero no
+      // representa una consulta. Exigimos una prestación y, además, alguna
+      // evidencia propia de una fila clínica.
+      return hasService && (hasPerformed || hasNreg || (hasDate && hasTime));
     });
     const rows = candidates.map((line, index) => {
       const date = line.text.match(/\b\d{2}\/\d{2}\/\d{4}\b/)?.[0] || '';
@@ -363,7 +366,19 @@
       // ilegible. La fecha contiene separadores, por lo que no se confunde con
       // esta secuencia continua de seis o más dígitos.
       const nreg = line.text.match(/\b\d{6,}\b/)?.[0] || '';
-      const discharge = line.text.match(/\b[01]\s*$/)?.[0]?.trim() || '';
+      // «Alta» es la penúltima columna en la hoja actual. Puede haber texto
+      // detrás, así que no debe buscarse únicamente al final de la línea.
+      // Preferimos un 0/1 situado a la derecha del NREG; si el NREG quedó
+      // ilegible, usamos el 0/1 más a la derecha de la fila.
+      const wordValues = line.words.map(word => String(word.text || '').trim());
+      const nregWordIndex = wordValues.findIndex(value => /^\d{6,}$/.test(value));
+      const binaryCells = wordValues
+        .map((value, wordIndex) => ({ value, wordIndex }))
+        .filter(item => /^[01]$/.test(item.value));
+      const discharge = (
+        binaryCells.filter(item => nregWordIndex < 0 || item.wordIndex > nregWordIndex).at(-1)
+        || binaryCells.at(-1)
+      )?.value || '';
       const row = normalizeRow({
         fecha: date, hora: time, prestacion: service, realizada: performed, nreg, alta: discharge, confidence: line.confidence,
       }, { ...context, fila: index + 1 });
