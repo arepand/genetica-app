@@ -543,8 +543,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.2.6';
+const APP_VERSION='3.2.7';
 const CHANGELOG=[
+  {v:'3.2.7',d:'2026-07-26',c:['Índice B2 regenerado y actualizado: la app ya localiza las figuras/tablas de todos los documentos nuevos (incluidos los de DM1 y las últimas incorporaciones) — el lector B2 pasa de 1249 a 1326 documentos y 225512 recursos visuales.']},
   {v:'3.2.6',d:'2026-07-26',c:['El ayudante local (launcher) tiene ahora su propia numeración y changelog, accesible con un enlace «📋 changelog» tanto en la pestaña Launcher como en el panel local — se abre en pestaña nueva (funciona también en Safari). Además el panel local muestra ya el estado de los Vector Stores.']},
   {v:'3.2.5',d:'2026-07-26',c:['El launcher sirve ahora su propio panel local en http://127.0.0.1:8765/ con los mismos botones (Actualizar / Subir al store) y el estado. Sirve para Safari, que bloquea que esta web hable con el ayudante local: hay un enlace «Abrir panel local del launcher ↗» en la pestaña Launcher. En Chrome sigue funcionando integrado aquí (arreglado el acceso a red privada).']},
   {v:'3.2.4',d:'2026-07-26',c:['La pestaña «🛰 Launcher» tiene ya el botón «⬆ Subir al Vector Store»: comprueba primero qué documentos nuevos/cambiados subiría y su coste, te lo enseña y pide confirmación explícita antes de escribir en OpenAI (los ya subidos no se re-suben). Cierra la rutina «actualizar documentos» de punta a punta: preparar en local (botón anterior) → subir al store (este). Nota: los botones solo aparecen con el ayudante local en marcha.']},
@@ -1312,7 +1313,7 @@ function resetPatient(){
 /* ---- Config en localStorage ---- */
 const CFG_KEY='fh_cfg';
 const B2_BROWSER_INDEX_VERSION='e885d859887f8337a9d62f9f2bd6778e40dc0ee2956f8480f0bcccfe31c1ccce';
-const B2_BROWSER_INDEX_SHA256='954374fb91ab7256ec79a1130cc248596ea4d74cd16146cd397426b80d45a01b';
+const B2_BROWSER_INDEX_SHA256='cbb131c83a1deb59bce9b3baa05bce1d1d3ab8adca695c2f3c5db3c18d0173c6';
 const CFG_DEFAULTS={ anthropicKey:'', openaiKey:'', modelOverrides:{}, evaluatedModelPromotions:{}, gh_owner:'', gh_repo:'', gh_branch:'main', gh_pat:'',
   driveClientId:'672017094614-goqdjb7159poff6jieh7rgjtop06askb.apps.googleusercontent.com', driveFolder:'', driveSubfolders:false,
   b2Endpoint:'https://s3.us-west-001.backblazeb2.com', b2Bucket:'ariadnadatos', b2Prefix:'ariadna-data',
