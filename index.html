@@ -543,8 +543,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.2.1';
+const APP_VERSION='3.2.2';
 const CHANGELOG=[
+  {v:'3.2.2',d:'2026-07-25',c:['La pestaña «🛰 Launcher» muestra ahora el estado de tus Vector Stores (nombre, nº de ficheros, tamaño y última actividad), consultado directamente a OpenAI desde el navegador — visible desde cualquier dispositivo con la clave configurada, sin depender del ayudante local.']},
   {v:'3.2.1',d:'2026-07-25',c:['Nueva pestaña «🛰 Launcher» en Ajustes: muestra el estado del ayudante local (conectado, versión, dependencias) y el progreso de las operaciones del segundo cerebro, sin caja negra. Si el ayudante no está arrancado, indica cómo hacerlo. Primera fase del panel para lanzar y ver las tareas desde la web.']},
   {v:'3.2.0',d:'2026-07-25',c:['El segundo cerebro documental se ha reconstruido con una extracción de texto muy mejorada: reconstrucción del orden de lectura por columnas, unión de palabras partidas por guion y recuperación de espacios perdidos en los PDF a doble columna. La búsqueda en «Consultar» gana precisión sobre todo el corpus.','Los libros escaneados sin capa de texto (manuales clásicos de genética como Thompson & Thompson, Jorde, Pierce o Lewin) se han incorporado mediante OCR local con Vision de macOS, de modo que su contenido ahora es buscable.','El Vector Store documental apunta a una colección nueva y verificada (3.951 fragmentos); la anterior se retira para no duplicar coste. Las figuras y tablas se reincorporan a continuación.']},
   {v:'3.1.2',d:'2026-07-25',c:['La actualización documental vuelve a leer Finder justo antes de procesar y detecta PDF o EPUB realmente nuevos aunque el catálogo local guardado estuviera desfasado.','Los originales de Google Drive que aparecen en Finder pero todavía no están completos se materializan de forma limitada y se reintentan antes de declarar una incidencia; el progreso queda guardado para reanudar sin repetir trabajo.','El estado distingue documentos encontrados, pendientes de descarga o lectura y documentos realmente procesables, evitando presentar como fallo que una ejecución no tenga novedades.']},
@@ -3118,7 +3119,9 @@ function openSettings(){
     <div class="sec-note">El <b>launcher</b> es un ayudante local (en tu Mac, <code>127.0.0.1:8765</code>) que ejecuta el pipeline del segundo cerebro y deja ver aquí su progreso. No es una caja negra. Instálalo con <code>bash secondbrain/launcher/install-launchagent.sh</code> (arranca solo al iniciar sesión).</div>
     <div id="launcherStatus" class="dx-meta" style="margin:8px 0">Comprobando el launcher…</div>
     <div id="launcherProgress" style="margin:6px 0;font-size:12.5px"></div>
-    <div style="margin-top:8px"><button type="button" class="btn ghost" id="launcherRefresh">↻ Actualizar</button></div>
+    <h4 style="margin:14px 0 4px;font-size:13px">Vector Stores <span class="msub" style="font-weight:normal">(consulta directa a OpenAI · visible desde cualquier sitio)</span></h4>
+    <div id="launcherStores" style="font-size:12px">…</div>
+    <div style="margin-top:10px"><button type="button" class="btn ghost" id="launcherRefresh">↻ Actualizar</button></div>
     </div>
 
     <div class="modal-actions">
@@ -6099,6 +6102,30 @@ async function loadLauncherPanel(){
     st.innerHTML='<b style="color:#fbbf24">● Launcher no arrancado</b> — no responde en 127.0.0.1:8765.';
     if(pr) pr.innerHTML='<span class="msub">Arráncalo con <code>bash secondbrain/launcher/install-launchagent.sh</code> (auto al iniciar sesión) o <code>node secondbrain/launcher/server.mjs</code>.</span>';
   }
+  loadLauncherStores();
+}
+async function loadLauncherStores(){
+  const el=document.getElementById('launcherStores');
+  if(!el) return;
+  const e=v=>String(v==null?'':v).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const c=(typeof loadCfg==='function'?loadCfg():{})||{};
+  if(!c.openaiKey){ el.innerHTML='<span class="msub">Configura la clave OpenAI (pestaña IA) para ver los stores.</span>'; return; }
+  el.innerHTML='Consultando OpenAI…';
+  try{
+    const r=await fetch('https://api.openai.com/v1/vector_stores?limit=100',{headers:{Authorization:'Bearer '+c.openaiKey,'OpenAI-Beta':'assistants=v2'}});
+    if(!r.ok){ el.innerHTML='<span class="msub">OpenAI devolvió '+r.status+' al listar los stores.</span>'; return; }
+    const d=await r.json();
+    const stores=(d.data||[]).slice().sort((a,b)=>(b.usage_bytes||0)-(a.usage_bytes||0));
+    if(!stores.length){ el.innerHTML='<span class="msub">No hay vector stores en la cuenta.</span>'; return; }
+    let totalGb=0;
+    const rows=stores.map(s=>{
+      const gb=(s.usage_bytes||0)/1e9; totalGb+=gb;
+      const last=s.last_active_at?new Date(s.last_active_at*1000).toISOString().slice(0,16).replace('T',' '):'—';
+      return '<tr><td style="padding:2px 10px 2px 0">'+e(s.name||s.id)+'</td><td style="padding:2px 10px;text-align:right">'+((s.file_counts&&s.file_counts.total)||0)+'</td><td style="padding:2px 10px;text-align:right">'+gb.toFixed(2)+' GB</td><td style="padding:2px 0;color:var(--ink2)">'+e(last)+'</td></tr>';
+    }).join('');
+    el.innerHTML='<table style="border-collapse:collapse"><tr style="color:var(--ink2);font-size:11px"><td>nombre</td><td style="text-align:right">ficheros</td><td style="text-align:right">tamaño</td><td>últ. actividad</td></tr>'+rows+'</table>'
+      +'<div class="msub" style="margin-top:4px">Total: '+totalGb.toFixed(2)+' GB (~$'+(totalGb*0.10*30).toFixed(2)+'/mes)</div>';
+  }catch(err){ el.innerHTML='<span class="msub">No se pudo consultar OpenAI: '+e(String(err&&err.message||err))+'</span>'; }
 }
 
 /* Categoría de un documento a partir de su `tipo` (que asigna la IA al indexar) + heurísticas (NBK, boletín oficial,
