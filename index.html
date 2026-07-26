@@ -543,8 +543,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.2.7';
+const APP_VERSION='3.3.0';
 const CHANGELOG=[
+  {v:'3.3.0',d:'2026-07-26',c:['El índice de figuras/tablas de B2 ahora se lee EN VIVO del bucket privado: al añadir documentos nuevos, sus figuras aparecen solas sin necesidad de re-desplegar la app. La integridad de cada imagen se sigue verificando por su huella registrada en el índice. (Antes la app llevaba la huella del índice fijada y cada tanda nueva exigía un despliegue.)']},
   {v:'3.2.7',d:'2026-07-26',c:['Índice B2 regenerado y actualizado: la app ya localiza las figuras/tablas de todos los documentos nuevos (incluidos los de DM1 y las últimas incorporaciones) — el lector B2 pasa de 1249 a 1326 documentos y 225512 recursos visuales.']},
   {v:'3.2.6',d:'2026-07-26',c:['El ayudante local (launcher) tiene ahora su propia numeración y changelog, accesible con un enlace «📋 changelog» tanto en la pestaña Launcher como en el panel local — se abre en pestaña nueva (funciona también en Safari). Además el panel local muestra ya el estado de los Vector Stores.']},
   {v:'3.2.5',d:'2026-07-26',c:['El launcher sirve ahora su propio panel local en http://127.0.0.1:8765/ con los mismos botones (Actualizar / Subir al store) y el estado. Sirve para Safari, que bloquea que esta web hable con el ayudante local: hay un enlace «Abrir panel local del launcher ↗» en la pestaña Launcher. En Chrome sigue funcionando integrado aquí (arreglado el acceso a red privada).']},
@@ -5335,9 +5336,10 @@ async function loadB2BrowserIndex(override,force){
   if(response.status===401||response.status===403) throw new Error('B2 rechazó la clave de lectura. Comprueba que sea Read Only y esté limitada a este bucket/prefijo.');
   if(response.status===404) throw new Error('El índice de lectura B2 todavía no está publicado.');
   if(!response.ok) throw new Error('B2 no pudo leer el índice documental ('+response.status+').');
-  const bytes=await response.arrayBuffer(), actual=await b2Sha256(new Uint8Array(bytes));
-  if(config.indexSha256&&actual!==config.indexSha256) throw new Error('El índice B2 no coincide con la huella validada; no se utilizará.');
+  const bytes=await response.arrayBuffer();
   let index; try{ index=JSON.parse(_b2TextDecoder.decode(bytes)); }catch(e){ throw new Error('B2 devolvió un índice documental no válido.'); }
+  // El índice se lee EN VIVO del bucket privado (se auto-actualiza al añadir documentos, sin re-desplegar).
+  // La integridad de cada IMAGEN se sigue verificando por su sha256 registrado en el índice (ver fetchVerifiedDerivedVisualFromB2).
   if(index.schema!=='ariadna-b2-browser-index-v1'||index.version!==config.version||!index.documents) throw new Error('El índice B2 no pertenece a esta versión documental.');
   _b2BrowserIndex=index; _b2BrowserIndexCacheKey=cacheKey; return index;
 }
