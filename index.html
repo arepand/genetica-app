@@ -543,8 +543,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.2.2';
+const APP_VERSION='3.2.3';
 const CHANGELOG=[
+  {v:'3.2.3',d:'2026-07-26',c:['La pestaña «🛰 Launcher» tiene ya el botón «▶ Actualizar documentos»: cuando el ayudante local está en marcha, lanza la actualización SEGURA de documentos (extrae texto y figuras de los PDFs nuevos y los prepara localmente; la subida al Vector Store sigue siendo un paso aparte). Muestra el estado del trabajo en vivo y se bloquea mientras se ejecuta.']},
   {v:'3.2.2',d:'2026-07-25',c:['La pestaña «🛰 Launcher» muestra ahora el estado de tus Vector Stores (nombre, nº de ficheros, tamaño y última actividad), consultado directamente a OpenAI desde el navegador — visible desde cualquier dispositivo con la clave configurada, sin depender del ayudante local.']},
   {v:'3.2.1',d:'2026-07-25',c:['Nueva pestaña «🛰 Launcher» en Ajustes: muestra el estado del ayudante local (conectado, versión, dependencias) y el progreso de las operaciones del segundo cerebro, sin caja negra. Si el ayudante no está arrancado, indica cómo hacerlo. Primera fase del panel para lanzar y ver las tareas desde la web.']},
   {v:'3.2.0',d:'2026-07-25',c:['El segundo cerebro documental se ha reconstruido con una extracción de texto muy mejorada: reconstrucción del orden de lectura por columnas, unión de palabras partidas por guion y recuperación de espacios perdidos en los PDF a doble columna. La búsqueda en «Consultar» gana precisión sobre todo el corpus.','Los libros escaneados sin capa de texto (manuales clásicos de genética como Thompson & Thompson, Jorde, Pierce o Lewin) se han incorporado mediante OCR local con Vision de macOS, de modo que su contenido ahora es buscable.','El Vector Store documental apunta a una colección nueva y verificada (3.951 fragmentos); la anterior se retira para no duplicar coste. Las figuras y tablas se reincorporan a continuación.']},
@@ -3118,6 +3119,7 @@ function openSettings(){
     <div class="cfg-pane" data-pane="launcher">
     <div class="sec-note">El <b>launcher</b> es un ayudante local (en tu Mac, <code>127.0.0.1:8765</code>) que ejecuta el pipeline del segundo cerebro y deja ver aquí su progreso. No es una caja negra. Instálalo con <code>bash secondbrain/launcher/install-launchagent.sh</code> (arranca solo al iniciar sesión).</div>
     <div id="launcherStatus" class="dx-meta" style="margin:8px 0">Comprobando el launcher…</div>
+    <div id="launcherActions" style="margin:8px 0"></div>
     <div id="launcherProgress" style="margin:6px 0;font-size:12.5px"></div>
     <h4 style="margin:14px 0 4px;font-size:13px">Vector Stores <span class="msub" style="font-weight:normal">(consulta directa a OpenAI · visible desde cualquier sitio)</span></h4>
     <div id="launcherStores" style="font-size:12px">…</div>
@@ -6093,6 +6095,15 @@ async function loadLauncherPanel(){
     const s=await fetch(LAUNCHER_BASE+'/status',{cache:'no-store'}).then(r=>r.json());
     const deps=(s.dependencies&&s.dependencies.ok)?'✓ dependencias OK':('⚠ faltan: '+((s.dependencies&&s.dependencies.missing)||[]).join(', '));
     st.innerHTML='<b style="color:#4ade80">● Launcher conectado</b> · v'+e(s.launcher_version)+' · Node '+e(s.node_version)+' · Python '+e((s.python&&s.python.version)||'?')+' · '+e(deps);
+    const ac=document.getElementById('launcherActions');
+    if(ac){
+      const j=s.job, running=j&&j.status==='running';
+      ac.innerHTML='<button type="button" class="btn'+(running?' ghost':' primary')+'" id="launcherRunDocs"'+(running?' disabled':'')+'>'+(running?'⏳ Actualizando documentos…':'▶ Actualizar documentos')+'</button>'
+        +(j?'<span class="msub" style="margin-left:8px">Último trabajo: '+e(j.kind||'')+' · <b>'+e(j.status||'')+'</b></span>':'');
+      const btn=document.getElementById('launcherRunDocs');
+      if(btn&&!running) btn.addEventListener('click', launcherRun);
+      window._launcherJobRunning=running;
+    }
     const p=await fetch(LAUNCHER_BASE+'/progress',{cache:'no-store'}).then(r=>r.json());
     const d=p.daily, u=p.upload, rows=[];
     if(d) rows.push('Actualización documentos: <b>'+e(d.status||'—')+'</b>'+(d.current_step?' · paso: '+e(d.current_step):''));
@@ -6103,6 +6114,22 @@ async function loadLauncherPanel(){
     if(pr) pr.innerHTML='<span class="msub">Arráncalo con <code>bash secondbrain/launcher/install-launchagent.sh</code> (auto al iniciar sesión) o <code>node secondbrain/launcher/server.mjs</code>.</span>';
   }
   loadLauncherStores();
+}
+// Dispara la actualización LOCAL de documentos (paso seguro: extrae texto/figuras, prepara; NO sube al store).
+// La subida al Vector Store es una acción separada y confirmada.
+async function launcherRun(){
+  const btn=document.getElementById('launcherRunDocs');
+  if(btn){ btn.disabled=true; btn.textContent='⏳ Actualizando documentos…'; }
+  try{
+    const r=await fetch(LAUNCHER_BASE+'/run/documents',{method:'POST'}).then(r=>r.json()).catch(()=>null);
+    if(r&&r.started===false&&r.reason==='already_running'){ /* ya en marcha */ }
+  }catch(err){}
+  await loadLauncherPanel();
+  // Refresca el progreso mientras el trabajo esté vivo (hasta ~5 min).
+  let n=0; const t=setInterval(async()=>{
+    await loadLauncherPanel();
+    if(window._launcherJobRunning!==true || ++n>60) clearInterval(t);
+  }, 5000);
 }
 async function loadLauncherStores(){
   const el=document.getElementById('launcherStores');
