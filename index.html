@@ -543,8 +543,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.2.3';
+const APP_VERSION='3.2.4';
 const CHANGELOG=[
+  {v:'3.2.4',d:'2026-07-26',c:['La pestaña «🛰 Launcher» tiene ya el botón «⬆ Subir al Vector Store»: comprueba primero qué documentos nuevos/cambiados subiría y su coste, te lo enseña y pide confirmación explícita antes de escribir en OpenAI (los ya subidos no se re-suben). Cierra la rutina «actualizar documentos» de punta a punta: preparar en local (botón anterior) → subir al store (este). Nota: los botones solo aparecen con el ayudante local en marcha.']},
   {v:'3.2.3',d:'2026-07-26',c:['La pestaña «🛰 Launcher» tiene ya el botón «▶ Actualizar documentos»: cuando el ayudante local está en marcha, lanza la actualización SEGURA de documentos (extrae texto y figuras de los PDFs nuevos y los prepara localmente; la subida al Vector Store sigue siendo un paso aparte). Muestra el estado del trabajo en vivo y se bloquea mientras se ejecuta.']},
   {v:'3.2.2',d:'2026-07-25',c:['La pestaña «🛰 Launcher» muestra ahora el estado de tus Vector Stores (nombre, nº de ficheros, tamaño y última actividad), consultado directamente a OpenAI desde el navegador — visible desde cualquier dispositivo con la clave configurada, sin depender del ayudante local.']},
   {v:'3.2.1',d:'2026-07-25',c:['Nueva pestaña «🛰 Launcher» en Ajustes: muestra el estado del ayudante local (conectado, versión, dependencias) y el progreso de las operaciones del segundo cerebro, sin caja negra. Si el ayudante no está arrancado, indica cómo hacerlo. Primera fase del panel para lanzar y ver las tareas desde la web.']},
@@ -6099,9 +6100,12 @@ async function loadLauncherPanel(){
     if(ac){
       const j=s.job, running=j&&j.status==='running';
       ac.innerHTML='<button type="button" class="btn'+(running?' ghost':' primary')+'" id="launcherRunDocs"'+(running?' disabled':'')+'>'+(running?'⏳ Actualizando documentos…':'▶ Actualizar documentos')+'</button>'
+        +' <button type="button" class="btn ghost" id="launcherUploadBtn"'+(running?' disabled':'')+'>⬆ Subir al Vector Store</button>'
         +(j?'<span class="msub" style="margin-left:8px">Último trabajo: '+e(j.kind||'')+' · <b>'+e(j.status||'')+'</b></span>':'');
       const btn=document.getElementById('launcherRunDocs');
       if(btn&&!running) btn.addEventListener('click', launcherRun);
+      const ub=document.getElementById('launcherUploadBtn');
+      if(ub&&!running) ub.addEventListener('click', launcherUpload);
       window._launcherJobRunning=running;
     }
     const p=await fetch(LAUNCHER_BASE+'/progress',{cache:'no-store'}).then(r=>r.json());
@@ -6129,6 +6133,38 @@ async function launcherRun(){
   let n=0; const t=setInterval(async()=>{
     await loadLauncherPanel();
     if(window._launcherJobRunning!==true || ++n>60) clearInterval(t);
+  }, 5000);
+}
+// Subida al Vector Store: acción CONFIRMADA (SÍ escribe en OpenAI y cuesta). 2 pasos: preflight → confirmar.
+async function launcherUpload(){
+  const ub=document.getElementById('launcherUploadBtn');
+  if(ub){ ub.disabled=true; ub.textContent='Comprobando…'; }
+  let pre=null;
+  try{ pre=await fetch(LAUNCHER_BASE+'/upload/preflight',{method:'POST'}).then(r=>r.json()); }catch(err){}
+  if(ub){ ub.disabled=false; ub.textContent='⬆ Subir al Vector Store'; }
+  if(!pre||!pre.ok){
+    alert('No se pudo preparar la subida'+(pre&&pre.error==='no_openai_key'?': falta la clave OpenAI en el Llavero del Mac.':(pre&&pre.error?': '+pre.error:'.')));
+    return;
+  }
+  if(!pre.ready){
+    alert('La subida está bloqueada:\n\n• '+((pre.blockers||[]).join('\n• ')||'(sin detalle)'));
+    return;
+  }
+  const pk=pre.package||{}, pend=(pk.new_files||0)+(pk.changed_files||0);
+  if(pend===0){ alert('No hay documentos nuevos ni cambiados que subir. El store ya está al día.'); loadLauncherPanel(); return; }
+  const proj=pre.cost&&pre.cost.current_projection&&pre.cost.current_projection.total_usd;
+  const msg='Subir al Vector Store documental:\n\n'
+    +'• '+(pk.new_files||0)+' nuevos, '+(pk.changed_files||0)+' cambiados ('+pend+' en total)\n'
+    +'• '+(pk.unchanged_files||0)+' ya subidos (no se re-suben)\n'
+    +(proj!=null?'• Coste mensual proyectado: ~$'+Number(proj).toFixed(2)+' / límite $'+pre.cost.monthly_budget_usd+'\n':'')
+    +'\nEsto SÍ escribe en OpenAI y consume presupuesto. ¿Confirmar la subida?';
+  if(!confirm(msg)) return;
+  if(ub){ ub.disabled=true; ub.textContent='⬆ Subiendo…'; }
+  try{ await fetch(LAUNCHER_BASE+'/upload/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approval_token:pre.approval_token})}); }catch(err){}
+  await loadLauncherPanel();
+  let n=0; const t=setInterval(async()=>{
+    await loadLauncherPanel();
+    if(window._launcherJobRunning!==true || ++n>120) clearInterval(t);
   }, 5000);
 }
 async function loadLauncherStores(){
