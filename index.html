@@ -543,8 +543,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.2.4';
+const APP_VERSION='3.2.5';
 const CHANGELOG=[
+  {v:'3.2.5',d:'2026-07-26',c:['El launcher sirve ahora su propio panel local en http://127.0.0.1:8765/ con los mismos botones (Actualizar / Subir al store) y el estado. Sirve para Safari, que bloquea que esta web hable con el ayudante local: hay un enlace «Abrir panel local del launcher ↗» en la pestaña Launcher. En Chrome sigue funcionando integrado aquí (arreglado el acceso a red privada).']},
   {v:'3.2.4',d:'2026-07-26',c:['La pestaña «🛰 Launcher» tiene ya el botón «⬆ Subir al Vector Store»: comprueba primero qué documentos nuevos/cambiados subiría y su coste, te lo enseña y pide confirmación explícita antes de escribir en OpenAI (los ya subidos no se re-suben). Cierra la rutina «actualizar documentos» de punta a punta: preparar en local (botón anterior) → subir al store (este). Nota: los botones solo aparecen con el ayudante local en marcha.']},
   {v:'3.2.3',d:'2026-07-26',c:['La pestaña «🛰 Launcher» tiene ya el botón «▶ Actualizar documentos»: cuando el ayudante local está en marcha, lanza la actualización SEGURA de documentos (extrae texto y figuras de los PDFs nuevos y los prepara localmente; la subida al Vector Store sigue siendo un paso aparte). Muestra el estado del trabajo en vivo y se bloquea mientras se ejecuta.']},
   {v:'3.2.2',d:'2026-07-25',c:['La pestaña «🛰 Launcher» muestra ahora el estado de tus Vector Stores (nombre, nº de ficheros, tamaño y última actividad), consultado directamente a OpenAI desde el navegador — visible desde cualquier dispositivo con la clave configurada, sin depender del ayudante local.']},
@@ -3119,6 +3120,7 @@ function openSettings(){
 
     <div class="cfg-pane" data-pane="launcher">
     <div class="sec-note">El <b>launcher</b> es un ayudante local (en tu Mac, <code>127.0.0.1:8765</code>) que ejecuta el pipeline del segundo cerebro y deja ver aquí su progreso. No es una caja negra. Instálalo con <code>bash secondbrain/launcher/install-launchagent.sh</code> (arranca solo al iniciar sesión).</div>
+    <div class="sec-note" style="margin-top:6px">🧭 <b>¿En Safari?</b> Safari bloquea que esta web (HTTPS) hable con el ayudante local, así que aquí verás «no arrancado». Abre el panel del launcher en su propia pestaña —ahí funciona en cualquier navegador—: <a href="http://127.0.0.1:8765/" target="_blank" rel="noopener">Abrir panel local del launcher ↗</a> (en Chrome funciona también aquí abajo integrado).</div>
     <div id="launcherStatus" class="dx-meta" style="margin:8px 0">Comprobando el launcher…</div>
     <div id="launcherActions" style="margin:8px 0"></div>
     <div id="launcherProgress" style="margin:6px 0;font-size:12.5px"></div>
