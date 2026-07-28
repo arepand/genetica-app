@@ -543,8 +543,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.4.1';
+const APP_VERSION='3.5.0';
 const CHANGELOG=[
+  {v:'3.5.0',d:'2026-07-28',c:['Nuevo visor «📋 Ficha»: en «Documentos» (y en el inventario del segundo cerebro) cada documento tiene ahora un botón que abre su FICHA BIBLIOGRÁFICA COMPLETA — cita formateada según el tipo (artículo, capítulo de libro, libro, legislación) más todos los campos capturados: autores, año, revista, volumen, número, páginas, editorial, edición, capítulo, serie, idioma, boletín e identificadores (DOI/PMID/PMCID/ISBN…). Solo se muestran los campos presentes.','El registro bibliográfico completo (autores, revista, vol/núm/págs, editores, PMID/PMCID…) ahora se captura y, sobre todo, PERDURA: sobrevive a cada ciclo «Actualizar TODO» del agente mediante una caché durable, en vez de perderse al regenerar el catálogo. El índice publicado pasa de 0 a 1317 documentos con lista de autores y de 1372 a 1850 con revista/publicación.']},
   {v:'3.4.1',d:'2026-07-28',c:['Corrige la forma corta de artículos en las referencias: ahora toma la etiqueta de autor del Catálogo Maestro («Primer-autor et al.») del campo real del read-model, así que los artículos enlazados se muestran cortos (autor + año) en vez del título completo.']},
   {v:'3.4.0',d:'2026-07-28',c:['Nombre canónico COHERENTE en todas partes: las referencias bibliográficas de los protocolos toman ahora su nombre del documento del Catálogo Maestro (el mismo que ves en el repositorio y en las citas del chat), no de la cita cruda con la que se escribió la referencia. Los ARTÍCULOS se muestran en forma corta —«Primer-autor et al.» con su año—, y los libros/otros con su título canónico completo. Si una referencia no está enlazada a ningún documento del Catálogo, se conserva su cita original.']},
   {v:'3.3.0',d:'2026-07-26',c:['El índice de figuras/tablas de B2 ahora se lee EN VIVO del bucket privado: al añadir documentos nuevos, sus figuras aparecen solas sin necesidad de re-desplegar la app. La integridad de cada imagen se sigue verificando por su huella registrada en el índice. (Antes la app llevaba la huella del índice fijada y cada tanda nueva exigía un despliegue.)']},
@@ -2437,6 +2438,98 @@ function refShortAuthorsLabel(work){
   if(!last) return '';
   return repairMojibake(last)+(au.length>1?' et al.':'');
 }
+/* Lista de autores en formato cita: hasta 6 y «et al.» si hay más. */
+function formatAuthorList(authors){
+  const a=(Array.isArray(authors)?authors:[]).map(x=>repairMojibake(String(x||'').trim())).filter(Boolean);
+  if(!a.length) return '';
+  return a.length<=6?a.join(', '):a.slice(0,6).join(', ')+', et al.';
+}
+/* Cita bibliográfica COMPLETA de una obra del Catálogo Maestro, según su tipo (artículo / capítulo / libro / ley).
+   Usa los campos del read-model (authors, bibliographic.*). Vacío si no hay datos. */
+function formatCitation(work){
+  if(!work) return '';
+  const b=work.bibliographic||{};
+  const type=String(work.type||'');
+  const authorStr=formatAuthorList(work.authors&&work.authors.length?work.authors:(work.author?[work.author]:[]));
+  const title=repairMojibake(String(work.title||'').trim());
+  const year=work.year||(b.publication_date?String(b.publication_date).slice(0,4):'')||'';
+  const journal=repairMojibake(String(b.container_title_short||b.container_title||''));
+  const vol=b.volume||'', issue=b.issue||'', pages=b.pages||(b.page_start?(b.page_start+(b.page_end?'-'+b.page_end:'')):'');
+  const publisher=repairMojibake(String(b.publisher||'')), edition=b.edition||'';
+  const P=[];
+  if(/book_chapter/.test(type)){
+    if(authorStr)P.push(/\.$/.test(authorStr)?authorStr:authorStr+'.'); if(title)P.push(title+'.');
+    if(b.container_title)P.push('En: '+repairMojibake(String(b.container_title))+'.');
+    if(edition)P.push(edition+'.'); if(publisher)P.push(publisher+';'); if(year)P.push(year+'.');
+    if(pages)P.push('p. '+pages+'.');
+  } else if(/book/.test(type)){
+    if(authorStr)P.push(/\.$/.test(authorStr)?authorStr:authorStr+'.'); if(title)P.push(title+'.');
+    if(edition)P.push(edition+'.'); if(publisher)P.push(publisher+';'); if(year)P.push(year+'.');
+  } else if(/legislation/.test(type)){
+    if(title)P.push(title+'.');
+    const gz=[b.gazette_title||'', b.gazette_number||((work.external_ids||{}).legal_id||(work.external_ids||{}).boe||'')].filter(Boolean).join(' ');
+    if(gz||year)P.push([gz,year].filter(Boolean).join(', ')+'.');
+  } else {
+    if(authorStr)P.push(/\.$/.test(authorStr)?authorStr:authorStr+'.'); if(title)P.push(title+'.');
+    let j=journal; if(vol)j+=' '+vol; if(issue)j+='('+issue+')'; if(pages)j+=':'+pages; if(year)j+=(j?', ':'')+year;
+    if(j.trim())P.push(j.trim()+'.');
+  }
+  return P.join(' ').replace(/\s+/g,' ').trim();
+}
+/* Ficha bibliográfica COMPLETA de una obra del Catálogo Maestro: cita formateada + todos los campos capturados
+   (autores, revista, vol/núm/págs, editorial, edición, capítulo, serie, idioma, boletín, identificadores…).
+   Solo muestra los campos presentes. Alimenta el visor «📋 Ficha». */
+function fichaCompletaHtml(w){
+  if(!w) return '';
+  const b=w.bibliographic||{}, ids=w.external_ids||{};
+  const cite=formatCitation(w);
+  const authors=(Array.isArray(w.authors)&&w.authors.length)
+    ? w.authors.map(a=>typeof a==='string'?a:(a&&(a.name||[a.given,a.family].filter(Boolean).join(' ')))).filter(Boolean).join('; ')
+    : (w.author||'');
+  const pages=b.pages||(b.page_start?(b.page_start+(b.page_end?'-'+b.page_end:'')):'');
+  const rows=[
+    ['Título', w.title],
+    ['Tipo', w.type],
+    ['Autores', authors],
+    ['Año', w.year||(b.publication_date?String(b.publication_date).slice(0,4):'')],
+    ['Revista / Publicación', b.container_title],
+    ['Abreviatura', b.container_title_short],
+    ['Volumen', b.volume],
+    ['Número', b.issue],
+    ['Páginas', pages],
+    ['Nº de artículo', b.article_number],
+    ['Editorial', b.publisher],
+    ['Lugar de edición', b.publication_place],
+    ['Edición', b.edition],
+    ['Capítulo', b.chapter_number],
+    ['Serie', [b.series_title,b.series_number].filter(Boolean).join(' ')],
+    ['Idioma', b.language],
+    ['Fecha de publicación', b.publication_date],
+    ['Boletín', [b.gazette_title,b.gazette_number].filter(Boolean).join(' ')],
+    ['Aprobación', b.approval_date],['Entrada en vigor', b.effective_date],['Derogación', b.expiry_date]
+  ];
+  const idOrder=['doi','pmid','pmcid','isbn','nbk','legal_id','boe','doga'];
+  const idStr=idOrder.filter(k=>ids[k]).map(k=>k.toUpperCase()+': '+ids[k])
+    .concat(Object.keys(ids).filter(k=>!idOrder.includes(k)&&typeof ids[k]==='string'&&ids[k]).map(k=>k+': '+ids[k])).join(' · ');
+  if(idStr) rows.push(['Identificadores', idStr]);
+  const url=b.official_url||w.url||'';
+  const body=rows.filter(r=>r[1]!=null&&String(r[1]).trim()!=='').map(r=>
+    `<div style="display:flex;gap:10px;padding:3px 0;border-bottom:1px solid var(--line)"><div style="flex:0 0 150px;color:var(--ink3);font-size:12px">${escHtml(r[0])}</div><div style="flex:1;font-size:13px">${escHtml(repairMojibake(String(r[1])))}</div></div>`).join('');
+  return `<div style="font-size:14px;line-height:1.5;margin-bottom:12px"><b>Cita:</b><br>${cite?escHtml(cite):'<span class="dx-meta">—</span>'}</div>`
+    +(url?`<div style="margin-bottom:10px"><a href="${escA(url)}" target="_blank" rel="noopener" style="color:var(--accent)">Abrir documento ↗</a></div>`:'')
+    +`<div>${body}</div>`;
+}
+/* Abre el visor modal de la ficha completa a partir de una obra del Catálogo Maestro. */
+function openFichaWork(w){
+  if(!w) return;
+  const ov=document.createElement('div'); ov.className='overlay';
+  ov.innerHTML=`<div class="modal" style="max-width:600px"><h2 style="font-size:16px">📋 Ficha bibliográfica</h2>
+    <div style="max-height:66vh;overflow:auto">${fichaCompletaHtml(w)}</div>
+    <div class="modal-actions"><button class="btn primary" data-close>Cerrar</button></div></div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('[data-close]').addEventListener('click',()=>ov.remove());
+  ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); });
+}
 /* Render único de una fuente: cita + identificadores + Papers + fichero exacto de Drive. */
 function bibliographyEntryHtml(fuente, opts){
   opts=opts||{}; fuente=canonicalBibliographyReference(fuente||{});
@@ -3200,6 +3293,7 @@ function openSettings(){
   renderSplitStoresStatus();
 
   const invStats=ov.querySelector('#cfgSbInvStats'), invSearch=ov.querySelector('#cfgSbInvSearch'), invList=ov.querySelector('#cfgSbInvList'), invRefresh=ov.querySelector('#cfgSbInvRefresh');
+  if(invList) invList.addEventListener('click', e=>{ const b=e.target.closest('[data-fwid]'); if(!b) return; const works=(_masterCatalogIndex&&_masterCatalogIndex.works)||[]; const w=works.find(x=>x.work_id===b.dataset.fwid); if(w) openFichaWork(w); });
   let invType='all';
   const renderInvList=()=>{ if(invList) invList.innerHTML = invType==='dup' ? sbDupRowsHtml() : invType==='missing' ? sbMissingRowsHtml() : sbInvRows(invSearch?invSearch.value:'', invType); };
   function renderInv(){ if(invStats){ const cc=sbInvCounts(), ss=_sbStoreStats||{}, remote=(ss.genereviews!=null&&ss.documents!=null)?(' · VS: <b>'+ss.genereviews+'</b> + <b>'+ss.documents+'</b> archivos'):''; invStats.innerHTML=cc.total?('📚 <b>'+cc.total+'</b> referencias · 📖 <b>'+cc.gr+'</b> GeneReviews · 📄 <b>'+cc.pdf+'</b> con archivo · 🌐 <b>'+cc.web+'</b> web'+remote):'Sin cargar'; } renderInvList(); }
@@ -5687,7 +5781,7 @@ function sbInvRows(filter, type){
       if(type==='gr'&&!isGr) continue; if(type==='pdf'&&!hasFile) continue; if(type==='web'&&!isWeb) continue;
       const hay=accLower([w.title,w.short_title,w.author,w.type,Object.values(w.external_ids||{}).join(' '),Object.values(w.bibliographic||{}).filter(x=>typeof x==='string').join(' ')].join(' '));
       if(filter&&!hay.includes(accLower(filter))) continue;
-      rows.push('<div style="padding:4px 0;border-bottom:1px solid var(--line);font-size:12px;line-height:1.55">'+bibliographyEntryHtml(canonicalBibliographyReference({work_id:w.work_id,titulo:w.title}))+'</div>');
+      rows.push('<div style="padding:4px 0;border-bottom:1px solid var(--line);font-size:12px;line-height:1.55">'+bibliographyEntryHtml(canonicalBibliographyReference({work_id:w.work_id,titulo:w.title}))+' <button class="btn" data-fwid="'+escA(w.work_id)+'" title="Ver la ficha bibliográfica completa" style="padding:0 6px;font-size:11px">📋 Ficha</button></div>');
       if(rows.length>=400){ rows.push('<div class="dx-meta" style="padding:4px 0">… afina la búsqueda para ver más</div>'); break; }
     }
     return rows.length?rows.join(''):'<div class="dx-meta" style="padding:4px 0">Sin resultados'+(filter?' para «'+escHtml(filter)+'»':'')+'</div>';
@@ -6364,6 +6458,7 @@ async function renderDriveList(files){
       if(tl===undefined){ idxInfo='<span class="dx-meta hastip" style="color:#e0a53f">⚠ texto sin medir (indexado en versión anterior)<span class="tooltip">Se indexó antes de poder medir el texto; puede estar recortado a las primeras páginas. Pulsa «↻ Re-indexar» para leer el PDF entero.</span></span>'; needReidx=true; }
       else if(tl<500){ idxInfo='<span class="dx-meta hastip" style="color:#e0704f">⚠ casi sin texto — ¿PDF escaneado?<span class="tooltip">Se extrajeron '+tl+' caracteres. Si es un PDF escaneado (imágenes sin capa de texto) no sirve: el segundo cerebro necesita texto. Necesitaría OCR.</span></span>'; needReidx=true; }
     }
+    const mw = masterWorkForDriveId(f.id) || (reg?masterWorkForReference(reg):null);   // obra del Catálogo Maestro (ficha completa)
     return `<div class="lib-card">
       <div class="nm">${escHtml(cita)}${descTip}</div>
       ${mostrarArchivo?`<div class="meta" title="Nombre del archivo en Google Drive">📄 ${escHtml(f.name)}</div>`:''}
@@ -6371,6 +6466,7 @@ async function renderDriveList(files){
       <div class="meta">${(f.modifiedTime||'').slice(0,10)} · ${flag(enBib,'bibliografía','¿Citado por alguna referencia/protocolo?')}${dupBadge?' · '+dupBadge:''}${idxInfo?' · '+idxInfo:''}</div>
       <div class="acts">
         ${f.webViewLink?`<a class="drive-ico" href="${f.webViewLink}" target="_blank" rel="noopener" title="Abrir en Google Drive">${DRIVE_ICON}</a>`:''}${papersBadge}
+        ${mw?`<button class="btn" data-ficha="${i}" title="Ver la ficha bibliográfica completa (autores, revista, volumen, páginas, identificadores…)">📋 Ficha</button>`:''}
         ${catalogOnly?`<span class="pill ok" title="Coincidencia exacta por el identificador interno de Google Drive">✓ Catálogo Maestro</span>`:(indexado ? `${needReidx?`<button class="btn" data-reindex="${i}" title="Vuelve a leer el PDF ENTERO y re-analizarlo (completa libros o documentos indexados en una versión anterior)">↻ Re-indexar</button>`:''}<button class="btn" data-editmeta="${i}" title="Editar el nombre y la descripción del índice anterior">✏ Editar índice anterior</button><button class="btn ghost" data-unreg="${reg.id}" title="Quitar solo del índice anterior; el PDF no se borra de Drive y el Catálogo Maestro no se modifica">Quitar del índice anterior</button>` : `<button class="btn primary" data-index="${i}" title="La IA intenta identificar este archivo desconocido">✨ Identificar (IA)</button>`)}
       </div>
     </div>`;
@@ -6383,6 +6479,7 @@ async function renderDriveList(files){
   };
   list.querySelectorAll('[data-index]').forEach(b=>b.addEventListener('click', ()=>idx(+b.dataset.index,false)));
   list.querySelectorAll('[data-reindex]').forEach(b=>b.addEventListener('click', ()=>idx(+b.dataset.reindex,true)));   // re-lee el PDF entero (completa libros / versiones antiguas)
+  list.querySelectorAll('[data-ficha]').forEach(b=>b.addEventListener('click', ()=>{ const f=visible[+b.dataset.ficha]; const reg=regOf(f); const w=masterWorkForDriveId(f.id)||(reg?masterWorkForReference(reg):null); if(w) openFichaWork(w); }));
   list.querySelector('#docShowMore')?.addEventListener('click', ()=>{ _docVisibleLimit+=DOC_PAGE_SIZE; renderDriveList(files); });
   wireHead();
   list.querySelectorAll('[data-editmeta]').forEach(b=>b.addEventListener('click', ()=>editarDocMeta(visible[+b.dataset.editmeta], regOf(visible[+b.dataset.editmeta]), ()=>renderDriveList(files))));
