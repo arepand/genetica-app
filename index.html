@@ -543,8 +543,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.3.0';
+const APP_VERSION='3.4.0';
 const CHANGELOG=[
+  {v:'3.4.0',d:'2026-07-28',c:['Nombre canónico COHERENTE en todas partes: las referencias bibliográficas de los protocolos toman ahora su nombre del documento del Catálogo Maestro (el mismo que ves en el repositorio y en las citas del chat), no de la cita cruda con la que se escribió la referencia. Los ARTÍCULOS se muestran en forma corta —«Primer-autor et al.» con su año—, y los libros/otros con su título canónico completo. Si una referencia no está enlazada a ningún documento del Catálogo, se conserva su cita original.']},
   {v:'3.3.0',d:'2026-07-26',c:['El índice de figuras/tablas de B2 ahora se lee EN VIVO del bucket privado: al añadir documentos nuevos, sus figuras aparecen solas sin necesidad de re-desplegar la app. La integridad de cada imagen se sigue verificando por su huella registrada en el índice. (Antes la app llevaba la huella del índice fijada y cada tanda nueva exigía un despliegue.)']},
   {v:'3.2.7',d:'2026-07-26',c:['Índice B2 regenerado y actualizado: la app ya localiza las figuras/tablas de todos los documentos nuevos (incluidos los de DM1 y las últimas incorporaciones) — el lector B2 pasa de 1249 a 1326 documentos y 225512 recursos visuales.']},
   {v:'3.2.6',d:'2026-07-26',c:['El ayudante local (launcher) tiene ahora su propia numeración y changelog, accesible con un enlace «📋 changelog» tanto en la pestaña Launcher como en el panel local — se abre en pestaña nueva (funciona también en Safari). Además el panel local muestra ya el estado de los Vector Stores.']},
@@ -2423,11 +2424,31 @@ function bibRefHtml(fuente, opts){
   const enc=encodeURIComponent(JSON.stringify({titulo:fuente.titulo||'', url:fuente.url||'', anio:fuente.anio||''}));
   return readcubeLibBadgeHtml(ids)+sourceBadge+' <a class="tip-ai bib-assign" data-bibref="'+enc+'" title="Asignar/registrar el PDF de esta referencia en tu repositorio">📎 asignar PDF</a>'+readcubeMarkerHtml(ids);
 }
+/* Referencia CORTA de un artículo: «Primer-autor et al.» (el año se muestra en su chip aparte). Del apellido del
+   primer autor del Catálogo Maestro. Sin autores → '' (se usa el título). */
+function refShortAuthorsLabel(work){
+  const au=Array.isArray(work&&work.authors)?work.authors.filter(Boolean):[];
+  if(!au.length) return '';
+  const a=String(au[0]).trim();
+  const last=a.indexOf(',')>=0?a.split(',')[0].trim():(a.split(/\s+/).filter(Boolean).pop()||a);
+  if(!last) return '';
+  return repairMojibake(last)+(au.length>1?' et al.':'');
+}
 /* Render único de una fuente: cita + identificadores + Papers + fichero exacto de Drive. */
 function bibliographyEntryHtml(fuente, opts){
   opts=opts||{}; fuente=canonicalBibliographyReference(fuente||{});
-  const title=repairMojibake(fuente.titulo||fuente.title||fuente.url||opts.fallback||'Fuente');
-  const year=fuente.anio||fuente.year||'';
+  // El nombre CANÓNICO del documento (Catálogo Maestro) manda sobre la cita cruda de la referencia: así el mismo
+  // documento se lee IGUAL en protocolos, repositorio y citas del chat. Para ARTÍCULOS se usa la forma CORTA
+  // «Primer-autor et al.» (el año va en su chip aparte); para libros/otros, el título canónico completo.
+  const canonWork=masterWorkForReference(fuente)||masterWorkForDriveId(fuente.driveId||fuente.drive_id||driveFileIdFromUrl(fuente.enlace||fuente.url));
+  let canonTitle='';
+  if(canonWork){
+    const isArt=/article|review|guideline|consensus|report|standard|congress|web_article/i.test(String(canonWork.type||''));
+    const shortAuthors=refShortAuthorsLabel(canonWork);
+    canonTitle=(isArt&&shortAuthors)?shortAuthors:(canonWork.title?repairMojibake(String(canonWork.title)):'');
+  }
+  const title=canonTitle||repairMojibake(fuente.titulo||fuente.title||fuente.url||opts.fallback||'Fuente');
+  const year=fuente.anio||fuente.year||(canonWork&&canonWork.year)||'';
   const label=escHtml(title)+(year?' <span class="bib-year" title="Año de publicación">'+escHtml(String(year))+'</span>':'');
   const href=opts.href||fuente.url||'';
   const linked=href?`<a href="${escA(href)}" target="_blank" rel="noopener">${label}</a>`:`<span>${label}</span>`;
