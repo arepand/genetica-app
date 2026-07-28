@@ -543,8 +543,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.4.0';
+const APP_VERSION='3.4.1';
 const CHANGELOG=[
+  {v:'3.4.1',d:'2026-07-28',c:['Corrige la forma corta de artículos en las referencias: ahora toma la etiqueta de autor del Catálogo Maestro («Primer-autor et al.») del campo real del read-model, así que los artículos enlazados se muestran cortos (autor + año) en vez del título completo.']},
   {v:'3.4.0',d:'2026-07-28',c:['Nombre canónico COHERENTE en todas partes: las referencias bibliográficas de los protocolos toman ahora su nombre del documento del Catálogo Maestro (el mismo que ves en el repositorio y en las citas del chat), no de la cita cruda con la que se escribió la referencia. Los ARTÍCULOS se muestran en forma corta —«Primer-autor et al.» con su año—, y los libros/otros con su título canónico completo. Si una referencia no está enlazada a ningún documento del Catálogo, se conserva su cita original.']},
   {v:'3.3.0',d:'2026-07-26',c:['El índice de figuras/tablas de B2 ahora se lee EN VIVO del bucket privado: al añadir documentos nuevos, sus figuras aparecen solas sin necesidad de re-desplegar la app. La integridad de cada imagen se sigue verificando por su huella registrada en el índice. (Antes la app llevaba la huella del índice fijada y cada tanda nueva exigía un despliegue.)']},
   {v:'3.2.7',d:'2026-07-26',c:['Índice B2 regenerado y actualizado: la app ya localiza las figuras/tablas de todos los documentos nuevos (incluidos los de DM1 y las últimas incorporaciones) — el lector B2 pasa de 1249 a 1326 documentos y 225512 recursos visuales.']},
@@ -2427,6 +2428,8 @@ function bibRefHtml(fuente, opts){
 /* Referencia CORTA de un artículo: «Primer-autor et al.» (el año se muestra en su chip aparte). Del apellido del
    primer autor del Catálogo Maestro. Sin autores → '' (se usa el título). */
 function refShortAuthorsLabel(work){
+  // El read-model del Catálogo Maestro trae «author» YA como etiqueta corta («Primer-autor et al.»): úsalo directo.
+  if(work&&work.author) return repairMojibake(String(work.author).trim());
   const au=Array.isArray(work&&work.authors)?work.authors.filter(Boolean):[];
   if(!au.length) return '';
   const a=String(au[0]).trim();
