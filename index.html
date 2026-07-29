@@ -549,8 +549,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.6.0';
+const APP_VERSION='3.6.1';
 const CHANGELOG=[
+  {v:'3.6.1',d:'2026-07-29',c:['La revisión exhaustiva de protocolos queda enrutada de forma explícita: GPT‑5.6 Sol con esfuerzo xhigh redacta el candidato y Claude Opus 5, si fue evaluado y activado en el Observatorio, realiza la auditoría clínica independiente; si esta no está disponible, se conserva una ruta de auditoría potente con fallback a Sol max.','La salida máxima de «Rehacer protocolo con evidencia actual» aumenta de 16.000 a 48.000 tokens y la auditoría separada de 6.000 a 32.000, para reducir cortes en protocolos extensos. Son límites máximos, no una cantidad que se consuma necesariamente.','Una promoción previa de Opus 5 ya no puede desplazar a Sol como autor de la revisión: se aplica a la segunda revisión independiente, que es donde aporta diversidad real de modelo.']},
   {v:'3.6.0',d:'2026-07-29',c:['«Rehacer protocolo con evidencia actual» pasa a ser un flujo de alta exigencia: genera el candidato, valida su estructura, comprueba los códigos HPO contra la fuente oficial y somete el resultado a una segunda revisión clínica separada con nueva búsqueda científica.','El segundo revisor comprueba fidelidad a criterios vigentes, correspondencia HPO-concepto, estudio genético, herencia/asesoramiento y trazabilidad bibliográfica. Un problema clínico o bibliográfico crítico/mayor bloquea el candidato y deja intacta la ficha actual; las discrepancias HPO se señalan de forma destacada para revisión manual, sin bloquearlo.','Las respuestas extensas tienen más margen de salida y un reintento automático si el JSON llega cortado o incompleto. Ariadna extrae de forma segura el objeto aunque el proveedor añada texto o citas, pero nunca intenta completar por su cuenta contenido clínico truncado.']},
   {v:'3.5.5',d:'2026-07-29',c:['En toda Ariadna, el texto de una referencia bibliográfica deja de ser un enlace subrayado. Un icono 🔗 situado después del año abre la fuente original; se aplica también a protocolos prenatales, indicaciones y demás vistas bibliográficas.','Las referencias bibliográficas aumentan un punto su tamaño para mejorar la lectura.','Los identificadores se presentan como badges compactos DOI, PMID, PMCID o ISBN, sin repetir el número en pantalla. Los NBK muestran su colección real —GeneReviews, StatPearls, Endotext, etc.— o NCBI Bookshelf si aún no está clasificada. El valor completo queda en el texto emergente y cada badge abre su registro oficial.']},
   {v:'3.5.4',d:'2026-07-29',c:['La vista de un protocolo aprovecha ahora todo el ancho disponible de la página, incluida su barra de acciones.','Las guías, fuentes y referencias de cada protocolo se ordenan automáticamente por año descendente —las más recientes primero—; las referencias sin fecha quedan al final y los empates conservan su orden original.']},
@@ -1359,8 +1360,8 @@ const AI_OPERATION_POLICIES={
   protocol_freshness:{label:'Comprobar vigencia de protocolo',group:'clinical',choices:[M('anthropic','claude-sonnet-5','medium'),M('openai','gpt-5.6-terra','medium')]},
   prenatal_hpo_window:{label:'Proponer semanas de HPO prenatal',group:'clinical',choices:[M('anthropic','claude-sonnet-5','medium'),M('openai','gpt-5.6-terra','medium')]},
   protocol_create:{label:'Crear protocolo',group:'author',choices:[M('anthropic','claude-opus-4-8','high'),M('openai','gpt-5.6-sol','high')]},
-  protocol_regenerate:{label:'Rehacer o actualizar protocolo',group:'author',choices:[M('anthropic','claude-opus-4-8','high'),M('openai','gpt-5.6-sol','high')]},
-  protocol_audit:{label:'Segunda revisión clínica del protocolo',group:'author',choices:[M('openai','gpt-5.6-sol','high'),M('anthropic','claude-opus-4-8','high')]},
+  protocol_regenerate:{label:'Rehacer o actualizar protocolo',group:'author',choices:[M('openai','gpt-5.6-sol','xhigh'),M('anthropic','claude-opus-4-8','high')]},
+  protocol_audit:{label:'Segunda revisión clínica del protocolo',group:'author',choices:[M('anthropic','claude-opus-4-8','high'),M('openai','gpt-5.6-sol','max')]},
   prenatal_protocol_author:{label:'Crear o actualizar protocolo prenatal',group:'author',choices:[M('anthropic','claude-opus-4-8','high'),M('openai','gpt-5.6-sol','high')]},
   prenatal_discover:{label:'Descubrir protocolos prenatales',group:'author',choices:[M('anthropic','claude-opus-4-8','high'),M('openai','gpt-5.6-sol','high')]},
   prenatal_criteria_update:{label:'Actualizar criterios genéticos prenatales',group:'author',choices:[M('anthropic','claude-opus-4-8','high'),M('openai','gpt-5.6-sol','high')]},
@@ -1511,7 +1512,7 @@ const AI_MODEL_EVALUATION_DECISIONS_KEY='fh_model_evaluation_decisions';
 const AI_MODEL_CANDIDATE_REGISTRY=[
   {key:'anthropic-opus-5',label:'Claude Opus 5',provider:'anthropic',matches:id=>/^claude-opus-5(?:-|$)/i.test(id),
     baseline:M('anthropic','claude-opus-4-8','high'),effort:'high',
-    operations:['protocol_create','protocol_regenerate','prenatal_protocol_author','prenatal_discover',
+    operations:['protocol_create','protocol_audit','prenatal_protocol_author','prenatal_discover',
       'prenatal_criteria_update','genetic_test_indication','gene_guidance','chat_deep']}
 ];
 const AI_MODEL_SYNTHETIC_CASES=[
@@ -1575,17 +1576,30 @@ function latestModelEvaluation(candidateKey,model){
 }
 function validPromotionForOperation(operation,cfg){
   if(operation==='pdf_visual_quick'||operation==='pdf_visual_deep') return null;
-  cfg=cfg||loadCfg(); const p=cfg.evaluatedModelPromotions&&cfg.evaluatedModelPromotions[operation];
+  // La autoría de una regeneración clínica está fijada en Sol xhigh. Una
+  // promoción anterior de Opus 5 se reutiliza en la auditoría independiente.
+  if(operation==='protocol_regenerate') return null;
+  cfg=cfg||loadCfg();
+  const promotions=cfg.evaluatedModelPromotions||{};
+  let p=promotions[operation];
+  if(operation==='protocol_audit'&&!p){
+    p=Object.values(promotions).find(x=>x&&x.candidateKey==='anthropic-opus-5')||null;
+  }
   if(!p||p.evaluatorVersion!==AI_MODEL_EVALUATOR_VERSION) return null;
   const report=modelEvaluationById(p.reportId);
   if(!report||!report.eligible||report.evaluatorVersion!==AI_MODEL_EVALUATOR_VERSION) return null;
-  if(report.provider!==p.provider||report.model!==p.model||!(report.operations||[]).includes(operation)) return null;
+  const currentCandidate=AI_MODEL_CANDIDATE_REGISTRY.find(x=>x.key===p.candidateKey);
+  const currentlyAllowed=!!(currentCandidate&&(currentCandidate.operations||[]).includes(operation));
+  if(report.provider!==p.provider||report.model!==p.model||(!currentlyAllowed&&!(report.operations||[]).includes(operation))) return null;
   return {provider:p.provider,model:p.model,effort:p.effort||report.effort||'high',reportId:p.reportId};
 }
 function applyEvaluatedModelPromotion(reportId,approved){
   const report=modelEvaluationById(reportId); if(!approved||!report||!report.eligible||report.evaluatorVersion!==AI_MODEL_EVALUATOR_VERSION) return false;
   const next=Object.assign({},loadCfg().evaluatedModelPromotions||{});
-  for(const operation of (report.operations||[])){
+  const currentCandidate=AI_MODEL_CANDIDATE_REGISTRY.find(x=>x.key===report.candidateKey);
+  const promotionOperations=currentCandidate?(currentCandidate.operations||[]):(report.operations||[]);
+  delete next.protocol_regenerate;
+  for(const operation of promotionOperations){
     if(operation==='pdf_visual_quick'||operation==='pdf_visual_deep') continue;
     next[operation]={candidateKey:report.candidateKey,provider:report.provider,model:report.model,effort:report.effort,
       reportId:report.id,evaluatorVersion:report.evaluatorVersion,activatedAt:new Date().toISOString()};
@@ -7734,14 +7748,14 @@ function openFichaReview(f, opts){
       const sb=await ragContext(12,'Rehacer protocolo clínico de '+(cur.nombre_es||cur.id)+': fenotipo HPO, criterios diagnósticos, genes, indicación de estudio, herencia y asesoramiento');
       const system='Eres genetista clínico. REHAZ de forma completa un protocolo existente usando: (1) los pasajes recuperados del Segundo Cerebro; (2) una nueva búsqueda web científica actual; y (3) si se aportan, una o varias guías concretas. La ficha actual sirve como punto de partida y para no perder contenido válido, pero no como verdad que debas conservar. Prioriza guías y sociedades profesionales, GeneReviews/revisiones curadas, revisiones sistemáticas y literatura primaria cuando sea necesaria. Mantén EXACTAMENTE el esquema JSON: id, nombre_es, sinonimos, ambitos, grupo, version, fuentes, modulos, dominios, entidades, panel_genes, estudio_genetico y herencia_asesoramiento. "ambitos" admite "adulto", "pediatria" o ambos y se propone para confirmación clínica. Verifica conceptualmente cada HPO; no inventes referencias, identificadores ni normas. Conserva el mismo id. Devuelve SOLO JSON {"ficha":<candidato completo>,"cambios":["cambio y motivo/fuente"]}. El resultado es un candidato: no afirmes que está aprobado.';
       const user=JSON.stringify({ficha_actual:cur,segundo_cerebro:sb||'Sin pasajes recuperados',guias_concretas:includeSpecificGuides?guideCtx:'Ninguna; usa Segundo Cerebro y búsqueda web',fecha:new Date().toISOString().slice(0,10)});
-      let resp=await callLLM({ system, user, webSearch:true, maxTokens:16000, operation:'protocol_regenerate', thinking:true });
+      let resp=await callLLM({ system, user, webSearch:true, maxTokens:48000, operation:'protocol_regenerate', thinking:true });
       let parsed=rebuiltProtocolResponse(resp), autoRetried=false;
       if(!parsed){
         autoRetried=true;
         gout.className='loading';
         gout.textContent='La primera respuesta llegó incompleta. Reintentando automáticamente con más énfasis en entregar el JSON completo…';
         const retrySystem=system+' REINTENTO TÉCNICO: la respuesta anterior no se pudo leer completa. Entrega un único JSON compacto, íntegro y cerrado. No añadas introducción, Markdown, comentarios ni citas fuera del JSON; no omitas ninguna de las colecciones obligatorias del esquema.';
-        resp=await callLLM({ system:retrySystem, user, webSearch:true, maxTokens:16000, operation:'protocol_regenerate', thinking:true });
+        resp=await callLLM({ system:retrySystem, user, webSearch:true, maxTokens:48000, operation:'protocol_regenerate', thinking:true });
         parsed=rebuiltProtocolResponse(resp);
       }
       if(!parsed){
@@ -7781,11 +7795,11 @@ function openFichaReview(f, opts){
       gout.textContent='Realizando una segunda revisión clínica separada: criterios, HPO, estudio genético, herencia y referencias…';
       const auditSystem='ARIADNA_PROTOCOL_AUDIT. Actúas como SEGUNDO REVISOR clínico y bibliográfico independiente de un protocolo de genética. No lo reescribas y no des por bueno el trabajo del primer modelo. Contrasta mediante búsqueda científica actual: (1) criterios diagnósticos y su vigencia; (2) que cada código HPO corresponda al concepto expresado; (3) genes y estrategia de estudio de primera línea/escalado; (4) herencia, recurrencia y asesoramiento; (5) que las referencias e identificadores existan y respalden realmente las afirmaciones; (6) que no se haya perdido contenido válido de la ficha anterior sin justificación. Prioriza sociedades profesionales, guías vigentes, GeneReviews/revisiones curadas y literatura primaria. Considera "critica" una falsedad que pueda cambiar una decisión clínica, "mayor" una omisión o afirmación relevante sin respaldo y "menor" un detalle que no cambia la conducta. "aprobado" solo puede ser true si no hay problemas críticos ni mayores. Devuelve SOLO JSON {"aprobado":true|false,"confianza":"alta|media|baja","resumen":"...","problemas":[{"gravedad":"critica|mayor|menor","ruta":"campo JSON","problema":"...","evidencia":"fuente o comprobación concreta"}]}. No inventes problemas ni referencias.';
       const auditUser=JSON.stringify({ficha_anterior:cur,candidato:nueva,evidencia_recuperada:sb||'Sin pasajes recuperados',guias_aportadas:includeSpecificGuides?guideCtx:'Ninguna',fecha:new Date().toISOString().slice(0,10)});
-      let auditResp=await callLLM({system:auditSystem,user:auditUser,webSearch:true,maxTokens:6000,operation:'protocol_audit',thinking:true});
+      let auditResp=await callLLM({system:auditSystem,user:auditUser,webSearch:true,maxTokens:32000,operation:'protocol_audit',thinking:true});
       let audit=protocolAuditResponse(auditResp);
       if(!audit){
         gout.textContent='La segunda revisión llegó incompleta. Repitiendo la auditoría antes de mostrar el candidato…';
-        auditResp=await callLLM({system:auditSystem+' REINTENTO TÉCNICO: entrega el JSON compacto, completo y sin texto exterior.',user:auditUser,webSearch:true,maxTokens:6000,operation:'protocol_audit',thinking:true});
+        auditResp=await callLLM({system:auditSystem+' REINTENTO TÉCNICO: entrega el JSON compacto, completo y sin texto exterior.',user:auditUser,webSearch:true,maxTokens:32000,operation:'protocol_audit',thinking:true});
         audit=protocolAuditResponse(auditResp);
       }
       if(!audit){
