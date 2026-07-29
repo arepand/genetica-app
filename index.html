@@ -550,8 +550,10 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.6.2';
+const APP_VERSION='3.6.4';
 const CHANGELOG=[
+  {v:'3.6.4',d:'2026-07-30',c:['Las fuentes bibliográficas de Consultar pasan explícitamente por el mismo render canónico que los protocolos: título del Catálogo Maestro, primer autor o «et al.», referencia corta, año, badges e icono de enlace. La cita cruda del Vector Store queda solo como dato de resolución y nunca como nombre visible cuando existe una obra canónica.']},
+  {v:'3.6.3',d:'2026-07-30',c:['El Archivo documental deja de deducir la salud desde campos históricos: recibe la fotografía real del Launcher, calculada con Vector Store, B2, identificadores e incidencias, y muestra las mismas categorías: OK, pendiente de ingesta, pendiente de B2, sin identificar, incidencias, excluidos y problemas.','Ariadna y el Launcher incorporan el mismo selector de tipo: artículos/revisiones, libros/capítulos, guías/consensos/protocolos, legislación/normas, presentaciones/congresos, fuentes web/bases de datos y otros.','Las fuentes nacidas en web, incluidas las colecciones de NCBI Bookshelf, se mantienen separadas de los documentos descargados y no se presentan como archivos pendientes.']},
   {v:'3.6.2',d:'2026-07-29',c:['«Rehacer protocolo con evidencia actual» recupera el flujo simple y fiable anterior: una sola generación prepara el candidato y lo coloca directamente en el editor para revisión humana; se retira la segunda auditoría automática que estaba bloqueando candidatos utilizables.','La generación conserva un máximo de 48.000 tokens para protocolos extensos y GPT‑5.6 Sol con esfuerzo xhigh como autor.','El prompt exige que mayores/menores contengan exclusivamente códigos HP:0000000 y que la lógica sea and u or. Si aun así llega una discrepancia estructural, se señala para revisión sin ocultar ni bloquear el candidato.','Las fichas de libros muestran el ISBN como campo propio. El Archivo documental enseña la miniatura ya generada por el indexador, leída desde B2 privado y comprobada por su huella.','La sincronización del catálogo recupera edición, ISBN y miniatura desde las fuentes locales y los recibos verificados de B2 antes de publicar el índice, para que Ariadna y el launcher compartan la misma ficha.']},
   {v:'3.6.1',d:'2026-07-29',c:['La revisión exhaustiva de protocolos queda enrutada de forma explícita: GPT‑5.6 Sol con esfuerzo xhigh redacta el candidato y Claude Opus 5, si fue evaluado y activado en el Observatorio, realiza la auditoría clínica independiente; si esta no está disponible, se conserva una ruta de auditoría potente con fallback a Sol max.','La salida máxima de «Rehacer protocolo con evidencia actual» aumenta de 16.000 a 48.000 tokens y la auditoría separada de 6.000 a 32.000, para reducir cortes en protocolos extensos. Son límites máximos, no una cantidad que se consuma necesariamente.','Una promoción previa de Opus 5 ya no puede desplazar a Sol como autor de la revisión: se aplica a la segunda revisión independiente, que es donde aporta diversidad real de modelo.']},
   {v:'3.6.0',d:'2026-07-29',c:['«Rehacer protocolo con evidencia actual» pasa a ser un flujo de alta exigencia: genera el candidato, valida su estructura, comprueba los códigos HPO contra la fuente oficial y somete el resultado a una segunda revisión clínica separada con nueva búsqueda científica.','El segundo revisor comprueba fidelidad a criterios vigentes, correspondencia HPO-concepto, estudio genético, herencia/asesoramiento y trazabilidad bibliográfica. Un problema clínico o bibliográfico crítico/mayor bloquea el candidato y deja intacta la ficha actual; las discrepancias HPO se señalan de forma destacada para revisión manual, sin bloquearlo.','Las respuestas extensas tienen más margen de salida y un reintento automático si el JSON llega cortado o incompleto. Ariadna extrae de forma segura el objeto aunque el proveedor añada texto o citas, pero nunca intenta completar por su cuenta contenido clínico truncado.']},
@@ -2598,6 +2600,12 @@ function bibliographyEntryHtml(fuente, opts){
 }
 function bibliographyInlineHtml(fuentes, opts){
   return (fuentes||[]).filter(f=>f&&(f.titulo||f.title||f.url)).map(f=>bibliographyEntryHtml(f,opts)).join(' · ');
+}
+/* Entrada bibliográfica del CHAT. Mantener esta frontera explícita evita que una cita cruda del Vector Store
+   vuelva a pintarse directamente: primero se resuelve contra el Catálogo Maestro y después usa el MISMO
+   componente visual que protocolos, prenatal y el resto de bibliografías. */
+function chatBibliographyEntryHtml(fuente, opts){
+  return bibliographyEntryHtml(canonicalBibliographyReference(fuente||{}), opts);
 }
 function wireBibRefs(container, onDone){
   if(!container) return;
@@ -5407,7 +5415,7 @@ function masterArchiveSearch(works,query,limit){
   scored.sort((a,b)=> hasQuery?(b.score-a.score||String(a.work.title||'').localeCompare(String(b.work.title||''),'es')):((Number(b.work.year)||0)-(Number(a.work.year)||0)||String(a.work.title||'').localeCompare(String(b.work.title||''),'es')));
   return scored.slice(0,limit||60).map(x=>x.work);
 }
-let _masterArchiveFileFilter='all';
+let _masterArchiveFileFilter='all', _masterArchiveTypeFilter='all';
 function masterArchiveHasFile(work){
   const state=(work&&work.state)||{};
   return state.pdf_available===true || (Array.isArray(work&&work.drive_file_ids) && work.drive_file_ids.length>0) || Number(work&&work.file_count)>0;
@@ -5423,15 +5431,29 @@ function masterArchiveIsWebOnly(work){
     || sources.some(x=>/genotipia|\bomim\b|orphanet|\borpha\b/.test(x));
 }
 function masterArchiveFileFilterMatch(work,filter){
-  const state=(work&&work.state)||{}, hasFile=masterArchiveHasFile(work);
-  if(filter==='with_file') return hasFile;
-  if(filter==='without_file') return !hasFile;
-  if(filter==='pending_pdf') return !hasFile && !masterArchiveIsWebOnly(work) && state.pending_pdf===true;
-  if(filter==='web_only') return !hasFile && masterArchiveIsWebOnly(work);
-  if(filter==='not_indexed') return hasFile && state.in_second_brain!==true;
-  if(filter==='issues') return state.needs_review===true || state.partial_index===true;
+  const health=(work&&work.document_health)||{};
+  if(filter==='ok') return Number(health.ok||0)>0;
+  if(filter==='pending_ingesta') return Number(health.pending_ingesta||0)>0;
+  if(filter==='pending_b2') return Number(health.pending_b2||0)>0;
+  if(filter==='sin_identificar') return Number(health.sin_identificar||0)>0;
+  if(filter==='con_incidencias') return Number(health.con_incidencias||0)>0;
+  if(filter==='excluded') return Number(health.excluded||0)>0;
+  if(filter==='problemas') return Number(health.problemas||0)>0;
+  if(filter==='web_only') return !masterArchiveHasFile(work) && masterArchiveIsWebOnly(work);
   return true;
 }
+function masterArchiveTypeGroup(work){
+  const type=String(work&&work.type||'other');
+  if(masterArchiveIsWebOnly(work)) return 'web';
+  if(['article','review'].includes(type)) return 'articles';
+  if(['book','book_edition','book_chapter'].includes(type)) return 'books';
+  if(['guideline','consensus','protocol'].includes(type)) return 'guidance';
+  if(['legislation','standard'].includes(type)) return 'legislation';
+  if(['presentation','congress_communication','poster'].includes(type)) return 'congress';
+  if(['web_article','database','website','database_entry'].includes(type)) return 'web';
+  return 'other';
+}
+function masterArchiveTypeFilterMatch(work,filter){ return !filter||filter==='all'||masterArchiveTypeGroup(work)===filter; }
 function masterArchiveSafeUrl(value){ try{ const u=new URL(String(value||'')); return /^https?:$/.test(u.protocol)?u.href:''; }catch(e){ return ''; } }
 function masterArchiveIdLinks(work){
   const ids=work.external_ids||{}, links=[];
@@ -5512,15 +5534,23 @@ function renderMasterDocumentArchive(){
   const host=document.getElementById('docMasterArchive'); if(!host) return;
   const works=(_masterCatalogIndex&&_masterCatalogIndex.works)||[];
   if(!works.length){ host.innerHTML='<div class="placeholder">El Catálogo Maestro todavía no está disponible. Puedes actualizarlo desde las incidencias.</div>'; return; }
-  const counts={all:works.length,with_file:works.filter(w=>masterArchiveFileFilterMatch(w,'with_file')).length,pending_pdf:works.filter(w=>masterArchiveFileFilterMatch(w,'pending_pdf')).length,web_only:works.filter(w=>masterArchiveFileFilterMatch(w,'web_only')).length,not_indexed:works.filter(w=>masterArchiveFileFilterMatch(w,'not_indexed')).length,issues:works.filter(w=>masterArchiveFileFilterMatch(w,'issues')).length};
-  const filterDefs=[['all','Todo'],['pending_pdf','Archivo/PDF pendiente'],['web_only','Web · sin PDF previsto'],['with_file','Con archivo'],['not_indexed','Pendiente de indexación'],['issues','Con incidencia']];
-  host.innerHTML=`<section class="master-archive"><div class="master-archive-head"><div><h3>🔎 Archivo documental · Catálogo Maestro <span class="dx-meta">(${works.length})</span></h3><div class="dx-meta">Búsqueda local, sin consumo de IA. Interpreta tipo y tema sobre títulos, autores, palabras clave e identificadores.</div></div></div>
+  const ds=(_masterCatalogIndex&&_masterCatalogIndex.document_summary)||{};
+  const counts={
+    all:Number(ds.total||0),ok:Number(ds.ok||0),pending_ingesta:Number(ds.pendientes_ingesta||0),
+    pending_b2:Number(ds.pendientes_b2||0),sin_identificar:Number(ds.sin_identificar||0),
+    con_incidencias:Number(ds.con_incidencias||0),excluded:Number(ds.excluidos||0),
+    problemas:Number(ds.problemas||0),web_only:works.filter(w=>masterArchiveFileFilterMatch(w,'web_only')).length
+  };
+  const filterDefs=[['all','Todo'],['ok','OK'],['pending_ingesta','Pend. ingesta'],['pending_b2','Pend. B2'],['sin_identificar','Sin identificar'],['con_incidencias','Incidencias'],['excluded','Excluidos'],['problemas','Problemas'],['web_only','Solo web']];
+  const typeDefs=[['all','Todos los tipos'],['articles','Artículos y revisiones'],['books','Libros y capítulos'],['guidance','Guías, consensos y protocolos'],['legislation','Legislación y normas'],['congress','Presentaciones y congresos'],['web','Fuentes web y bases de datos'],['other','Otros']];
+  host.innerHTML=`<section class="master-archive"><div class="master-archive-head"><div><h3>🔎 Archivo documental · Catálogo Maestro <span class="dx-meta">(${works.length} obras)</span></h3><div class="dx-meta">Búsqueda local, sin consumo de IA. Salud real de ${counts.all||'—'} documentos, con las mismas categorías del Launcher.</div></div></div>
     <div id="masterArchiveFileFilters" style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 8px">${filterDefs.map(([id,label])=>`<button class="btn ghost" data-mafilter="${id}" aria-pressed="${_masterArchiveFileFilter===id?'true':'false'}" style="padding:4px 9px;font-size:11px">${escHtml(label)} <span class="dx-meta">${counts[id]}</span></button>`).join('')}</div>
-    <input id="masterArchiveSearch" class="master-archive-search" type="search" autocomplete="off" placeholder="Ej.: libro sobre asesoramiento genético · artículo sobre Ehlers-Danlos"><div id="masterArchiveSummary" class="dx-meta" style="margin-top:8px"></div><div id="masterArchiveResults" class="master-archive-grid"></div></section>`;
-  const input=host.querySelector('#masterArchiveSearch'), summary=host.querySelector('#masterArchiveSummary'), results=host.querySelector('#masterArchiveResults'), filterBox=host.querySelector('#masterArchiveFileFilters');
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input id="masterArchiveSearch" class="master-archive-search" type="search" autocomplete="off" placeholder="Ej.: libro sobre asesoramiento genético · artículo sobre Ehlers-Danlos" style="flex:1;min-width:260px"><select id="masterArchiveType" aria-label="Tipo de publicación" style="min-width:230px">${typeDefs.map(([id,label])=>`<option value="${id}"${_masterArchiveTypeFilter===id?' selected':''}>${escHtml(label)}</option>`).join('')}</select></div><div id="masterArchiveSummary" class="dx-meta" style="margin-top:8px"></div><div id="masterArchiveResults" class="master-archive-grid"></div></section>`;
+  const input=host.querySelector('#masterArchiveSearch'), typeSelect=host.querySelector('#masterArchiveType'), summary=host.querySelector('#masterArchiveSummary'), results=host.querySelector('#masterArchiveResults'), filterBox=host.querySelector('#masterArchiveFileFilters');
   const paintButtons=()=>filterBox.querySelectorAll('[data-mafilter]').forEach(b=>{ const on=b.dataset.mafilter===_masterArchiveFileFilter; b.setAttribute('aria-pressed',on?'true':'false'); b.style.borderColor=on?'var(--accent)':''; b.style.background=on?'var(--panel2)':''; });
-  const paint=()=>{ const q=input.value.trim(), eligible=works.filter(w=>masterArchiveFileFilterMatch(w,_masterArchiveFileFilter)), found=masterArchiveSearch(eligible,q,60); summary.textContent=q?(found.length?('Mostrando '+found.length+' coincidencia(s) de '+eligible.length+' obra(s) en este filtro (máximo 60).'):'No hay coincidencias en los metadatos de este filtro. Prueba menos palabras o usa «Consultar» para buscar dentro del contenido.'):('Mostrando hasta 60 de '+eligible.length+' obra(s) en este filtro.'); results.innerHTML=found.length?found.map(masterArchiveCardHtml).join(''):'<div class="placeholder" style="grid-column:1/-1">Sin referencias en este estado.</div>'; paintButtons(); hydrateMasterArchiveThumbnails(results,found); };
+  const paint=()=>{ const q=input.value.trim(), eligible=works.filter(w=>masterArchiveFileFilterMatch(w,_masterArchiveFileFilter)&&masterArchiveTypeFilterMatch(w,_masterArchiveTypeFilter)), found=masterArchiveSearch(eligible,q,60); summary.textContent=q?(found.length?('Mostrando '+found.length+' coincidencia(s) de '+eligible.length+' obra(s) en estos filtros (máximo 60).'):'No hay coincidencias en los metadatos de estos filtros. Prueba menos palabras o usa «Consultar» para buscar dentro del contenido.'):('Mostrando hasta 60 de '+eligible.length+' obra(s) en estos filtros.'); results.innerHTML=found.length?found.map(masterArchiveCardHtml).join(''):'<div class="placeholder" style="grid-column:1/-1">Sin referencias en este estado y tipo.</div>'; paintButtons(); hydrateMasterArchiveThumbnails(results,found); };
   filterBox.addEventListener('click',e=>{ const b=e.target.closest('[data-mafilter]'); if(!b) return; _masterArchiveFileFilter=b.dataset.mafilter; paint(); });
+  typeSelect.addEventListener('change',()=>{ _masterArchiveTypeFilter=typeSelect.value; paint(); });
   let timer=null; input.addEventListener('input',()=>{ clearTimeout(timer); timer=setTimeout(paint,120); }); paint();
 }
 /* Figuras por NBK (figures.json del pipeline) → mostrar bajo cada fuente GeneReviews citada en el chat. */
@@ -6270,7 +6300,7 @@ function renderChatMsgs(){
             const quote=sbQuoteHtml(m.passages, key);   // texto EXACTO recuperado (localizar la afirmación)
             const firstPassage=(m.passages||[]).find(p=>String(p.filename||'').split('__')[0]===key&&String(p.text||'').trim());
             const sourceHref=gr&&gr.nbk?geneReviewsTextFragmentUrl(gr.nbk,firstPassage?.text||''):'';
-            return '<div style="margin:2px 0">'+bibliographyEntryHtml(f,sourceHref?{href:sourceHref}:undefined)+' '+act+figs+quote+'</div>'; }).join('')
+            return '<div style="margin:2px 0">'+chatBibliographyEntryHtml(f,sourceHref?{href:sourceHref}:undefined)+' '+act+figs+quote+'</div>'; }).join('')
         + '</div></div>';
     }
     return `<div style="background:${bg};border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0"><div class="dx-meta" style="font-weight:600;margin-bottom:4px">${who}</div><div style="font-size:13.5px;line-height:1.6">${body}</div>${src}</div>`;
