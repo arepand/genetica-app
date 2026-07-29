@@ -549,8 +549,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.5.5';
+const APP_VERSION='3.6.0';
 const CHANGELOG=[
+  {v:'3.6.0',d:'2026-07-29',c:['«Rehacer protocolo con evidencia actual» pasa a ser un flujo de alta exigencia: genera el candidato, valida su estructura, comprueba los códigos HPO contra la fuente oficial y somete el resultado a una segunda revisión clínica separada con nueva búsqueda científica.','El segundo revisor comprueba fidelidad a criterios vigentes, correspondencia HPO-concepto, estudio genético, herencia/asesoramiento y trazabilidad bibliográfica. Un problema clínico o bibliográfico crítico/mayor bloquea el candidato y deja intacta la ficha actual; las discrepancias HPO se señalan de forma destacada para revisión manual, sin bloquearlo.','Las respuestas extensas tienen más margen de salida y un reintento automático si el JSON llega cortado o incompleto. Ariadna extrae de forma segura el objeto aunque el proveedor añada texto o citas, pero nunca intenta completar por su cuenta contenido clínico truncado.']},
   {v:'3.5.5',d:'2026-07-29',c:['En toda Ariadna, el texto de una referencia bibliográfica deja de ser un enlace subrayado. Un icono 🔗 situado después del año abre la fuente original; se aplica también a protocolos prenatales, indicaciones y demás vistas bibliográficas.','Las referencias bibliográficas aumentan un punto su tamaño para mejorar la lectura.','Los identificadores se presentan como badges compactos DOI, PMID, PMCID o ISBN, sin repetir el número en pantalla. Los NBK muestran su colección real —GeneReviews, StatPearls, Endotext, etc.— o NCBI Bookshelf si aún no está clasificada. El valor completo queda en el texto emergente y cada badge abre su registro oficial.']},
   {v:'3.5.4',d:'2026-07-29',c:['La vista de un protocolo aprovecha ahora todo el ancho disponible de la página, incluida su barra de acciones.','Las guías, fuentes y referencias de cada protocolo se ordenan automáticamente por año descendente —las más recientes primero—; las referencias sin fecha quedan al final y los empates conservan su orden original.']},
   {v:'3.5.3',d:'2026-07-29',c:['En los protocolos, cada publicación se presenta como «Título canónico · Autor» cuando tiene una sola autoría, o «Título canónico · Primer autor et al.» cuando tiene varias; después aparecen la referencia corta y el año.']},
@@ -1359,6 +1360,7 @@ const AI_OPERATION_POLICIES={
   prenatal_hpo_window:{label:'Proponer semanas de HPO prenatal',group:'clinical',choices:[M('anthropic','claude-sonnet-5','medium'),M('openai','gpt-5.6-terra','medium')]},
   protocol_create:{label:'Crear protocolo',group:'author',choices:[M('anthropic','claude-opus-4-8','high'),M('openai','gpt-5.6-sol','high')]},
   protocol_regenerate:{label:'Rehacer o actualizar protocolo',group:'author',choices:[M('anthropic','claude-opus-4-8','high'),M('openai','gpt-5.6-sol','high')]},
+  protocol_audit:{label:'Segunda revisión clínica del protocolo',group:'author',choices:[M('openai','gpt-5.6-sol','high'),M('anthropic','claude-opus-4-8','high')]},
   prenatal_protocol_author:{label:'Crear o actualizar protocolo prenatal',group:'author',choices:[M('anthropic','claude-opus-4-8','high'),M('openai','gpt-5.6-sol','high')]},
   prenatal_discover:{label:'Descubrir protocolos prenatales',group:'author',choices:[M('anthropic','claude-opus-4-8','high'),M('openai','gpt-5.6-sol','high')]},
   prenatal_criteria_update:{label:'Actualizar criterios genéticos prenatales',group:'author',choices:[M('anthropic','claude-opus-4-8','high'),M('openai','gpt-5.6-sol','high')]},
@@ -2629,9 +2631,150 @@ function extractJSON(text){
   if(!text) return null;
   let s=String(text).trim();
   s=s.replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim();
-  const a=s.indexOf('{'), b=s.lastIndexOf('}');
-  if(a>=0 && b>a) s=s.slice(a,b+1);
-  try{ return JSON.parse(s); }catch(e){ return null; }
+  try{ return JSON.parse(s); }catch(e){}
+  // Algunos proveedores añaden una frase o citas después del JSON. Buscar objetos
+  // completos y equilibrados evita que esas llaves ajenas invaliden una ficha válida.
+  const candidates=[]; let start=-1, depth=0, inString=false, escaped=false;
+  for(let i=0;i<s.length;i++){
+    const ch=s[i];
+    if(inString){
+      if(escaped) escaped=false;
+      else if(ch==='\\') escaped=true;
+      else if(ch==='"') inString=false;
+      continue;
+    }
+    if(ch==='"'){ inString=true; continue; }
+    if(ch==='{'){ if(depth===0) start=i; depth++; continue; }
+    if(ch==='}' && depth>0){
+      depth--;
+      if(depth===0 && start>=0){ candidates.push(s.slice(start,i+1)); start=-1; }
+    }
+  }
+  for(const candidate of candidates){ try{ return JSON.parse(candidate); }catch(e){} }
+  return null;   // no se «repara» un JSON truncado: debe regenerarse para no perder contenido clínico
+}
+function rebuiltProtocolResponse(text){
+  const envelope=extractJSON(text);
+  const ficha=envelope && (envelope.ficha||envelope);
+  if(!ficha || typeof ficha!=='object' || Array.isArray(ficha)) return null;
+  // Un JSON puede estar bien cerrado pero ser una explicación o una ficha parcial.
+  // Exigimos las colecciones estructurales antes de permitir que sustituya al editor.
+  if(!String(ficha.nombre_es||'').trim() || !Array.isArray(ficha.fuentes) ||
+     !Array.isArray(ficha.dominios) || !Array.isArray(ficha.entidades) ||
+     !Array.isArray(ficha.panel_genes)) return null;
+  return {envelope, ficha};
+}
+function rebuiltProtocolDeterministicIssues(ficha, expectedId){
+  const issues=[];
+  if(!ficha || typeof ficha!=='object') return ['El candidato no es un objeto.'];
+  if(expectedId && ficha.id && String(ficha.id)!==String(expectedId)) issues.push('La IA cambió el identificador estable del protocolo.');
+  if(!Array.isArray(ficha.ambitos) || !ficha.ambitos.length || ficha.ambitos.some(x=>!['adulto','pediatria'].includes(x))) issues.push('El ámbito adulto/pediatría falta o no es válido.');
+  if(!ficha.modulos || typeof ficha.modulos!=='object') issues.push('Falta la configuración de módulos clínicos.');
+  if(!ficha.estudio_genetico || typeof ficha.estudio_genetico!=='object') issues.push('Falta el bloque de estudio genético.');
+  if(!ficha.herencia_asesoramiento || typeof ficha.herencia_asesoramiento!=='object') issues.push('Falta el bloque de herencia y asesoramiento.');
+  if(fichaHpoFormatErrors(ficha).length) issues.push('Hay códigos HPO con formato inválido: '+fichaHpoFormatErrors(ficha).join(', ')+'.');
+  const questionIds=[];
+  (ficha.dominios||[]).forEach(d=>(d.preguntas||[]).forEach(q=>{ if(q&&q.id) questionIds.push(String(q.id)); }));
+  const dupQuestionIds=[...new Set(questionIds.filter((id,i)=>questionIds.indexOf(id)!==i))];
+  if(dupQuestionIds.length) issues.push('Hay identificadores de pregunta duplicados: '+dupQuestionIds.join(', ')+'.');
+  (ficha.entidades||[]).forEach((e,i)=>{
+    if(!String((e&&e.nombre)||'').trim()) issues.push('La entidad '+(i+1)+' no tiene nombre.');
+    if(e && e.logica && !['and','or'].includes(e.logica)) issues.push('La entidad «'+(e.nombre||i+1)+'» tiene una lógica distinta de and/or.');
+  });
+  return issues;
+}
+async function verifyRebuiltProtocolHpo(ficha){
+  const ids=[...new Set(collectFichaHpoRefs(ficha).map(r=>r.id).filter(id=>/^HP:\d{7}$/.test(id)))];
+  let cursor=0; const invalid=[], unavailable=[];
+  async function worker(){
+    while(cursor<ids.length){
+      const id=ids[cursor++];
+      try{
+        const r=await fetch(HPO_API+'/terms/'+id,{cache:'no-store'});
+        if(r.status===404){ invalid.push(id); continue; }
+        if(!r.ok){ unavailable.push(id); continue; }
+        const d=await r.json();
+        if(!d || d.id!==id) invalid.push(id);
+      }catch(e){ unavailable.push(id); }
+    }
+  }
+  await Promise.all(Array.from({length:Math.min(6,Math.max(1,ids.length))},worker));
+  return {checked:ids.length-invalid.length-unavailable.length,total:ids.length,invalid,unavailable};
+}
+function rebuiltProtocolReferences(ficha){
+  const refs=[]; const seen=new Set();
+  (function walk(v,key){
+    if(!v || typeof v!=='object') return;
+    if(Array.isArray(v)){ v.forEach(x=>walk(x,key)); return; }
+    for(const [k,x] of Object.entries(v)){
+      if(k==='fuentes' && Array.isArray(x)) x.forEach(f=>{
+        if(!f || typeof f!=='object') return;
+        const sig=[f.doi,f.pmid,f.pmcid,f.nbk,f.isbn,f.titulo].map(z=>String(z||'').trim().toLowerCase()).join('|');
+        if(!seen.has(sig)){ seen.add(sig); refs.push(f); }
+      });
+      else if(k!=='historial') walk(x,k);
+    }
+  })(ficha,'');
+  return refs;
+}
+async function verifyRebuiltProtocolReferenceIds(ficha){
+  const refs=rebuiltProtocolReferences(ficha).filter(f=>f.doi||f.pmid||f.pmcid);
+  let cursor=0, checked=0; const invalid=[], unavailable=[];
+  const cleanDoi=x=>String(x||'').trim().toLowerCase().replace(/^https?:\/\/(?:dx\.)?doi\.org\//,'').replace(/^doi:\s*/,'');
+  const cleanPmc=x=>((String(x||'').toUpperCase().match(/PMC\d+/)||[''])[0]);
+  async function worker(){
+    while(cursor<refs.length){
+      const f=refs[cursor++], label=String(f.titulo||f.doi||f.pmid||f.pmcid||'referencia');
+      let verified=false, hadUnavailable=false, summary=null;
+      if(f.pmid){
+        try{
+          const pmid=String(f.pmid).trim();
+          const r=await fetch(_EUTILS+'esummary.fcgi?db=pubmed&id='+encodeURIComponent(pmid)+'&retmode=json',{cache:'no-store'});
+          if(!r.ok) hadUnavailable=true;
+          else{
+            const data=await r.json(), rec=data&&data.result&&data.result[pmid];
+            if(!rec || rec.error) invalid.push(label+': PMID '+pmid+' no existe en PubMed.');
+            else{
+              verified=true; const aids=rec.articleids||[], get=t=>{ const a=aids.find(x=>x.idtype===t); return a?String(a.value||''):''; };
+              summary={doi:cleanDoi(get('doi')),pmcid:cleanPmc(get('pmcid'))};
+              if(f.doi && summary.doi && cleanDoi(f.doi)!==summary.doi) invalid.push(label+': el DOI y el PMID pertenecen a publicaciones distintas.');
+              if(f.pmcid && summary.pmcid && cleanPmc(f.pmcid)!==summary.pmcid) invalid.push(label+': el PMCID y el PMID pertenecen a publicaciones distintas.');
+            }
+          }
+        }catch(e){ hadUnavailable=true; }
+      }
+      if(f.doi && !(summary&&summary.doi)){
+        const exists=await doiExists(cleanDoi(f.doi));
+        if(exists===false) invalid.push(label+': DOI '+cleanDoi(f.doi)+' no existe en Crossref.');
+        else if(exists===true) verified=true;
+        else hadUnavailable=true;
+      }
+      if(f.pmcid && !f.pmid){
+        try{
+          const pmcid=cleanPmc(f.pmcid);
+          const r=await fetch('https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?ids='+encodeURIComponent(pmcid)+'&format=json',{cache:'no-store'});
+          if(!r.ok) hadUnavailable=true;
+          else{
+            const data=await r.json(), rec=(data&&data.records||[])[0];
+            if(!rec || rec.status==='error' || cleanPmc(rec.pmcid)!==pmcid) invalid.push(label+': PMCID '+pmcid+' no existe en PMC.');
+            else verified=true;
+          }
+        }catch(e){ hadUnavailable=true; }
+      }
+      if(verified) checked++;
+      else if(hadUnavailable) unavailable.push(label);
+    }
+  }
+  await Promise.all(Array.from({length:Math.min(4,Math.max(1,refs.length))},worker));
+  return {total:refs.length,checked,invalid:[...new Set(invalid)],unavailable:[...new Set(unavailable)]};
+}
+function protocolAuditResponse(text){
+  const audit=extractJSON(text);
+  if(!audit || typeof audit!=='object' || Array.isArray(audit) || typeof audit.aprobado!=='boolean' || !Array.isArray(audit.problemas)) return null;
+  return audit;
+}
+function protocolAuditProblemIsHpo(problem){
+  return /\bhpo\b|hp:\d{7}|ontolog/i.test(String((problem&&problem.ruta)||'')+' '+String((problem&&problem.problema)||''));
 }
 /* ---- Transparencia IA: indicador de proceso + log de depuración (opt-in) ---- */
 let AI_DEBUG=false; const AI_LOG=[]; const AI_LOG_MAX_ENTRIES=20; let _aiBusyN=0;
@@ -7591,21 +7734,95 @@ function openFichaReview(f, opts){
       const sb=await ragContext(12,'Rehacer protocolo clínico de '+(cur.nombre_es||cur.id)+': fenotipo HPO, criterios diagnósticos, genes, indicación de estudio, herencia y asesoramiento');
       const system='Eres genetista clínico. REHAZ de forma completa un protocolo existente usando: (1) los pasajes recuperados del Segundo Cerebro; (2) una nueva búsqueda web científica actual; y (3) si se aportan, una o varias guías concretas. La ficha actual sirve como punto de partida y para no perder contenido válido, pero no como verdad que debas conservar. Prioriza guías y sociedades profesionales, GeneReviews/revisiones curadas, revisiones sistemáticas y literatura primaria cuando sea necesaria. Mantén EXACTAMENTE el esquema JSON: id, nombre_es, sinonimos, ambitos, grupo, version, fuentes, modulos, dominios, entidades, panel_genes, estudio_genetico y herencia_asesoramiento. "ambitos" admite "adulto", "pediatria" o ambos y se propone para confirmación clínica. Verifica conceptualmente cada HPO; no inventes referencias, identificadores ni normas. Conserva el mismo id. Devuelve SOLO JSON {"ficha":<candidato completo>,"cambios":["cambio y motivo/fuente"]}. El resultado es un candidato: no afirmes que está aprobado.';
       const user=JSON.stringify({ficha_actual:cur,segundo_cerebro:sb||'Sin pasajes recuperados',guias_concretas:includeSpecificGuides?guideCtx:'Ninguna; usa Segundo Cerebro y búsqueda web',fecha:new Date().toISOString().slice(0,10)});
-      const resp=await callLLM({ system, user, webSearch:true, maxTokens:12000, operation:'protocol_regenerate', thinking:true });
-      const j=extractJSON(resp);
-      if(!j){ gout.innerHTML='<div class="err">La IA no devolvió un JSON válido. Reintenta.</div>'; return; }
-      const nueva = j.ficha || j;
+      let resp=await callLLM({ system, user, webSearch:true, maxTokens:16000, operation:'protocol_regenerate', thinking:true });
+      let parsed=rebuiltProtocolResponse(resp), autoRetried=false;
+      if(!parsed){
+        autoRetried=true;
+        gout.className='loading';
+        gout.textContent='La primera respuesta llegó incompleta. Reintentando automáticamente con más énfasis en entregar el JSON completo…';
+        const retrySystem=system+' REINTENTO TÉCNICO: la respuesta anterior no se pudo leer completa. Entrega un único JSON compacto, íntegro y cerrado. No añadas introducción, Markdown, comentarios ni citas fuera del JSON; no omitas ninguna de las colecciones obligatorias del esquema.';
+        resp=await callLLM({ system:retrySystem, user, webSearch:true, maxTokens:16000, operation:'protocol_regenerate', thinking:true });
+        parsed=rebuiltProtocolResponse(resp);
+      }
+      if(!parsed){
+        gout.className='';
+        gout.innerHTML='<div class="err"><b>No se recibió una ficha JSON completa tras dos intentos.</b><br>La ficha actual sigue intacta. Es probable que la respuesta haya alcanzado su límite de longitud; puedes reintentarlo sin perder nada.</div>';
+        return;
+      }
+      const j=parsed.envelope;
+      const nueva=parsed.ficha;
+      const generatedId=nueva.id;
       nueva.id=cur.id||nueva.id;
       nueva.rev=cur.rev; nueva.historial=cur.historial; nueva.validado=false;
       if(!Array.isArray(nueva.ambitos)) nueva.ambitos=protocolScopes(cur);
       const sameScopes=JSON.stringify(protocolScopes(nueva).slice().sort())===JSON.stringify(protocolScopes(cur).slice().sort());
       applyProtocolScopes(nueva,protocolScopes(nueva),sameScopes&&protocolScopesConfirmed(cur));
+      const deterministicIssues=rebuiltProtocolDeterministicIssues(nueva,cur.id);
+      if(generatedId && cur.id && String(generatedId)!==String(cur.id)) deterministicIssues.unshift('La IA cambió el identificador estable del protocolo.');
+      if(deterministicIssues.length){
+        gout.className='';
+        gout.innerHTML='<div class="err"><b>El candidato no superó las comprobaciones internas.</b><br>'+deterministicIssues.map(x=>'· '+escHtml(x)).join('<br>')+'<br>La ficha actual sigue intacta.</div>';
+        return;
+      }
+      gout.className='loading';
+      gout.textContent='Comprobando '+collectHpoIds(nueva).length+' códigos HPO contra la fuente oficial…';
+      const hpoCheck=await verifyRebuiltProtocolHpo(nueva);
+      // Una discrepancia HPO se presenta al clínico para revisión manual; no bloquea por sí sola
+      // el candidato. Solo el formato mecánicamente inválido se detuvo en la validación estructural.
+      gout.className='loading';
+      gout.textContent='Contrastando DOI, PMID y PMCID con Crossref, PubMed y PMC…';
+      const refCheck=await verifyRebuiltProtocolReferenceIds(nueva);
+      if(refCheck.invalid.length){
+        gout.className='';
+        gout.innerHTML='<div class="err"><b>El candidato contiene identificadores bibliográficos contradictorios o inexistentes.</b><br>'+refCheck.invalid.slice(0,12).map(x=>'· '+escHtml(x)).join('<br>')+'<br>No se ha sustituido la ficha actual.</div>';
+        return;
+      }
+      gout.className='loading';
+      gout.textContent='Realizando una segunda revisión clínica separada: criterios, HPO, estudio genético, herencia y referencias…';
+      const auditSystem='ARIADNA_PROTOCOL_AUDIT. Actúas como SEGUNDO REVISOR clínico y bibliográfico independiente de un protocolo de genética. No lo reescribas y no des por bueno el trabajo del primer modelo. Contrasta mediante búsqueda científica actual: (1) criterios diagnósticos y su vigencia; (2) que cada código HPO corresponda al concepto expresado; (3) genes y estrategia de estudio de primera línea/escalado; (4) herencia, recurrencia y asesoramiento; (5) que las referencias e identificadores existan y respalden realmente las afirmaciones; (6) que no se haya perdido contenido válido de la ficha anterior sin justificación. Prioriza sociedades profesionales, guías vigentes, GeneReviews/revisiones curadas y literatura primaria. Considera "critica" una falsedad que pueda cambiar una decisión clínica, "mayor" una omisión o afirmación relevante sin respaldo y "menor" un detalle que no cambia la conducta. "aprobado" solo puede ser true si no hay problemas críticos ni mayores. Devuelve SOLO JSON {"aprobado":true|false,"confianza":"alta|media|baja","resumen":"...","problemas":[{"gravedad":"critica|mayor|menor","ruta":"campo JSON","problema":"...","evidencia":"fuente o comprobación concreta"}]}. No inventes problemas ni referencias.';
+      const auditUser=JSON.stringify({ficha_anterior:cur,candidato:nueva,evidencia_recuperada:sb||'Sin pasajes recuperados',guias_aportadas:includeSpecificGuides?guideCtx:'Ninguna',fecha:new Date().toISOString().slice(0,10)});
+      let auditResp=await callLLM({system:auditSystem,user:auditUser,webSearch:true,maxTokens:6000,operation:'protocol_audit',thinking:true});
+      let audit=protocolAuditResponse(auditResp);
+      if(!audit){
+        gout.textContent='La segunda revisión llegó incompleta. Repitiendo la auditoría antes de mostrar el candidato…';
+        auditResp=await callLLM({system:auditSystem+' REINTENTO TÉCNICO: entrega el JSON compacto, completo y sin texto exterior.',user:auditUser,webSearch:true,maxTokens:6000,operation:'protocol_audit',thinking:true});
+        audit=protocolAuditResponse(auditResp);
+      }
+      if(!audit){
+        gout.className='';
+        gout.innerHTML='<div class="err"><b>No se pudo completar la segunda revisión clínica.</b><br>Por seguridad, el candidato no se ha aplicado y la ficha actual sigue intacta.</div>';
+        return;
+      }
+      const auditProblems=(audit.problemas||[]).filter(Boolean);
+      const hpoAuditProblems=auditProblems.filter(protocolAuditProblemIsHpo);
+      const blockingProblems=auditProblems.filter(p=>!protocolAuditProblemIsHpo(p)&&['critica','mayor'].includes(String(p.gravedad||'').toLowerCase()));
+      const unexplainedRejection=!audit.aprobado && !auditProblems.length;
+      if(blockingProblems.length || unexplainedRejection){
+        const listed=(blockingProblems.length?blockingProblems:auditProblems).slice(0,12);
+        gout.className='';
+        gout.innerHTML='<div class="err"><b>La segunda revisión no aprueba el candidato.</b><br>'+
+          (audit.resumen?escHtml(audit.resumen)+'<br>':'')+
+          listed.map(p=>'· <b>'+escHtml(String(p.gravedad||'problema'))+'</b> · '+escHtml(String(p.ruta||''))+' — '+escHtml(String(p.problema||''))+(p.evidencia?' <span class="dx-meta">('+escHtml(String(p.evidencia))+')</span>':'')).join('<br>')+
+          '<br>La ficha actual sigue intacta; estos puntos deben resolverse en una nueva generación.</div>';
+        return;
+      }
       ta.value = JSON.stringify(nueva, null, 2);
       renderPrev(); if(feDet&&feDet.open) renderForm(); if(enDet&&enDet.open) renderEntidades(); if(fuDet&&fuDet.open) renderFuentes();
       const a=countFichaStats(cur), b=countFichaStats(nueva);
       const delta = `dominios ${a.dom}→${b.dom} · preguntas ${a.preg}→${b.preg} · entidades ${a.ent}→${b.ent} · genes ${a.genes}→${b.genes} · HPO ${a.hpo}→${b.hpo}`;
       const changes=Array.isArray(j.cambios)?j.cambios:[j.cambios].filter(Boolean);
-      gout.className=''; gout.innerHTML = `<div class="fresh-res new"><b>Candidato rehecho; aún no guardado.</b>${changes.length?`<div style="margin-top:4px">${changes.map(x=>'· '+escHtml(String(x))).join('<br>')}</div>`:''}<div class="study-src">${delta} · revisa la vista, el JSON y las referencias antes de guardar.</div></div>`;
+      const hpoStatus=hpoCheck.unavailable.length
+        ? `${hpoCheck.checked}/${hpoCheck.total} HPO confirmados; ${hpoCheck.unavailable.length} no pudieron consultarse por red`
+        : `${hpoCheck.checked}/${hpoCheck.total} HPO confirmados en JAX`;
+      const refStatus=refCheck.unavailable.length
+        ? `${refCheck.checked}/${refCheck.total} referencias con identificador confirmadas; ${refCheck.unavailable.length} no pudieron consultarse por red`
+        : `${refCheck.checked}/${refCheck.total} referencias con identificador confirmadas`;
+      const hpoReview=[...hpoCheck.invalid.map(id=>({ruta:id,problema:'JAX no confirmó la existencia del código; comprobar término vigente o sustituto.'})),...hpoAuditProblems];
+      const hpoReviewHtml=hpoReview.length
+        ? `<div class="err" style="margin-top:7px"><b>⚠ Revisión HPO pendiente (${hpoReview.length}) — no bloquea el candidato.</b><br>${hpoReview.slice(0,20).map(p=>'· '+escHtml(String(p.ruta||'HPO'))+' — '+escHtml(String(p.problema||'Comprobar correspondencia entre código y concepto.'))).join('<br>')}</div>`
+        : '';
+      const nonHpoMinor=auditProblems.filter(p=>!protocolAuditProblemIsHpo(p)).length;
+      gout.className=''; gout.innerHTML = `<div class="fresh-res new"><b>Candidato rehecho tras la segunda revisión; aún no guardado.</b>${autoRetried?'<div class="study-src">La primera respuesta llegó incompleta y Ariadna la recuperó automáticamente en el segundo intento.</div>':''}<div class="study-src">Auditoría: confianza ${escHtml(String(audit.confianza||'no indicada'))} · ${escHtml(hpoStatus)} · ${escHtml(refStatus)}${nonHpoMinor?' · '+nonHpoMinor+' observación(es) menor(es)':''}.</div>${hpoReviewHtml}${audit.resumen?`<div style="margin-top:4px">${escHtml(String(audit.resumen))}</div>`:''}${changes.length?`<div style="margin-top:4px">${changes.map(x=>'· '+escHtml(String(x))).join('<br>')}</div>`:''}<div class="study-src">${delta} · revisa la vista, el JSON y las referencias antes de guardar.</div></div>`;
     }catch(e){ gout.className=''; gout.innerHTML='<div class="err">Error al rehacer el protocolo: '+e.message+'</div>'; }
   }
   ov.querySelector('#btnRehacerProtocolo').addEventListener('click',()=>runRebuildProtocol(false));
