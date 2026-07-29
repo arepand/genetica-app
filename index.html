@@ -358,6 +358,9 @@
   .ref-id{display:inline-block; font-size:10.5px; line-height:1.4; padding:1px 7px; border-radius:999px; background:var(--panel2); border:1px solid var(--line); color:var(--ink2); text-decoration:none; white-space:nowrap;}
   .ref-id:hover{border-color:var(--accent); color:var(--accent);}
   .bib-year{display:inline-block; margin-left:4px; padding:0 6px; border:1px solid color-mix(in srgb,var(--accent) 45%,var(--line)); border-radius:999px; background:color-mix(in srgb,var(--accent) 12%,var(--panel2)); color:var(--accent); font-weight:750; font-variant-numeric:tabular-nums; white-space:nowrap;}
+  .bibliography-entry{font-size:calc(1em + 1px);}
+  .bibliography-entry .dx-meta, .bibliography-entry .bib-year{font-size:inherit;}
+  .bibliography-source-link{text-decoration:none; margin-left:4px; white-space:nowrap;}
   .rc-inlib{display:inline-block; font-size:10.5px; font-weight:700; padding:1px 8px; border-radius:999px; background:#173d2a; color:#7fe0a6; border:1px solid #2f6b48; white-space:nowrap; vertical-align:middle;}
   .rc-ico{padding:0; background:none; border:none; text-decoration:none; line-height:1;}
   .rc-ico:hover{filter:brightness(1.15);}
@@ -546,8 +549,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.5.4';
+const APP_VERSION='3.5.5';
 const CHANGELOG=[
+  {v:'3.5.5',d:'2026-07-29',c:['En toda Ariadna, el texto de una referencia bibliográfica deja de ser un enlace subrayado. Un icono 🔗 situado después del año abre la fuente original; se aplica también a protocolos prenatales, indicaciones y demás vistas bibliográficas.','Las referencias bibliográficas aumentan un punto su tamaño para mejorar la lectura.','Los identificadores se presentan como badges compactos DOI, PMID, PMCID o ISBN, sin repetir el número en pantalla. Los NBK muestran su colección real —GeneReviews, StatPearls, Endotext, etc.— o NCBI Bookshelf si aún no está clasificada. El valor completo queda en el texto emergente y cada badge abre su registro oficial.']},
   {v:'3.5.4',d:'2026-07-29',c:['La vista de un protocolo aprovecha ahora todo el ancho disponible de la página, incluida su barra de acciones.','Las guías, fuentes y referencias de cada protocolo se ordenan automáticamente por año descendente —las más recientes primero—; las referencias sin fecha quedan al final y los empates conservan su orden original.']},
   {v:'3.5.3',d:'2026-07-29',c:['En los protocolos, cada publicación se presenta como «Título canónico · Autor» cuando tiene una sola autoría, o «Título canónico · Primer autor et al.» cuando tiene varias; después aparecen la referencia corta y el año.']},
   {v:'3.5.2',d:'2026-07-29',c:['En los protocolos, el nombre principal de cada publicación vuelve a ser siempre su título canónico del Catálogo Maestro. A continuación se muestra la referencia corta —revista abreviada, volumen, número y páginas— y el año conserva su distintivo separado. La autoría queda en la ficha completa y ya no sustituye al título.']},
@@ -2220,17 +2224,21 @@ function nudgeSpaExtensionRescan(){
     window.dispatchEvent(new PopStateEvent('popstate', {state: history.state}));
   }catch(e){}
 }
-/* Etiquetas pequeñas y clicables con los identificadores de una referencia (estilo PubMed): PMID → PubMed,
-   DOI → doi.org, PMCID → PMC. Al abrirlos en PubMed/DOI, la extensión ReadCube Papers muestra ahí su
-   indicador "en tu biblioteca". Deriva de la URL si no vienen explícitos. */
-function refIdChipsHtml(s){
-  s=s||{};
-  const doi=s.doi||doiFromUrl(s.url), pmid=s.pmid||pmidFromUrl(s.url), pmcid=s.pmcid||pmcidFromUrl(s.url);
-  const chip=(label,val,href)=>`<a class="ref-id" href="${escA(href)}" target="_blank" rel="noopener" title="Abrir en ${escHtml(label)} (ahí verás el indicador de ReadCube Papers)">${escHtml(label)}: ${escHtml(val)}</a>`;
+/* Badges pequeños y clicables con los identificadores de una referencia: solo muestran el TIPO; el valor completo
+   queda en el tooltip. DOI/PMID/PMCID/ISBN/NBK abren su registro oficial. Deriva de URL/external_ids si hace falta. */
+function refIdChipsHtml(s,opts){
+  s=s||{}; opts=opts||{};
+  const ids=s.external_ids||{};
+  const doi=s.doi||ids.doi||doiFromUrl(s.url), pmid=s.pmid||ids.pmid||pmidFromUrl(s.url), pmcid=s.pmcid||ids.pmcid||pmcidFromUrl(s.url);
+  const isbn=String(s.isbn||ids.isbn||'').trim(), nbk=String(s.nbk||ids.nbk||bookshelfNbk(s)||'').trim().toUpperCase();
+  const bookshelf=nbk?bookshelfInfo(Object.assign({},s,{nbk})):null;
+  const chip=(label,val,href)=>`<a class="ref-id" href="${escA(href)}" target="_blank" rel="noopener" title="${escA(label+': '+val+' · Abrir registro oficial')}">${escHtml(label)}</a>`;
   const out=[];
-  if(pmid) out.push(chip('PMID', pmid, 'https://pubmed.ncbi.nlm.nih.gov/'+encodeURIComponent(pmid)+'/'));
   if(doi) out.push(chip('DOI', doi, 'https://doi.org/'+encodeURIComponent(doi)));
+  if(pmid) out.push(chip('PMID', pmid, 'https://pubmed.ncbi.nlm.nih.gov/'+encodeURIComponent(pmid)+'/'));
   if(pmcid) out.push(chip('PMCID', pmcid, 'https://www.ncbi.nlm.nih.gov/pmc/articles/'+encodeURIComponent(pmcid)+'/'));
+  if(isbn) out.push(chip('ISBN', isbn, 'https://openlibrary.org/isbn/'+encodeURIComponent(isbn)));
+  if(bookshelf&&opts.bookshelf!==false) out.push(chip(bookshelf.label, nbk, bookshelf.url));
   return out.length ? ' <span class="ref-ids">'+out.join('')+'</span>' : '';
 }
 /* NCBI Bookshelf aloja colecciones distintas. NBK es solo el identificador técnico de Bookshelf: NUNCA
@@ -2568,8 +2576,10 @@ function bibliographyEntryHtml(fuente, opts){
     +(shortRef?' <span class="dx-meta">· '+escHtml(shortRef)+'</span>':'')
     +(year?' <span class="bib-year" title="Año de publicación">'+escHtml(String(year))+'</span>':'');
   const href=opts.href||fuente.url||'';
-  const linked=href?`<a href="${escA(href)}" target="_blank" rel="noopener">${label}</a>`:`<span>${label}</span>`;
-  return linked+(opts.noIds?'':refIdChipsHtml(fuente))+bibRefHtml(fuente,{noAssign:true});
+  const linked=`<span>${label}</span>`+(href
+    ? ` <a class="bibliography-source-link" href="${escA(href)}" target="_blank" rel="noopener" title="Abrir la fuente original" aria-label="Abrir la fuente original">🔗</a>`
+    : '');
+  return `<span class="bibliography-entry">${linked+(opts.noIds?'':refIdChipsHtml(fuente,{bookshelf:false}))+bibRefHtml(fuente,{noAssign:true})}</span>`;
 }
 function bibliographyInlineHtml(fuentes, opts){
   return (fuentes||[]).filter(f=>f&&(f.titulo||f.title||f.url)).map(f=>bibliographyEntryHtml(f,opts)).join(' · ');
@@ -6492,7 +6502,7 @@ async function renderDriveList(files){
     const cita=(reg && (reg.cita||reg.titulo)) ? (reg.cita||reg.titulo) : f.name;
     const mostrarArchivo = reg && normTxt(cita)!==normTxt(f.name);
     // Los identificadores (PMID/DOI/PMCID) y GeneReviews van arriba; el icono de Drive y el badge de Papers van JUNTOS abajo (Drive primero).
-    const badges=reg ? (refIdChipsHtml(reg)+geneReviewsBadgeHtml(reg)) : '';
+    const badges=reg ? (refIdChipsHtml(reg,{bookshelf:false})+geneReviewsBadgeHtml(reg)) : '';
     const papersBadge = reg ? readcubeLibBadgeHtml(reg) : '';
     const esDup=isDup(reg); const nDup=esDup?(byStrong[docStrongId(reg)]||[]).length:0;
     const dupBadge = esDup ? `<span class="dx-meta hastip" style="color:#e0a53f;font-weight:600">⚠ duplicado<span class="tooltip">Hay ${nDup} documentos en Drive con el mismo identificador (${escHtml(docStrongId(reg).replace(':',' '))}). Son el MISMO documento — revisa cuál conservar y borra el/los sobrante(s) en tu Google Drive (Ariadna no borra de tu Drive). Metadatos unificados.</span></span>` : '';
@@ -6575,7 +6585,7 @@ function renderExternalRefs(){
   if(!docs.length){ box.innerHTML=''; return; }
   box.innerHTML=`<div class="cart-group-title">📑 Referencias sin PDF <span class="dx-meta">(${docs.length}) — citas de tus protocolos que aún no tienen un documento en Drive</span> <button class="btn" id="docMatchIA" style="padding:2px 9px;font-size:11px" title="La IA busca cuál de tus PDFs indexados es el mismo documento que cada referencia y los enlaza (aunque el título esté en otro idioma/abreviado o falte el DOI). 1 llamada IA; confirmas antes de aplicar.">🔗 Buscar entre mis PDFs (IA)</button></div>
     <div class="lib-grid">`+docs.map(d=>`<div class="lib-card">
-      <div class="nm">${escHtml(d.titulo||d.id)}${refIdChipsHtml(d)}${readcubeLibBadgeHtml(d)}${geneReviewsBadgeHtml(d)}</div>
+      <div class="nm">${escHtml(d.titulo||d.id)}${refIdChipsHtml(d,{bookshelf:false})}${readcubeLibBadgeHtml(d)}${geneReviewsBadgeHtml(d)}</div>
       <div class="meta">${escHtml(d.tipo||'referencia')}${d.anio?' · '+escHtml(String(d.anio)):''}${d.url?` · <a href="${escA(d.url)}" target="_blank" rel="noopener">enlace</a>`:''}</div>
       <div class="acts">
         <button class="btn" data-assigndoc="${escA(String(d.id))}" title="Vincular un PDF de tu Drive a esta referencia">📎 Asignar PDF de Drive</button>
