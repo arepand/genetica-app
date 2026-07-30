@@ -550,8 +550,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.6.5';
+const APP_VERSION='3.6.6';
 const CHANGELOG=[
+  {v:'3.6.6',d:'2026-07-30',c:['El Archivo documental retira las antiguas bandejas «Archivos con incidencias» y «Duplicados binarios exactos», junto con sus borradores y exportaciones de paquetes de decisiones. Sus cifras procedían de informes históricos y no representaban la salud actual del corpus.','La revisión operativa de documentos y duplicados se concentra en el estado vivo del Launcher —OK, pendientes, sin identificar, incidencias, excluidos y problemas— y en sus acciones directas. Los informes históricos permanecen conservados, pero dejan de presentarse como trabajo pendiente.']},
   {v:'3.6.5',d:'2026-07-30',c:['Las fichas bibliográficas de libros médicos incorporan los datos estructurados recuperados online: editores, lugar de publicación, idioma, otros ISBN, descripción física, NLM ID y OCLC.','La consulta online del NLM Catalog se combina con el propio libro y respeta los datos más precisos confirmados por la editorial o guardados manualmente; un campo manual vacío ya no borra información recién recuperada.']},
   {v:'3.6.4',d:'2026-07-30',c:['Las fuentes bibliográficas de Consultar pasan explícitamente por el mismo render canónico que los protocolos: título del Catálogo Maestro, primer autor o «et al.», referencia corta, año, badges e icono de enlace. La cita cruda del Vector Store queda solo como dato de resolución y nunca como nombre visible cuando existe una obra canónica.']},
   {v:'3.6.3',d:'2026-07-30',c:['El Archivo documental deja de deducir la salud desde campos históricos: recibe la fotografía real del Launcher, calculada con Vector Store, B2, identificadores e incidencias, y muestra las mismas categorías: OK, pendiente de ingesta, pendiente de B2, sin identificar, incidencias, excluidos y problemas.','Ariadna y el Launcher incorporan el mismo selector de tipo: artículos/revisiones, libros/capítulos, guías/consensos/protocolos, legislación/normas, presentaciones/congresos, fuentes web/bases de datos y otros.','Las fuentes nacidas en web, incluidas las colecciones de NCBI Bookshelf, se mantienen separadas de los documentos descargados y no se presentan como archivos pendientes.']},
@@ -6413,9 +6414,7 @@ function renderDocumentos(){
     <div class="sec-note">Al <b>indexar</b> un documento, la IA lo analiza (nombre + resumen) y le busca DOI/PMID. Para <b>consultar</b> tu documentación por significado, usa el chat «💬 Consultar» (tu <b>segundo cerebro</b>). <b>unido a bibliografía</b> = citado por algún protocolo.</div>
     <div id="docMasterArchive"><div class="loading">Cargando Archivo documental…</div></div>
     <div id="docProtocolUpdates"><div class="loading">Consultando nueva evidencia para protocolos…</div></div>
-    <div id="docDuplicateReview"><div class="loading">Consultando duplicados exactos…</div></div>
     <div id="docCatalogIssues"><div class="loading">Consultando incidencias bibliográficas…</div></div>
-    <div id="docMetadataIssues"><div class="loading">Consultando problemas de archivos…</div></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:2px 0 8px">
       <input id="docSearch" type="text" placeholder="🔎 Filtrar por título, tipo, autor, DOI, PMID, NBK…" autocomplete="off" style="flex:1;min-width:260px;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--ink);font-size:13px">
       <label class="dx-meta" for="docSort">Ordenar</label>
@@ -6451,8 +6450,6 @@ function renderDocumentos(){
   })();
   renderMasterReferenceIssues();
   renderMasterProtocolUpdateReview();
-  renderMasterFileIssues();
-  renderMasterDuplicateReview();
   loadMasterCatalogIndex().then(renderMasterDocumentArchive);
   renderExternalRefs();
   if(_driveFilesCache.length) renderDriveList(_driveFilesCache);
