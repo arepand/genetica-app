@@ -550,8 +550,9 @@
    =========================================================================== */
 const HPO_API = 'https://ontology.jax.org/api/hp';
 /* Versionado: mayor = gran avance · menor = mejora. Cada despliegue añade una entrada al changelog. */
-const APP_VERSION='3.6.6';
+const APP_VERSION='3.6.7';
 const CHANGELOG=[
+  {v:'3.6.7',d:'2026-08-02',c:['El Observatorio publica las activaciones aprobadas en una política global versionada. Todas las sesiones nuevas cargan automáticamente la misma decisión y cada tarea en «Automático» resuelve su modelo desde esa política común.','Las claves y los modelos forzados manualmente siguen siendo locales al navegador; una activación validada deja de depender del localStorage de la sesión que realizó la evaluación.','GeneReviews incorpora una ficha bibliográfica vectorial por capítulo y atributos buscables —título, autores, NBK, fechas y URL— en todos sus apartados, conservando la sustitución transaccional segura de cada revisión.']},
   {v:'3.6.6',d:'2026-07-30',c:['El Archivo documental retira las antiguas bandejas «Archivos con incidencias» y «Duplicados binarios exactos», junto con sus borradores y exportaciones de paquetes de decisiones. Sus cifras procedían de informes históricos y no representaban la salud actual del corpus.','La revisión operativa de documentos y duplicados se concentra en el estado vivo del Launcher —OK, pendientes, sin identificar, incidencias, excluidos y problemas— y en sus acciones directas. Los informes históricos permanecen conservados, pero dejan de presentarse como trabajo pendiente.']},
   {v:'3.6.5',d:'2026-07-30',c:['Las fichas bibliográficas de libros médicos incorporan los datos estructurados recuperados online: editores, lugar de publicación, idioma, otros ISBN, descripción física, NLM ID y OCLC.','La consulta online del NLM Catalog se combina con el propio libro y respeta los datos más precisos confirmados por la editorial o guardados manualmente; un campo manual vacío ya no borra información recién recuperada.']},
   {v:'3.6.4',d:'2026-07-30',c:['Las fuentes bibliográficas de Consultar pasan explícitamente por el mismo render canónico que los protocolos: título del Catálogo Maestro, primer autor o «et al.», referencia corta, año, badges e icono de enlace. La cita cruda del Vector Store queda solo como dato de resolución y nunca como nombre visible cuando existe una obra canónica.']},
@@ -1348,6 +1349,32 @@ const CFG_DEFAULTS={ anthropicKey:'', openaiKey:'', modelOverrides:{}, evaluated
   secondBrainStore:'', secondBrainRepo:'', chatMode:'quick' };
 const AI_POLICY_VERSION='2026-07-16.v1';
 const AI_POLICY_EVALUATED_AT='2026-07-16';
+const GLOBAL_MODEL_POLICY_PATH='model-policy.json';
+const GLOBAL_MODEL_POLICY_CACHE_KEY='fh_global_model_policy';
+let GLOBAL_MODEL_POLICY={schema:'ariadna-model-policy-v1',version:AI_POLICY_VERSION,promotions:{}};
+function normalizeGlobalModelPolicy(value){
+  const data=value&&typeof value==='object'&&!Array.isArray(value)?value:{};
+  return {schema:'ariadna-model-policy-v1',version:String(data.version||AI_POLICY_VERSION),
+    updated_at:String(data.updated_at||''),updated_by:String(data.updated_by||''),
+    promotions:data.promotions&&typeof data.promotions==='object'&&!Array.isArray(data.promotions)?data.promotions:{},
+    evaluations:data.evaluations&&typeof data.evaluations==='object'&&!Array.isArray(data.evaluations)?data.evaluations:{}};
+}
+async function loadGlobalModelPolicy(){
+  let data=null;
+  if(ghConfigured()){
+    try{ const remote=await ghGetFile(GLOBAL_MODEL_POLICY_PATH); if(remote&&remote.json) data=remote.json; }catch(e){}
+  }
+  if(!data){ try{ data=JSON.parse(localStorage.getItem(GLOBAL_MODEL_POLICY_CACHE_KEY)); }catch(e){} }
+  try{
+    if(!data){
+      const response=await fetch('./'+GLOBAL_MODEL_POLICY_PATH+'?v='+encodeURIComponent(APP_VERSION),{cache:'no-store'});
+      if(response.ok) data=await response.json();
+    }
+  }catch(e){}
+  GLOBAL_MODEL_POLICY=normalizeGlobalModelPolicy(data);
+  try{ localStorage.setItem(GLOBAL_MODEL_POLICY_CACHE_KEY,JSON.stringify(GLOBAL_MODEL_POLICY)); }catch(e){}
+  return GLOBAL_MODEL_POLICY;
+}
 const AI_POLICY_GROUPS={catalog:'Catálogo y tareas breves',clinical:'Extracción y ayuda clínica',author:'Protocolos y decisiones',chat:'Consultar',vision:'PDF, tablas y figuras'};
 const M=(provider,model,effort='none')=>({provider,model,effort});
 /* Política APROBADA por operación. Los modelos detectados por /models NO entran aquí solos: primero son candidatos. */
@@ -1448,7 +1475,7 @@ function modelPlanForOperation(input){
   const overrideActive=!!(override&&primary&&primary.provider===override.provider&&primary.model===override.model);
   const promotionActive=!!(!overrideActive&&promotion&&primary&&primary.provider===promotion.provider&&primary.model===promotion.model);
   return {operation,label:policy.label,group:policy.group,policyVersion:AI_POLICY_VERSION,evaluatedAt:AI_POLICY_EVALUATED_AT,
-    override:overrideActive,promoted:promotionActive,promotionReportId:promotionActive?promotion.reportId:'',
+    override:overrideActive,promoted:promotionActive,promotionGlobal:!!(promotionActive&&promotion.global),promotionReportId:promotionActive?promotion.reportId:'',
     primary,candidates:available};
 }
 /* Compatibilidad pública: pickModel acepta el task antiguo o el identificador exacto de operación. */
@@ -1458,7 +1485,8 @@ function modelRouting(){
   return {mode:'policy',policyVersion:AI_POLICY_VERSION,evaluatedAt:AI_POLICY_EVALUATED_AT,
     ops:ops.map(operation=>{ const plan=modelPlanForOperation(operation), p=plan&&plan.primary; return {
       operation,label:plan&&plan.label,model:p?prettyModel(p.provider,p.model):'—',provider:p&&p.provider,
-      override:plan&&plan.override,promoted:plan&&plan.promoted,promotionReportId:plan&&plan.promotionReportId
+      override:plan&&plan.override,promoted:plan&&plan.promoted,promotionGlobal:plan&&plan.promotionGlobal,
+      promotionReportId:plan&&plan.promotionReportId
     }; })};
 }
 /* Descubrimiento de modelos disponibles (para el selector auto-actualizable) */
@@ -1584,6 +1612,14 @@ function validPromotionForOperation(operation,cfg){
   // La autoría de una regeneración clínica está fijada en Sol xhigh. Una
   // promoción anterior de Opus 5 se reutiliza en la auditoría independiente.
   if(operation==='protocol_regenerate') return null;
+  const published=GLOBAL_MODEL_POLICY&&GLOBAL_MODEL_POLICY.promotions&&GLOBAL_MODEL_POLICY.promotions[operation];
+  if(published&&published.provider&&published.model){
+    const currentCandidate=AI_MODEL_CANDIDATE_REGISTRY.find(x=>x.key===published.candidateKey);
+    if(currentCandidate&&(currentCandidate.operations||[]).includes(operation)){
+      return {provider:published.provider,model:published.model,effort:published.effort||'high',
+        reportId:published.reportId||'',global:true};
+    }
+  }
   cfg=cfg||loadCfg();
   const promotions=cfg.evaluatedModelPromotions||{};
   let p=promotions[operation];
@@ -1594,6 +1630,65 @@ function validPromotionForOperation(operation,cfg){
   const currentlyAllowed=!!(currentCandidate&&(currentCandidate.operations||[]).includes(operation));
   if(report.provider!==p.provider||report.model!==p.model||(!currentlyAllowed&&!(report.operations||[]).includes(operation))) return null;
   return {provider:p.provider,model:p.model,effort:p.effort||report.effort||'high',reportId:p.reportId};
+}
+async function publishGlobalModelPolicy(reportId,activate){
+  const report=modelEvaluationById(reportId);
+  if(!report||report.evaluatorVersion!==AI_MODEL_EVALUATOR_VERSION) return false;
+  if(activate&&!report.eligible) return false;
+  if(!ghConfigured()) throw new Error('Configura GitHub para publicar una activación global.');
+  let remote=null, sha=null;
+  try{ const current=await ghGetFile(GLOBAL_MODEL_POLICY_PATH); remote=current.json; sha=current.sha; }
+  catch(e){ throw new Error('No se pudo leer la política global: '+e.message); }
+  const next=normalizeGlobalModelPolicy(remote||GLOBAL_MODEL_POLICY);
+  const candidate=AI_MODEL_CANDIDATE_REGISTRY.find(x=>x.key===report.candidateKey);
+  const operations=candidate?(candidate.operations||[]):(report.operations||[]);
+  for(const operation of operations){
+    if(operation==='protocol_regenerate'||operation==='pdf_visual_quick'||operation==='pdf_visual_deep') continue;
+    if(activate){
+      next.promotions[operation]={candidateKey:report.candidateKey,provider:report.provider,model:report.model,
+        effort:report.effort||'high',reportId:report.id,evaluatorVersion:report.evaluatorVersion,
+        activatedAt:new Date().toISOString()};
+    }else if(next.promotions[operation]&&next.promotions[operation].candidateKey===report.candidateKey){
+      delete next.promotions[operation];
+    }
+  }
+  next.version=AI_POLICY_VERSION;
+  next.updated_at=new Date().toISOString();
+  next.updated_by='Ariadna · Observatorio de modelos';
+  next.evaluations[report.candidateKey]={report_id:report.id,label:report.label,provider:report.provider,model:report.model,
+    eligible:!!report.eligible,score:Number(report.contender&&report.contender.score)||0,evaluator_version:report.evaluatorVersion,
+    decision:activate?'activate':'keep',decided_at:next.updated_at};
+  await ghPutFile(GLOBAL_MODEL_POLICY_PATH,next,
+    'modelos: '+(activate?'activar ':'mantener política anterior para ')+(report.label||report.model),sha);
+  GLOBAL_MODEL_POLICY=next;
+  try{ localStorage.setItem(GLOBAL_MODEL_POLICY_CACHE_KEY,JSON.stringify(next)); }catch(e){}
+  const legacy=loadCfg().evaluatedModelPromotions||{}, cleaned={};
+  for(const [operation,promotion] of Object.entries(legacy)){
+    if(!promotion||promotion.candidateKey!==report.candidateKey) cleaned[operation]=promotion;
+  }
+  saveCfg({evaluatedModelPromotions:cleaned});
+  return true;
+}
+async function revertGlobalModelCandidate(candidateKey,label){
+  if(!candidateKey||!ghConfigured()) throw new Error('Configura GitHub para publicar una reversión global.');
+  const current=await ghGetFile(GLOBAL_MODEL_POLICY_PATH);
+  const next=normalizeGlobalModelPolicy(current.json||GLOBAL_MODEL_POLICY); let changed=false;
+  for(const [operation,promotion] of Object.entries(next.promotions||{})){
+    if(promotion&&promotion.candidateKey===candidateKey){ delete next.promotions[operation]; changed=true; }
+  }
+  if(!changed) return false;
+  next.version=AI_POLICY_VERSION; next.updated_at=new Date().toISOString();
+  next.updated_by='Ariadna · Observatorio de modelos';
+  next.evaluations[candidateKey]={...(next.evaluations[candidateKey]||{}),decision:'keep',decided_at:next.updated_at};
+  await ghPutFile(GLOBAL_MODEL_POLICY_PATH,next,'modelos: volver a la política estable para '+(label||candidateKey),current.sha);
+  GLOBAL_MODEL_POLICY=next;
+  try{ localStorage.setItem(GLOBAL_MODEL_POLICY_CACHE_KEY,JSON.stringify(next)); }catch(e){}
+  const legacy=loadCfg().evaluatedModelPromotions||{}, cleaned={};
+  for(const [operation,promotion] of Object.entries(legacy)){
+    if(!promotion||promotion.candidateKey!==candidateKey) cleaned[operation]=promotion;
+  }
+  saveCfg({evaluatedModelPromotions:cleaned});
+  return true;
 }
 function applyEvaluatedModelPromotion(reportId,approved){
   const report=modelEvaluationById(reportId); if(!approved||!report||!report.eligible||report.evaluatorVersion!==AI_MODEL_EVALUATOR_VERSION) return false;
@@ -3110,7 +3205,7 @@ function modelOverrideSelectHtml(operation){
   const plan=modelPlanForOperation(operation), choices=approvedChoicesForOperation(operation), current=plan&&plan.override&&plan.primary?operationChoiceValue(plan.primary):'';
   const automatic=(plan&&plan.primary)||choices.find(x=>providerKey(x.provider))||choices[0];
   return `<select data-operation="${operation}" style="width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--ink);font-size:11px">
-    <option value=""${current?'':' selected'}>Automático · ${automatic?escHtml(prettyModel(automatic.provider,automatic.model)):'sin modelo'}${plan&&plan.promoted?' · evaluado':''}</option>
+    <option value=""${current?'':' selected'}>Automático · ${automatic?escHtml(prettyModel(automatic.provider,automatic.model)):'sin modelo'}${plan&&plan.promoted?(plan.promotionGlobal?' · política global':' · evaluado local'):''}</option>
     ${choices.map(x=>`<option value="${operationChoiceValue(x)}"${operationChoiceValue(x)===current?' selected':''}>Forzar ${escHtml(prettyModel(x.provider,x.model))}${x.effort&&x.effort!=='none'?' · '+escHtml(x.effort):''}</option>`).join('')}
   </select>`;
 }
@@ -3194,7 +3289,8 @@ function evaluatorCasesHtml(report,candidateName,baselineName){
   </details>`;
 }
 function candidatePromotionActive(candidateKey){
-  return Object.values(loadCfg().evaluatedModelPromotions||{}).some(p=>p&&p.candidateKey===candidateKey);
+  return Object.values(GLOBAL_MODEL_POLICY.promotions||{}).some(p=>p&&p.candidateKey===candidateKey)
+    || Object.values(loadCfg().evaluatedModelPromotions||{}).some(p=>p&&p.candidateKey===candidateKey);
 }
 function modelEvaluatorPanelHtml(){
   const candidates=recognizedModelCandidates();
@@ -3278,22 +3374,26 @@ function wireModelEvaluatorPanel(ov){
     showToast('Decisión guardada: se mantiene '+evaluatorModelName(report.baselineChoice,'el modelo vigente'));
     refreshModelEvaluatorUi(ov);
   }));
-  ov.querySelectorAll('[data-activate-evaluation]').forEach(button=>button.addEventListener('click',()=>{
+  ov.querySelectorAll('[data-activate-evaluation]').forEach(button=>button.addEventListener('click',async ()=>{
     const report=modelEvaluationById(button.dataset.activateEvaluation); if(!report) return;
     if(!confirm('¿Activar '+report.label+' en las operaciones aprobadas? Las tareas visuales no cambiarán y podrás revertirlo inmediatamente.')) return;
-    if(applyEvaluatedModelPromotion(report.id,true)){
+    button.disabled=true;
+    try{ if(await publishGlobalModelPolicy(report.id,true)){
       saveModelEvaluationDecision(report.id,'activate');
-      showToast('Modelo evaluado activado; las tareas visuales siguen sin cambios');
+      showToast('Modelo activado globalmente para todas las sesiones nuevas');
       refreshPolicyGridPreservingSelections(ov); refreshModelEvaluatorUi(ov);
-    }
+    }}catch(error){ const out=ov.querySelector('#cfgEvaluatorOut'); if(out){ out.className='test-out bad'; out.textContent='✗ '+(error.message||error); } }
+    finally{ button.disabled=false; }
   }));
-  ov.querySelectorAll('[data-revert-evaluation]').forEach(button=>button.addEventListener('click',()=>{
+  ov.querySelectorAll('[data-revert-evaluation]').forEach(button=>button.addEventListener('click',async ()=>{
     if(!confirm('¿Revertir este modelo y volver a la política estable anterior?')) return;
-    if(revertEvaluatedModelPromotion(button.dataset.revertEvaluation,true)){
+    const report=modelEvaluationById(button.dataset.reportId); button.disabled=true;
+    try{ if(report?await publishGlobalModelPolicy(report.id,false):await revertGlobalModelCandidate(button.dataset.revertEvaluation,button.textContent)){
       if(button.dataset.reportId) saveModelEvaluationDecision(button.dataset.reportId,'keep');
-      showToast('Modelo revertido a la política estable');
+      showToast('Política global revertida para todas las sesiones nuevas');
       refreshPolicyGridPreservingSelections(ov); refreshModelEvaluatorUi(ov);
-    }
+    }}catch(error){ const out=ov.querySelector('#cfgEvaluatorOut'); if(out){ out.className='test-out bad'; out.textContent='✗ '+(error.message||error); } }
+    finally{ button.disabled=false; }
   }));
 }
 function openSettings(){
@@ -3342,7 +3442,7 @@ function openSettings(){
       <div style="padding:8px 0">
         <button class="btn" id="cfgRefreshModels">Comprobar catálogo de modelos</button>
         <span class="test-out" id="cfgModelsOut" style="margin-left:8px"></span>
-        <div class="sec-note">Un modelo nuevo se registra como <b>candidato</b>; nunca sustituye automáticamente a uno activo. Antes hay que comprobar calidad, coste, herramientas, visión, búsqueda web y formato de salida.</div>
+        <div class="sec-note">Un modelo nuevo se registra como <b>candidato</b>; nunca sustituye automáticamente a uno activo. Antes hay que comprobar calidad, coste, herramientas, visión, búsqueda web y formato de salida. Al aprobarlo, Ariadna publica una <b>política global</b>: todas las sesiones nuevas la heredan y cada tarea en «Automático» usa el modelo aprobado para su operación.</div>
         <div id="cfgModelEvaluator">${modelEvaluatorPanelHtml()}</div>
       </div>
     </details>
@@ -11148,6 +11248,9 @@ function init(){
   loadMasterCatalogIndex();
   // Chequeo periódico (24 horas) de modelos IA nuevos → avisa y anota candidatos; nunca activa uno automáticamente.
   setTimeout(()=>{ checkModelsFreshness().catch(()=>{}); }, 3000);
+  // La política aprobada es común a Ariadna. Cada operación la consulta al ejecutarse; además se refresca
+  // periódicamente para que una sesión ya abierta recoja activaciones realizadas desde otro dispositivo.
+  setInterval(()=>{ loadGlobalModelPolicy().then(()=>{ try{ renderStatus(); }catch(e){} }).catch(()=>{}); },5*60*1000);
   // Deep-link ?proto=<id>: abrir un protocolo directamente (para «Abrir en pestaña nueva»).
   let deepProto=''; try{ deepProto=new URLSearchParams(location.search).get('proto')||''; }catch(e){}
   if(deepProto){
@@ -11220,7 +11323,7 @@ function renderHashTool(){
 async function boot(){
   if(location.hash==='#sethash'){ renderHashTool(); return; }
   const ok = await authGate();
-  if(ok) init();
+  if(ok){ await loadGlobalModelPolicy(); init(); }
 }
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', boot);
 else boot();
